@@ -1,0 +1,346 @@
+import { useState, useRef, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { Trash2, Pencil, Copy, MessageSquare, Hash } from 'lucide-react'
+import { toast } from 'sonner'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+  ContextMenuSeparator,
+} from '@/components/ui/context-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { messageApi, userApi } from '@/api/client'
+import { useMessageStore } from '@/stores/messageStore'
+import { useAuthStore } from '@/stores/authStore'
+import { useUiStore } from '@/stores/uiStore'
+import { snowflakeToTime, snowflakeToDate } from '@/lib/snowflake'
+import { cn } from '@/lib/utils'
+import { parseMessageContent, extractYouTubeEmbeds, type MentionResolver } from '@/lib/messageParser'
+import MessageAttachments from '@/components/chat/MessageAttachments'
+import InviteEmbed from '@/components/chat/InviteEmbed'
+import YoutubeEmbed from '@/components/chat/YoutubeEmbed'
+import type { DtoMessage } from '@/types'
+
+/** Extract unique invite codes from a message string.
+ *  Matches URLs of the form: http(s)://host/invite/CODE
+ *  and also bare paths: /invite/CODE
+ */
+function extractInviteCodes(content: string): string[] {
+  const codes: string[] = []
+  const seen = new Set<string>()
+  // Match full URLs containing /invite/<code>
+  const urlRe = /https?:\/\/[^\s<>]+\/invite\/([A-Za-z0-9_-]+)/g
+  let m: RegExpExecArray | null
+  while ((m = urlRe.exec(content)) !== null) {
+    const code = m[1]
+    if (!seen.has(code)) { seen.add(code); codes.push(code) }
+  }
+  return codes
+}
+
+interface Props {
+  message: DtoMessage
+  isGrouped?: boolean
+  resolver?: MentionResolver
+}
+
+export default function MessageItem({ message, isGrouped = false, resolver }: Props) {
+  const { serverId } = useParams<{ serverId?: string }>()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const openUserProfile = useUiStore((s) => s.openUserProfile)
+
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editContent, setEditContent] = useState('')
+  const [editLoading, setEditLoading] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  const removeMessage = useMessageStore((s) => s.removeMessage)
+  const updateMessage = useMessageStore((s) => s.updateMessage)
+  const currentUser = useAuthStore((s) => s.user)
+
+  const authorName = message.author?.name ?? 'Unknown'
+  const initials = authorName.charAt(0).toUpperCase()
+  const channelId = String(message.channel_id)
+  const messageId = String(message.id)
+  const isOwn = currentUser?.id !== undefined && String(message.author?.id) === String(currentUser.id)
+
+  // Use Snowflake ID to derive creation time (more reliable than updated_at for display)
+  const timestamp = snowflakeToTime(message.id)
+  const fullTimestamp = snowflakeToDate(message.id).toLocaleString()
+
+  function handleAuthorClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!message.author?.id) return
+    openUserProfile(
+      String(message.author.id),
+      serverId ?? null,
+      e.clientX,
+      e.clientY,
+      authorName,
+    )
+  }
+
+  function handleCopy() {
+    void navigator.clipboard.writeText(message.content ?? '')
+  }
+
+  async function handleMessageUser() {
+    if (!message.author?.id) return
+    try {
+      const res = await userApi.userMeFriendsUserIdGet({ userId: String(message.author.id) })
+      const channel = res.data
+      await queryClient.invalidateQueries({ queryKey: ['dm-channels'] })
+      if (channel.id !== undefined) {
+        navigate(`/app/@me/${String(channel.id)}`)
+      }
+    } catch {
+      toast.error('Failed to open DM')
+    }
+  }
+
+  function startEdit() {
+    setEditContent(message.content ?? '')
+    setEditing(true)
+  }
+
+  useEffect(() => {
+    if (editing) {
+      textareaRef.current?.focus()
+      const len = textareaRef.current?.value.length ?? 0
+      textareaRef.current?.setSelectionRange(len, len)
+    }
+  }, [editing])
+
+  async function handleEdit() {
+    const trimmed = editContent.trim()
+    if (!trimmed || trimmed === message.content) {
+      setEditing(false)
+      return
+    }
+    setEditLoading(true)
+    try {
+      const res = await messageApi.messageChannelChannelIdMessageIdPatch({
+        channelId,
+        messageId,
+        request: { content: trimmed },
+      })
+      updateMessage(channelId, res.data)
+      setEditing(false)
+    } catch {
+      toast.error('Failed to edit message')
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
+  function handleEditKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void handleEdit()
+    }
+    if (e.key === 'Escape') {
+      setEditing(false)
+    }
+  }
+
+  async function handleDelete() {
+    setDeleteLoading(true)
+    try {
+      await messageApi.messageChannelChannelIdMessageIdDelete({
+        channelId,
+        messageId,
+      })
+      removeMessage(channelId, messageId)
+      setDeleteOpen(false)
+    } catch {
+      toast.error('Failed to delete message')
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div className={cn(
+            'flex items-start gap-3 px-2 rounded hover:bg-accent/40 group',
+            isGrouped ? 'py-0.5' : 'py-1',
+          )}>
+            {isGrouped ? (
+              /* Compact grouped row: no avatar — hover reveals timestamp in left gutter */
+              <div className="w-9 shrink-0 flex items-center justify-end mt-0.5">
+                <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity leading-none tabular-nums select-none">
+                  {timestamp}
+                </span>
+              </div>
+            ) : (
+              /* Full row: clickable avatar */
+              <button
+                onClick={handleAuthorClick}
+                className="shrink-0 mt-0.5 rounded-full focus:outline-none"
+                tabIndex={-1}
+              >
+                <Avatar className="w-9 h-9">
+                  <AvatarImage src={message.author?.avatar?.url} alt={authorName} className="object-cover" />
+                  <AvatarFallback className="text-sm">{initials}</AvatarFallback>
+                </Avatar>
+              </button>
+            )}
+
+            <div className="min-w-0 flex-1">
+              {!isGrouped && (
+                <div className="flex items-baseline gap-2">
+                  {/* Clickable author name */}
+                  <button
+                    onClick={handleAuthorClick}
+                    className="font-semibold text-sm hover:underline focus:outline-none"
+                  >
+                    {authorName}
+                  </button>
+                  <span
+                    className="text-xs text-muted-foreground tabular-nums"
+                    title={fullTimestamp}
+                  >
+                    {timestamp}
+                  </span>
+                </div>
+              )}
+
+              {editing ? (
+                <div className="mt-1 space-y-1">
+                  <Textarea
+                    ref={textareaRef}
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    onKeyDown={handleEditKeyDown}
+                    rows={2}
+                    className="resize-none text-sm"
+                    disabled={editLoading}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Enter to{' '}
+                    <button
+                      type="button"
+                      onClick={() => void handleEdit()}
+                      disabled={editLoading}
+                      className="text-primary underline underline-offset-2 hover:opacity-80 disabled:opacity-50 cursor-pointer"
+                    >
+                      save
+                    </button>
+                    {' · '}Esc to{' '}
+                    <button
+                      type="button"
+                      onClick={() => setEditing(false)}
+                      disabled={editLoading}
+                      className="text-primary underline underline-offset-2 hover:opacity-80 disabled:opacity-50 cursor-pointer"
+                    >
+                      cancel
+                    </button>
+                  </p>
+                </div>
+              ) : (
+                <>
+                  {/* Parsed message content with inline markdown */}
+                  {message.content && (
+                    <div className="text-sm break-words whitespace-pre-wrap leading-relaxed">
+                      {parseMessageContent(message.content, resolver)}
+                    </div>
+                  )}
+                  {/* Attachments */}
+                  <MessageAttachments attachments={message.attachments} />
+                  {/* YouTube embeds — one per unique video ID found in the message */}
+                  {message.content && extractYouTubeEmbeds(message.content).map(({ videoId, url }) => (
+                    <YoutubeEmbed key={videoId} videoId={videoId} url={url} />
+                  ))}
+                  {/* Invite embeds */}
+                  {message.content && extractInviteCodes(message.content).map((code) => (
+                    <InviteEmbed key={code} code={code} />
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        </ContextMenuTrigger>
+
+        <ContextMenuContent>
+          <ContextMenuItem onClick={handleCopy} className="gap-2">
+            <Copy className="w-4 h-4" />
+            Copy Text
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => { void navigator.clipboard.writeText(messageId) }}
+            className="gap-2"
+          >
+            <Hash className="w-4 h-4" />
+            Copy Message ID
+          </ContextMenuItem>
+          {isOwn ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={startEdit} className="gap-2">
+                <Pencil className="w-4 h-4" />
+                Edit Message
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onClick={() => setDeleteOpen(true)}
+                className="text-destructive focus:text-destructive gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Message
+              </ContextMenuItem>
+            </>
+          ) : (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={() => void handleMessageUser()} className="gap-2">
+                <MessageSquare className="w-4 h-4" />
+                Message User
+              </ContextMenuItem>
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+
+      <Dialog open={deleteOpen} onOpenChange={(o) => !o && setDeleteOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete Message</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this message? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {message.content && (
+            <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic">
+              {message.content}
+            </blockquote>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleteLoading}>
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}

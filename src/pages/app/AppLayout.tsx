@@ -1,0 +1,177 @@
+import { useState, useEffect, useRef } from 'react'
+import { Outlet, useNavigate } from 'react-router-dom'
+import { useAuthStore } from '@/stores/authStore'
+import { useWebSocket } from '@/hooks/useWebSocket'
+import { useIdlePresence } from '@/hooks/useIdlePresence'
+import { axiosInstance, userApi } from '@/api/client'
+import AppShell from '@/components/layout/AppShell'
+import InviteModal from '@/components/modals/InviteModal'
+import JoinServerModal from '@/components/modals/JoinServerModal'
+import AppSettingsModal from '@/components/modals/AppSettingsModal'
+import ServerSettingsModal from '@/components/modals/ServerSettingsModal'
+import ChannelSettingsModal from '@/components/modals/ChannelSettingsModal'
+import UserProfilePanel from '@/components/layout/UserProfilePanel'
+import type { DtoUser } from '@/types'
+import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
+import { sendPresenceStatus } from '@/services/wsService'
+import { useFolderStore } from '@/stores/folderStore'
+import { useReadStateStore } from '@/stores/readStateStore'
+
+const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
+
+// ── Inner component ────────────────────────────────────────────────────────
+// Only mounts once auth is confirmed. Tying useWebSocket() here means:
+//   • WS connects AFTER the token is validated (and silently refreshed if needed)
+//   • WS disconnects automatically when the user logs out (component unmounts)
+//   • No speculative connection with a stale/invalid token
+function AuthenticatedApp() {
+  useWebSocket()
+  useIdlePresence()
+
+  return (
+    <AppShell>
+      <Outlet />
+      <InviteModal />
+      <JoinServerModal />
+      <AppSettingsModal />
+      <ServerSettingsModal />
+      <ChannelSettingsModal />
+      <UserProfilePanel />
+    </AppShell>
+  )
+}
+
+// ── Loading screen ─────────────────────────────────────────────────────────
+function LoadingScreen() {
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-background">
+      <div className="flex flex-col items-center gap-4 text-muted-foreground">
+        <div className="w-10 h-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        <p className="text-sm">Loading…</p>
+      </div>
+    </div>
+  )
+}
+
+// ── Auth guard / init orchestrator ─────────────────────────────────────────
+// Initialization order:
+//   1. Validate the stored access token via GET /user/me
+//      → if expired: the 401 interceptor on axiosInstance transparently uses
+//        the refresh token to obtain a new access token, then retries
+//      → if both tokens are invalid/absent: logout + redirect to /
+//   2. On success: set the user in authStore, unmount loading screen
+//   3. AuthenticatedApp mounts → useWebSocket() connects
+//   4. WS hello received → guild subscriptions sent (resubscribe)
+//   5. Child components mount and fetch their own data (guilds, channels, …)
+export default function AppLayout() {
+  const navigate = useNavigate()
+  const token = useAuthStore((s) => s.token)
+  const setUser = useAuthStore((s) => s.setUser)
+  const logout = useAuthStore((s) => s.logout)
+
+  // Only show the loading screen when we actually have a token to validate.
+  // Avoids a blank-flash on the unauthenticated redirect path.
+  const [isValidating, setIsValidating] = useState(!!token)
+
+  // Tracks the token that was most recently validated successfully.
+  // A non-null → different non-null transition means the 401 interceptor silently
+  // refreshed the token — skip re-validation to prevent a loading-screen flash.
+  const validatedTokenRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!token) {
+      validatedTokenRef.current = null
+      setIsValidating(false)
+      navigate('/', { replace: true })
+      return
+    }
+
+    // Silent token refresh: the 401 interceptor already renewed the token while
+    // the user was authenticated.  Just update the ref — no need to hit /user/me
+    // again or show the loading spinner.
+    if (validatedTokenRef.current !== null) {
+      validatedTokenRef.current = token
+      return
+    }
+
+    setIsValidating(true)
+
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    const controller = new AbortController()
+
+    // Fetch user identity and settings in parallel.
+    // axiosInstance carries the request interceptor (Authorization header) and
+    // the response interceptor (401 → refresh token → retry). Plain axios does
+    // not, so an expired access token would incorrectly force a logout here.
+    // Settings fetch is non-critical — a failure is swallowed so it never
+    // blocks auth or causes a spurious logout.
+    Promise.all([
+      axiosInstance.get<DtoUser>(`${baseUrl}/user/me`, { signal: controller.signal }),
+      userApi.userMeSettingsGet({}, { signal: controller.signal }).catch(() => null),
+    ])
+      .then(([userRes, settingsRes]) => {
+        if (userRes.data) {
+          setUser(userRes.data)
+        } else {
+          throw new Error('Empty /user/me response')
+        }
+        // Mark this token as validated so future silent refreshes are skipped.
+        validatedTokenRef.current = token
+        // Restore saved presence status + custom status text before the WS
+        // connects so resubscribe() sends the correct op:3 on the very first hello.
+        const savedStatus     = settingsRes?.data?.settings?.status?.status
+        const savedCustomText = settingsRes?.data?.settings?.status?.custom_status_text ?? ''
+        if (savedCustomText) {
+          usePresenceStore.getState().setCustomStatusText(savedCustomText)
+        }
+        const effectiveStatus = (savedStatus && VALID_STATUSES.has(savedStatus)
+          ? savedStatus : 'online') as UserStatus
+        if (savedStatus && VALID_STATUSES.has(savedStatus)) {
+          usePresenceStore.getState().setOwnStatus(effectiveStatus)
+        }
+        // Seeds wsService module-level caches; socket not open yet so no actual send
+        sendPresenceStatus(effectiveStatus, savedCustomText)
+        // Restore guild folder layout + ordering from settings
+        useFolderStore.getState().loadFromSettings(
+          settingsRes?.data?.settings?.guild_folders,
+          settingsRes?.data?.settings?.guilds,
+        )
+        // Load per-channel read states and latest-message IDs so pagination can
+        // determine where to scroll on channel open (unread separator position).
+        if (settingsRes?.data) {
+          useReadStateStore.getState().setFromSettings(settingsRes.data)
+        }
+      })
+      .catch(() => {
+        // Aborted by StrictMode cleanup — the effect will re-run; do nothing.
+        if (controller.signal.aborted) return
+        // Refresh also failed (or no refresh token) — clear everything and
+        // send the user back to the login screen.
+        validatedTokenRef.current = null
+        logout()
+        navigate('/', { replace: true })
+      })
+      .finally(() => {
+        // Guard against calling setState after the effect was cleaned up.
+        // When the signal is aborted (token changed while validating), the new
+        // effect invocation takes responsibility for isValidating state.
+        if (!controller.signal.aborted) setIsValidating(false)
+      })
+
+    return () => {
+      controller.abort()
+    }
+  // token is the only real dependency; navigate/setUser/logout are stable refs
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token])
+
+  // No token — effect already navigated away; render nothing during transition
+  if (!token) return null
+
+  // Token exists but not yet validated — show spinner so child components
+  // don't mount and fire off queries while auth is still undecided
+  if (isValidating) return <LoadingScreen />
+
+  // Validated — hand off to the authenticated shell + WebSocket
+  return <AuthenticatedApp />
+}

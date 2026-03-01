@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: oklch(0.141 0.005 285.823);
+  --color-foreground: oklch(0.985 0 0);
+  --color-card: oklch(0.21 0.006 285.885);
+  --color-card-foreground: oklch(0.985 0 0);
+  --color-popover: oklch(0.21 0.006 285.885);
+  --color-popover-foreground: oklch(0.985 0 0);
+  --color-primary: oklch(0.985 0 0);
+  --color-primary-foreground: oklch(0.21 0.006 285.885);
+  --color-secondary: oklch(0.274 0.006 286.033);
+  --color-secondary-foreground: oklch(0.985 0 0);
+  --color-muted: oklch(0.274 0.006 286.033);
+  --color-muted-foreground: oklch(0.705 0.015 286.067);
+  --color-accent: oklch(0.274 0.006 286.033);
+  --color-accent-foreground: oklch(0.985 0 0);
+  --color-destructive: oklch(0.704 0.191 22.216);
+  --color-border: oklch(1 0 0 / 10%);
+  --color-input: oklch(1 0 0 / 15%);
+  --color-ring: oklch(0.552 0.016 285.938);
+  --color-sidebar: oklch(0.21 0.006 285.885);
+  --color-sidebar-foreground: oklch(0.985 0 0);
+  --color-sidebar-border: oklch(1 0 0 / 10%);
+  --radius: 0.625rem;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@keyframes msg-highlight-fade {
+  /* Quick blink in (first 12%), then slow fade back to nothing */
+  0%   { background-color: oklch(0.85 0.15 90 / 0); }
+  12%  { background-color: oklch(0.85 0.15 90 / 0.5); }
+  100% { background-color: oklch(0.85 0.15 90 / 0); }
+}
+
+.message-highlight {
+  animation: msg-highlight-fade 2.5s ease-out forwards;
+  border-radius: 4px;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+    outline-color: color-mix(in oklch, var(--color-ring) 50%, transparent);
+    /* Firefox thin scrollbar */
+    scrollbar-width: thin;
+    scrollbar-color: oklch(1 0 0 / 18%) transparent;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    margin: 0;
+    min-height: 100vh;
+    font-family: system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Chrome / Safari / Edge thin scrollbar */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(1 0 0 / 18%);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(1 0 0 / 32%);
+  }
+}
+
+.emoji-button,
+.emoji-preview {
+  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+}
+
+/* Mention chip inside the contenteditable editor */
+.mention-chip {
+  display: inline;
+  border-radius: 0.25rem;
+  padding: 0 0.2em;
+  font-weight: 500;
+  cursor: default;
+  user-select: none;
+  white-space: nowrap;
+}
+.mention-chip[data-type="user"] {
+  background-color: oklch(0.62 0.21 259 / 0.22);
+  color: oklch(0.72 0.17 254);
+}
+.mention-chip[data-type="channel"] {
+  background-color: oklch(0.55 0.02 270 / 0.25);
+  color: oklch(0.78 0.02 270);
+}
+.mention-chip[data-type="role"] {
+  background-color: oklch(0.6 0.2 300 / 0.22);
+  color: oklch(0.74 0.18 300);
+}
+
+/* Placeholder for the contenteditable editor */
+.mention-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--color-muted-foreground);
+  pointer-events: none;
+}
+
+/*
+ * highlight.js override — the atom-one-dark theme sets a solid background on
+ * `.hljs` which conflicts with our explicit background on the <pre> element.
+ * Setting it to transparent lets the <pre> background colour show through.
+ */
+.hljs {
+  background: transparent !important;
+}

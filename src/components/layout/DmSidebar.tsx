@@ -1,0 +1,225 @@
+import { useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Users, MessageSquare, X, XCircle } from 'lucide-react'
+import { toast } from 'sonner'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Separator } from '@/components/ui/separator'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+import StatusDot from '@/components/ui/StatusDot'
+import { userApi } from '@/api/client'
+import { ChannelType } from '@/types'
+import type { DtoChannel } from '@/types'
+import { cn } from '@/lib/utils'
+import { usePresenceStore } from '@/stores/presenceStore'
+import { addPresenceSubscription } from '@/services/wsService'
+import UserArea from './UserArea'
+
+export default function DmSidebar() {
+  const navigate = useNavigate()
+  const { userId: activeChannelId } = useParams<{ userId?: string }>()
+  const queryClient = useQueryClient()
+
+  const { data: dmChannels = [] } = useQuery({
+    queryKey: ['dm-channels'],
+    queryFn: () => userApi.userMeChannelsGet().then((r) => r.data ?? []),
+  })
+
+  // Subscribe to presence for all DM participants (1-on-1 DMs have participant_id)
+  useEffect(() => {
+    const participantIds = dmChannels
+      .filter((ch) => ch.type === ChannelType.ChannelTypeDM && ch.participant_id !== undefined)
+      .map((ch) => String(ch.participant_id))
+    if (participantIds.length > 0) {
+      addPresenceSubscription(participantIds)
+    }
+  }, [dmChannels])
+
+  async function handleCloseDm(channel: DtoChannel, e: React.MouseEvent) {
+    e.stopPropagation()
+    try {
+      // Navigate away first if this DM is active
+      if (String(channel.id) === activeChannelId) {
+        navigate('/app/@me')
+      }
+      // Optimistic removal
+      queryClient.setQueryData<DtoChannel[]>(['dm-channels'], (old) =>
+        old?.filter((c) => String(c.id) !== String(channel.id)) ?? [],
+      )
+    } catch {
+      toast.error('Failed to close conversation')
+      await queryClient.invalidateQueries({ queryKey: ['dm-channels'] })
+    }
+  }
+
+  return (
+    <div className="flex flex-col w-60 bg-sidebar border-r border-sidebar-border shrink-0">
+      {/* Header */}
+      <div className="h-12 flex items-center px-3 font-semibold border-b border-sidebar-border shrink-0">
+        <span className="text-sm">Direct Messages</span>
+      </div>
+
+      <ScrollArea className="flex-1">
+        <div className="p-2">
+          {/* Friends link */}
+          <button
+            onClick={() => navigate('/app/@me')}
+            className={cn(
+              'w-full flex items-center gap-3 px-2 py-2 rounded text-sm transition-colors mb-1',
+              !activeChannelId
+                ? 'bg-accent text-foreground'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+            )}
+          >
+            <Users className="w-4 h-4 shrink-0" />
+            <span className="font-medium">Friends</span>
+          </button>
+
+          {/* DM section header */}
+          {dmChannels.length > 0 && (
+            <p className="px-2 pt-3 pb-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+              Direct Messages
+            </p>
+          )}
+
+          {/* DM channel list */}
+          {dmChannels
+            .filter(
+              (ch) =>
+                ch.type === ChannelType.ChannelTypeDM ||
+                ch.type === ChannelType.ChannelTypeGroupDM,
+            )
+            .map((ch) => (
+              <DmItem
+                key={String(ch.id)}
+                channel={ch}
+                isActive={String(ch.id) === activeChannelId}
+                onNavigate={() => navigate(`/app/@me/${String(ch.id)}`)}
+                onClose={(e) => void handleCloseDm(ch, e)}
+              />
+            ))}
+        </div>
+      </ScrollArea>
+
+      <Separator />
+      <div className="p-2 shrink-0">
+        <UserArea />
+      </div>
+    </div>
+  )
+}
+
+function DmItem({
+  channel,
+  isActive,
+  onNavigate,
+  onClose,
+}: {
+  channel: DtoChannel
+  isActive: boolean
+  onNavigate: () => void
+  onClose: (e: React.MouseEvent) => void
+}) {
+  const isGroup = channel.type === ChannelType.ChannelTypeGroupDM
+  const displayName = channel.name ?? (isGroup ? 'Group DM' : `User ${String(channel.participant_id ?? '')}`)
+  const initials = displayName.charAt(0).toUpperCase()
+
+  // For 1-on-1 DMs, show participant presence + custom status
+  const participantId = !isGroup && channel.participant_id !== undefined
+    ? String(channel.participant_id)
+    : null
+  const status = usePresenceStore((s) =>
+    participantId ? (s.statuses[participantId] ?? 'offline') : null,
+  )
+  const customStatus = usePresenceStore((s) =>
+    participantId ? (s.customStatuses[participantId] ?? '') : '',
+  )
+
+  return (
+    <ContextMenu>
+      <Tooltip>
+        <ContextMenuTrigger asChild>
+          <TooltipTrigger asChild>
+            <button
+              onClick={onNavigate}
+              className={cn(
+                'w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors group text-left',
+                isActive
+                  ? 'bg-accent text-foreground'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              )}
+            >
+              {/* Avatar with optional status dot */}
+              <div className="relative shrink-0">
+                <Avatar className="w-8 h-8">
+                  <AvatarFallback className="text-xs">
+                    {isGroup ? <MessageSquare className="w-4 h-4" /> : initials}
+                  </AvatarFallback>
+                </Avatar>
+                {status !== null && (
+                  <StatusDot status={status} className="absolute -bottom-0.5 -right-0.5 w-3 h-3" />
+                )}
+              </div>
+
+              <span className="flex-1 truncate">{displayName}</span>
+              <span
+                role="button"
+                tabIndex={-1}
+                onClick={onClose}
+                onKeyDown={(e) => e.key === 'Enter' && onClose(e as unknown as React.MouseEvent)}
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-accent/80 hover:text-foreground transition-opacity shrink-0"
+              >
+                <X className="w-3 h-3" />
+              </span>
+            </button>
+          </TooltipTrigger>
+        </ContextMenuTrigger>
+        <TooltipContent side="right">
+        <p>{displayName}</p>
+        {customStatus && <p className="text-xs italic">{customStatus}</p>}
+      </TooltipContent>
+      </Tooltip>
+      <ContextMenuContent>
+        <ContextMenuItem
+          onClick={(e) => onClose(e as unknown as React.MouseEvent)}
+          className="gap-2"
+        >
+          <XCircle className="w-4 h-4" />
+          Close Conversation
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+export function useDmChannels() {
+  return useQuery({
+    queryKey: ['dm-channels'],
+    queryFn: () => userApi.userMeChannelsGet().then((r) => r.data ?? []),
+  })
+}
+
+export function useOpenDm() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+
+  return async (userId: string) => {
+    try {
+      const res = await userApi.userMeFriendsUserIdGet({ userId })
+      const channel = res.data
+      await queryClient.invalidateQueries({ queryKey: ['dm-channels'] })
+      if (channel.id !== undefined) {
+        navigate(`/app/@me/${String(channel.id)}`)
+      }
+    } catch {
+      toast.error('Failed to open DM')
+    }
+  }
+}
