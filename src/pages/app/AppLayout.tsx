@@ -13,6 +13,7 @@ import ChannelSettingsModal from '@/components/modals/ChannelSettingsModal'
 import UserProfilePanel from '@/components/layout/UserProfilePanel'
 import type { DtoUser } from '@/types'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
+import { useVoiceStore } from '@/stores/voiceStore'
 import { sendPresenceStatus } from '@/services/wsService'
 import { useFolderStore } from '@/stores/folderStore'
 import { useReadStateStore } from '@/stores/readStateStore'
@@ -140,6 +141,19 @@ export default function AppLayout() {
         // determine where to scroll on channel open (unread separator position).
         if (settingsRes?.data) {
           useReadStateStore.getState().setFromSettings(settingsRes.data)
+        }
+        // Restore voice settings
+        if (settingsRes?.data?.settings?.devices) {
+          const d = settingsRes.data.settings.devices
+          useVoiceStore.getState().setSettings({
+            audioInputDevice: d.audio_input_device ?? '',
+            audioOutputDevice: d.audio_output_device ?? '',
+            audioInputLevel: d.audio_input_level ?? 100,
+            audioOutputLevel: d.audio_output_level ?? 100,
+            autoGainControl: d.auto_gain_control ?? true,
+            echoCancellation: d.echo_cancellation ?? true,
+            noiseSuppression: d.noise_suppression ?? true,
+          })
         }
       })
       .catch(() => {

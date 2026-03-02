@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { X, Camera, LogOut, Trash2, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { X, Camera, LogOut, Trash2, AlertTriangle, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
@@ -9,11 +9,15 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useAuthStore } from '@/stores/authStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useVoiceStore } from '@/stores/voiceStore'
+import { applyVoiceSettings } from '@/services/voiceService'
 import { useNavigate } from 'react-router-dom'
 import { userApi, uploadApi, axiosInstance } from '@/api/client'
 import type { ModelUserSettingsData, DtoUser } from '@/client'
 import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
+import MicTest from '@/components/voice/MicTest'
+import OutputTest from '@/components/voice/OutputTest'
 
 type Section = 'account' | 'appearance' | 'voice' | 'danger'
 
@@ -23,6 +27,25 @@ const NAV: { key: Section; label: string; danger?: boolean }[] = [
   { key: 'voice', label: 'Voice & Video' },
   { key: 'danger', label: 'Danger Zone', danger: true },
 ]
+
+/** Converts a KeyboardEvent.code like "KeyV" or "ShiftLeft" into a readable label. */
+function formatKeyCode(code: string): string {
+  if (code.startsWith('Key')) return code.slice(3).toUpperCase()
+  if (code.startsWith('Digit')) return code.slice(5)
+  if (code.startsWith('Numpad')) return 'Num ' + code.slice(6)
+  // Common modifiers
+  const map: Record<string, string> = {
+    ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift',
+    ControlLeft: 'Left Ctrl', ControlRight: 'Right Ctrl',
+    AltLeft: 'Left Alt', AltRight: 'Right Alt',
+    MetaLeft: 'Left Meta', MetaRight: 'Right Meta',
+    Space: 'Space', Tab: 'Tab', CapsLock: 'Caps Lock',
+    Backquote: '`', Minus: '-', Equal: '=',
+    BracketLeft: '[', BracketRight: ']', Backslash: '\\',
+    Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
+  }
+  return map[code] ?? code
+}
 
 function Toggle({ value, onToggle }: { value: boolean; onToggle: () => void }) {
   return (
@@ -78,9 +101,15 @@ export default function AppSettingsModal() {
   const [autoGainControl, setAutoGainControl] = useState(true)
   const [echoCancellation, setEchoCancellation] = useState(true)
   const [noiseSuppression, setNoiseSuppression] = useState(true)
+  const [inputMode, setInputMode] = useState<'voice_activity' | 'push_to_talk'>('voice_activity')
+  const [voiceActivityThreshold, setVoiceActivityThreshold] = useState(50)
+  const [pushToTalkKey, setPushToTalkKey] = useState('')
+  const [isRecordingPTTKey, setIsRecordingPTTKey] = useState(false)
   const [savingVoice, setSavingVoice] = useState(false)
+  const [voiceDirty, setVoiceDirty] = useState(false)
   const [audioInputDevices, setAudioInputDevices] = useState<MediaDeviceInfo[]>([])
   const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([])
+
 
   // Load saved settings
   const { data: settingsData } = useQuery({
@@ -118,6 +147,14 @@ export default function AppSettingsModal() {
       setEchoCancellation(d.echo_cancellation ?? true)
       setNoiseSuppression(d.noise_suppression ?? true)
     }
+    if (settingsData?.devices) {
+      const d = settingsData.devices as Record<string, unknown>
+      if (d.input_mode === 'push_to_talk') setInputMode('push_to_talk')
+      else setInputMode('voice_activity')
+      if (typeof d.voice_activity_threshold === 'number') setVoiceActivityThreshold(d.voice_activity_threshold)
+      if (typeof d.push_to_talk_key === 'string') setPushToTalkKey(d.push_to_talk_key)
+    }
+    setVoiceDirty(false)
   }, [settingsData])
 
   // Enumerate audio devices when switching to Voice section
@@ -139,6 +176,23 @@ export default function AppSettingsModal() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [open, close])
+
+  // Mark voice dirty on any change
+  const markVoiceDirty = useCallback(() => setVoiceDirty(true), [])
+
+  // PTT key recording handler
+  useEffect(() => {
+    if (!isRecordingPTTKey) return
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setPushToTalkKey(e.code)
+      setIsRecordingPTTKey(false)
+      setVoiceDirty(true)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isRecordingPTTKey])
 
   if (!open) return null
 
@@ -238,14 +292,46 @@ export default function AppSettingsModal() {
           auto_gain_control: autoGainControl,
           echo_cancellation: echoCancellation,
           noise_suppression: noiseSuppression,
-        },
+          // Extended voice settings (stored in devices blob)
+          input_mode: inputMode,
+          voice_activity_threshold: voiceActivityThreshold,
+          push_to_talk_key: pushToTalkKey,
+        } as Record<string, unknown>,
       })
+      useVoiceStore.getState().setSettings({
+        audioInputDevice,
+        audioOutputDevice,
+        audioInputLevel: inputLevel,
+        audioOutputLevel: outputLevel,
+        autoGainControl,
+        echoCancellation,
+        noiseSuppression,
+        inputMode,
+        voiceActivityThreshold,
+        pushToTalkKey,
+      })
+      applyVoiceSettings()
+      setVoiceDirty(false)
       toast.success('Voice settings saved')
     } catch {
       toast.error('Failed to save voice settings')
     } finally {
       setSavingVoice(false)
     }
+  }
+
+  function handleResetVoiceDefaults() {
+    setAudioInputDevice('')
+    setAudioOutputDevice('')
+    setInputLevel(100)
+    setOutputLevel(100)
+    setAutoGainControl(true)
+    setEchoCancellation(true)
+    setNoiseSuppression(true)
+    setInputMode('voice_activity')
+    setVoiceActivityThreshold(50)
+    setPushToTalkKey('')
+    setVoiceDirty(true)
   }
 
   const selectClass =
@@ -468,13 +554,13 @@ export default function AppSettingsModal() {
               <div className="space-y-6">
                 <h2 className="text-xl font-bold">Voice & Video</h2>
 
-                {/* Input */}
+                {/* ── Input Device ── */}
                 <div className="space-y-2">
                   <Label htmlFor="audio-input">Input Device</Label>
                   <select
                     id="audio-input"
                     value={audioInputDevice}
-                    onChange={(e) => setAudioInputDevice(e.target.value)}
+                    onChange={(e) => { setAudioInputDevice(e.target.value); markVoiceDirty() }}
                     className={selectClass}
                   >
                     <option value="">Default</option>
@@ -494,20 +580,20 @@ export default function AppSettingsModal() {
                   <input
                     type="range" min={0} max={200} step={5}
                     value={inputLevel}
-                    onChange={(e) => setInputLevel(Number(e.target.value))}
+                    onChange={(e) => { setInputLevel(Number(e.target.value)); markVoiceDirty() }}
                     className="w-full accent-primary"
                   />
                 </div>
 
                 <Separator />
 
-                {/* Output */}
+                {/* ── Output Device ── */}
                 <div className="space-y-2">
                   <Label htmlFor="audio-output">Output Device</Label>
                   <select
                     id="audio-output"
                     value={audioOutputDevice}
-                    onChange={(e) => setAudioOutputDevice(e.target.value)}
+                    onChange={(e) => { setAudioOutputDevice(e.target.value); markVoiceDirty() }}
                     className={selectClass}
                   >
                     <option value="">Default</option>
@@ -527,34 +613,154 @@ export default function AppSettingsModal() {
                   <input
                     type="range" min={0} max={200} step={5}
                     value={outputLevel}
-                    onChange={(e) => setOutputLevel(Number(e.target.value))}
+                    onChange={(e) => { setOutputLevel(Number(e.target.value)); markVoiceDirty() }}
                     className="w-full accent-primary"
                   />
                 </div>
 
+                {/* ── Output Test ── */}
+                <OutputTest
+                  outputDeviceId={audioOutputDevice}
+                  outputLevel={outputLevel}
+                />
+
                 <Separator />
 
-                {/* Audio processing toggles */}
+                {/* ── Mic Test ── */}
+                <MicTest
+                  inputDeviceId={audioInputDevice}
+                  inputLevel={inputLevel}
+                  autoGainControl={autoGainControl}
+                  echoCancellation={echoCancellation}
+                  noiseSuppression={noiseSuppression}
+                  outputDeviceId={audioOutputDevice}
+                  outputLevel={outputLevel}
+                />
+
+                <Separator />
+
+                {/* ── Input Mode ── */}
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Input Mode
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setInputMode('voice_activity'); markVoiceDirty() }}
+                      className={cn(
+                        'flex-1 px-4 py-2.5 rounded-md border text-sm font-medium transition-colors',
+                        inputMode === 'voice_activity'
+                          ? 'border-primary bg-primary/10 text-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:text-foreground hover:border-muted-foreground',
+                      )}
+                    >
+                      Voice Activity
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setInputMode('push_to_talk'); markVoiceDirty() }}
+                      className={cn(
+                        'flex-1 px-4 py-2.5 rounded-md border text-sm font-medium transition-colors',
+                        inputMode === 'push_to_talk'
+                          ? 'border-primary bg-primary/10 text-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:text-foreground hover:border-muted-foreground',
+                      )}
+                    >
+                      Push to Talk
+                    </button>
+                  </div>
+
+                  {inputMode === 'voice_activity' && (
+                    <div className="space-y-2 pt-1">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm text-muted-foreground">Sensitivity Threshold</Label>
+                        <span className="text-sm font-medium tabular-nums">{voiceActivityThreshold}%</span>
+                      </div>
+                      <input
+                        type="range" min={0} max={100} step={1}
+                        value={voiceActivityThreshold}
+                        onChange={(e) => { setVoiceActivityThreshold(Number(e.target.value)); markVoiceDirty() }}
+                        className="w-full accent-primary"
+                      />
+                      <div className="flex justify-between text-[10px] text-muted-foreground select-none">
+                        <span>Sensitive</span>
+                        <span>Aggressive</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {inputMode === 'push_to_talk' && (
+                    <div className="space-y-2 pt-1">
+                      <Label className="text-sm text-muted-foreground">Shortcut</Label>
+                      <div className="flex gap-2 items-center">
+                        <button
+                          type="button"
+                          onClick={() => setIsRecordingPTTKey(true)}
+                          className={cn(
+                            'flex-1 px-3 py-2 rounded-md border text-sm text-left transition-colors',
+                            isRecordingPTTKey
+                              ? 'border-primary bg-primary/10 text-primary animate-pulse'
+                              : 'border-border bg-background text-foreground hover:border-muted-foreground',
+                          )}
+                        >
+                          {isRecordingPTTKey
+                            ? 'Press any key…'
+                            : pushToTalkKey
+                              ? formatKeyCode(pushToTalkKey)
+                              : 'Click to set key'}
+                        </button>
+                        {pushToTalkKey && !isRecordingPTTKey && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => { setPushToTalkKey(''); markVoiceDirty() }}
+                            className="text-muted-foreground"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* ── Audio Processing Toggles ── */}
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
                     Audio Processing
                   </p>
                   <div className="space-y-1">
                     {[
-                      { label: 'Echo Cancellation', value: echoCancellation, onToggle: () => setEchoCancellation((v) => !v) },
-                      { label: 'Noise Suppression', value: noiseSuppression, onToggle: () => setNoiseSuppression((v) => !v) },
-                      { label: 'Auto Gain Control', value: autoGainControl, onToggle: () => setAutoGainControl((v) => !v) },
-                    ].map(({ label, value, onToggle }) => (
-                      <div key={label} className="flex items-center justify-between py-2.5">
-                        <p className="text-sm">{label}</p>
+                      { label: 'Echo Cancellation', desc: 'Removes echo from your microphone output', value: echoCancellation, onToggle: () => { setEchoCancellation((v) => !v); markVoiceDirty() } },
+                      { label: 'Noise Suppression', desc: 'Filters out background noise like fans and keyboards', value: noiseSuppression, onToggle: () => { setNoiseSuppression((v) => !v); markVoiceDirty() } },
+                      { label: 'Auto Gain Control', desc: 'Automatically adjusts input volume', value: autoGainControl, onToggle: () => { setAutoGainControl((v) => !v); markVoiceDirty() } },
+                    ].map(({ label, desc, value, onToggle }) => (
+                      <div key={label} className="flex items-center justify-between py-2.5 gap-4">
+                        <div className="min-w-0">
+                          <p className="text-sm">{label}</p>
+                          <p className="text-xs text-muted-foreground">{desc}</p>
+                        </div>
                         <Toggle value={value} onToggle={onToggle} />
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex justify-end pt-2">
-                  <Button onClick={() => void handleSaveVoice()} disabled={savingVoice}>
+                {/* ── Action Buttons ── */}
+                <div className="flex items-center justify-between pt-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleResetVoiceDefaults}
+                    className="gap-2 text-muted-foreground"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Reset to Defaults
+                  </Button>
+                  <Button onClick={() => void handleSaveVoice()} disabled={savingVoice || !voiceDirty}>
                     {savingVoice ? 'Saving…' : 'Save Changes'}
                   </Button>
                 </div>

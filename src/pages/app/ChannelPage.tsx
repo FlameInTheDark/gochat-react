@@ -23,6 +23,8 @@ export default function ChannelPage() {
   const { channelId, serverId } = useParams<{ channelId: string; serverId: string }>()
   const { channels } = useOutletContext<ServerOutletContext>()
   const channel = channels.find((c) => String(c.id) === channelId)
+  const isVoice = channel?.type === ChannelType.ChannelTypeGuildVoice
+
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -62,7 +64,7 @@ export default function ChannelPage() {
     endReached, latestReached, unreadSeparatorAfter,
     loadOlder, loadNewer, ackLatest,
   } = useMessagePagination(
-    channelId,
+    isVoice ? undefined : channelId,
     jumpToMessageId,
     channel?.last_message_id != null ? String(channel.last_message_id) : undefined,
   )
@@ -125,7 +127,6 @@ export default function ChannelPage() {
 
   if (!channelId) return null
 
-  const isVoice = channel?.type === ChannelType.ChannelTypeGuildVoice
   const Icon = isVoice ? Volume2 : Hash
 
   // Voice channel view
