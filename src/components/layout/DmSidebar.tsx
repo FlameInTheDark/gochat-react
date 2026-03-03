@@ -21,11 +21,13 @@ import { cn } from '@/lib/utils'
 import { usePresenceStore } from '@/stores/presenceStore'
 import { addPresenceSubscription } from '@/services/wsService'
 import UserArea from './UserArea'
+import { useTranslation } from 'react-i18next'
 
 export default function DmSidebar() {
   const navigate = useNavigate()
   const { userId: activeChannelId } = useParams<{ userId?: string }>()
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
 
   const { data: dmChannels = [] } = useQuery({
     queryKey: ['dm-channels'],
@@ -54,7 +56,7 @@ export default function DmSidebar() {
         old?.filter((c) => String(c.id) !== String(channel.id)) ?? [],
       )
     } catch {
-      toast.error('Failed to close conversation')
+      toast.error(t('dm.closeDmFailed'))
       await queryClient.invalidateQueries({ queryKey: ['dm-channels'] })
     }
   }
@@ -63,7 +65,7 @@ export default function DmSidebar() {
     <div className="flex flex-col w-60 bg-sidebar border-r border-sidebar-border shrink-0">
       {/* Header */}
       <div className="h-12 flex items-center px-3 font-semibold border-b border-sidebar-border shrink-0">
-        <span className="text-sm">Direct Messages</span>
+        <span className="text-sm">{t('dm.title')}</span>
       </div>
 
       <ScrollArea className="flex-1">
@@ -79,13 +81,13 @@ export default function DmSidebar() {
             )}
           >
             <Users className="w-4 h-4 shrink-0" />
-            <span className="font-medium">Friends</span>
+            <span className="font-medium">{t('dm.friends')}</span>
           </button>
 
           {/* DM section header */}
           {dmChannels.length > 0 && (
             <p className="px-2 pt-3 pb-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider">
-              Direct Messages
+              {t('dm.directMessages')}
             </p>
           )}
 
@@ -127,8 +129,9 @@ function DmItem({
   onNavigate: () => void
   onClose: (e: React.MouseEvent) => void
 }) {
+  const { t } = useTranslation()
   const isGroup = channel.type === ChannelType.ChannelTypeGroupDM
-  const displayName = channel.name ?? (isGroup ? 'Group DM' : `User ${String(channel.participant_id ?? '')}`)
+  const displayName = channel.name ?? (isGroup ? t('dm.groupDm') : `User ${String(channel.participant_id ?? '')}`)
   const initials = displayName.charAt(0).toUpperCase()
 
   // For 1-on-1 DMs, show participant presence + custom status
@@ -182,9 +185,9 @@ function DmItem({
           </TooltipTrigger>
         </ContextMenuTrigger>
         <TooltipContent side="right">
-        <p>{displayName}</p>
-        {customStatus && <p className="text-xs italic">{customStatus}</p>}
-      </TooltipContent>
+          <p>{displayName}</p>
+          {customStatus && <p className="text-xs italic">{customStatus}</p>}
+        </TooltipContent>
       </Tooltip>
       <ContextMenuContent>
         <ContextMenuItem
@@ -192,7 +195,7 @@ function DmItem({
           className="gap-2"
         >
           <XCircle className="w-4 h-4" />
-          Close Conversation
+          {t('dm.closeConversation')}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

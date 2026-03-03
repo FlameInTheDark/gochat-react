@@ -33,6 +33,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { useTranslation } from 'react-i18next'
 import { userApi } from '@/api/client'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
@@ -234,7 +235,7 @@ function MiniGuildIcon({ guild, isUnread }: { guild: DtoGuild; isUnread?: boolea
   return (
     <div
       className={cn(
-        'w-4 h-4 rounded-[3px] overflow-hidden flex items-center justify-center text-[7px] font-bold text-white shrink-0 border',
+        'w-4 h-4 squircle overflow-hidden flex items-center justify-center text-[7px] font-bold text-white shrink-0 border',
         isUnread ? 'border-primary bg-primary/10' : 'border-transparent bg-black/20',
       )}
     >
@@ -251,10 +252,10 @@ function MiniGuildIcon({ guild, isUnread }: { guild: DtoGuild; isUnread?: boolea
 function GuildDragPreview({ guild }: { guild?: DtoGuild }) {
   if (!guild) return null
   return (
-    <div className="w-12 h-12 rounded-[16px] overflow-hidden opacity-90 shadow-xl">
-      <Avatar className="w-12 h-12">
+    <div className="w-12 h-12 squircle overflow-hidden opacity-90 shadow-xl">
+      <Avatar className="w-12 h-12 squircle rounded-none">
         <AvatarImage src={guild.icon?.url} alt={guild.name ?? ''} className="object-cover" />
-        <AvatarFallback>{(guild.name ?? '?').charAt(0).toUpperCase()}</AvatarFallback>
+        <AvatarFallback className="rounded-none">{(guild.name ?? '?').charAt(0).toUpperCase()}</AvatarFallback>
       </Avatar>
     </div>
   )
@@ -265,7 +266,7 @@ function FolderDragPreview({ folder, guilds }: { folder?: GuildFolder; guilds: D
   const tokens = computeFolderTokens(folder.color)
   return (
     <div
-      className="w-12 h-12 rounded-xl border flex items-center justify-center opacity-90 shadow-2xl"
+      className="w-12 h-12 squircle border flex items-center justify-center opacity-90 shadow-2xl"
       style={{
         ...tokens,
         backgroundColor: 'var(--fc-collapsed-bg)',
@@ -277,7 +278,7 @@ function FolderDragPreview({ folder, guilds }: { folder?: GuildFolder; guilds: D
           <MiniGuildIcon key={String(g.id)} guild={g} />
         ))}
         {Array.from({ length: Math.max(0, 4 - guilds.length) }).map((_, i) => (
-          <div key={i} className="w-4 h-4 rounded-[3px] bg-black/20" />
+          <div key={i} className="w-4 h-4 squircle bg-black/20" />
         ))}
       </div>
     </div>
@@ -293,6 +294,7 @@ interface FolderDialogProps {
 }
 
 function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [color, setColor] = useState(0)
 
@@ -304,7 +306,7 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
   }, [open, folder])
 
   function handleSave() {
-    onSave(name.trim() || 'New Folder', color)
+    onSave(name.trim() || t('serverSidebar.folderNameDefault'), color)
     onClose()
   }
 
@@ -312,11 +314,11 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{folder ? 'Edit Folder' : 'Create Folder'}</DialogTitle>
+          <DialogTitle>{folder ? t('serverSidebar.editFolderTitle') : t('serverSidebar.createFolderTitle')}</DialogTitle>
           <DialogDescription>
             {folder
-              ? 'Update the folder name and color.'
-              : 'Give your new folder a name and optional color.'}
+              ? t('serverSidebar.editFolderDesc')
+              : t('serverSidebar.createFolderDesc')}
           </DialogDescription>
         </DialogHeader>
 
@@ -324,7 +326,7 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Folder name"
+            placeholder={t('serverSidebar.folderName')}
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
             autoFocus
           />
@@ -348,9 +350,9 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t('common.cancel')}
           </Button>
-          <Button onClick={handleSave}>{folder ? 'Save' : 'Create'}</Button>
+          <Button onClick={handleSave}>{folder ? t('common.save') : t('serverSidebar.createFolderTitle')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -365,18 +367,19 @@ function FolderContextItems({
   onEdit: () => void
   onDissolve: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <>
       <ContextMenuItem onClick={onEdit} className="gap-2">
         <Pencil className="w-4 h-4" />
-        Edit Folder
+        {t('serverSidebar.editFolder')}
       </ContextMenuItem>
       <ContextMenuItem
         onClick={onDissolve}
         className="text-destructive focus:text-destructive gap-2"
       >
         <FolderX className="w-4 h-4" />
-        Dissolve Folder
+        {t('serverSidebar.dissolveFolder')}
       </ContextMenuItem>
     </>
   )
@@ -412,6 +415,7 @@ function SortableGuildIcon({
   onAddToFolder,
   folders,
 }: SortableGuildIconProps) {
+  const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: itemId,
   })
@@ -438,19 +442,18 @@ function SortableGuildIcon({
                 {...listeners}
                 onClick={onNavigate}
                 className={cn(
-                  'w-12 h-12 transition-all overflow-hidden shrink-0',
-                  isActive ? 'rounded-[16px]' : 'rounded-full hover:rounded-[16px]',
-                  isMergeTarget && 'ring-2 ring-primary scale-110 rounded-[16px]',
+                  'w-12 h-12 transition-all overflow-hidden shrink-0 squircle',
+                  isMergeTarget && 'ring-2 ring-primary scale-110',
                 )}
               >
                 <Avatar
                   className={cn(
-                    'w-12 h-12',
+                    'w-12 h-12 squircle rounded-none',
                     isActive && 'ring-2 ring-primary ring-offset-2 ring-offset-sidebar',
                   )}
                 >
                   <AvatarImage src={guild.icon?.url} alt={guild.name ?? ''} className="object-cover" />
-                  <AvatarFallback className={cn(isActive && 'bg-primary text-primary-foreground')}>
+                  <AvatarFallback className={cn('rounded-none', isActive && 'bg-primary text-primary-foreground')}>
                     {(guild.name ?? '?').charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
@@ -463,30 +466,30 @@ function SortableGuildIcon({
         <ContextMenuContent>
           <ContextMenuItem onClick={onOpenSettings} className="gap-2">
             <Settings className="w-4 h-4" />
-            Server Settings
+            {t('serverSidebar.serverSettings')}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(guild.id)) }}
             className="gap-2"
           >
             <Copy className="w-4 h-4" />
-            Copy Server ID
+            {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onNewFolder} className="gap-2">
             <FolderPlus className="w-4 h-4" />
-            New Folder
+            {t('serverSidebar.newFolder')}
           </ContextMenuItem>
           {folders.length > 0 && (
             <ContextMenuSub>
               <ContextMenuSubTrigger className="gap-2">
                 <FolderPlus className="w-4 h-4" />
-                Add to Folder
+                {t('serverSidebar.addToFolder')}
               </ContextMenuSubTrigger>
               <ContextMenuSubContent>
                 {folders.map((f) => (
                   <ContextMenuItem key={f.id} onClick={() => onAddToFolder(f.id)}>
-                    {f.name || 'Folder'}
+                    {f.name || t('serverSidebar.folderNameDefault')}
                   </ContextMenuItem>
                 ))}
               </ContextMenuSubContent>
@@ -498,7 +501,7 @@ function SortableGuildIcon({
             className="text-destructive focus:text-destructive gap-2"
           >
             <LogOut className="w-4 h-4" />
-            Leave Server
+            {t('serverSidebar.leaveServer')}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -530,6 +533,7 @@ function SortableGuildInPanel({
   onLeave,
   onRemoveFromFolder,
 }: SortableGuildInPanelProps) {
+  const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: itemId,
   })
@@ -559,13 +563,12 @@ function SortableGuildInPanel({
                 {...listeners}
                 onClick={onNavigate}
                 className={cn(
-                  'w-10 h-10 transition-all overflow-hidden shrink-0',
-                  isActive ? 'rounded-[12px]' : 'rounded-full hover:rounded-[12px]',
+                  'w-10 h-10 transition-all overflow-hidden shrink-0 squircle',
                 )}
               >
                 <Avatar
                   className={cn(
-                    'w-10 h-10',
+                    'w-10 h-10 squircle rounded-none',
                     isActive && 'ring-2 ring-primary ring-offset-2 ring-offset-sidebar',
                   )}
                 >
@@ -574,7 +577,7 @@ function SortableGuildInPanel({
                     alt={guild.name ?? ''}
                     className="object-cover"
                   />
-                  <AvatarFallback className={cn(isActive && 'bg-primary text-primary-foreground')}>
+                  <AvatarFallback className={cn('rounded-none', isActive && 'bg-primary text-primary-foreground')}>
                     {(guild.name ?? '?').charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
@@ -587,19 +590,19 @@ function SortableGuildInPanel({
         <ContextMenuContent>
           <ContextMenuItem onClick={onServerSettings} className="gap-2">
             <Settings className="w-4 h-4" />
-            Server Settings
+            {t('serverSidebar.serverSettings')}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(guild.id)) }}
             className="gap-2"
           >
             <Copy className="w-4 h-4" />
-            Copy Server ID
+            {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onRemoveFromFolder} className="gap-2">
             <FolderMinus className="w-4 h-4" />
-            Remove from Folder
+            {t('serverSidebar.removeFromFolder')}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem
@@ -607,7 +610,7 @@ function SortableGuildInPanel({
             className="text-destructive focus:text-destructive gap-2"
           >
             <LogOut className="w-4 h-4" />
-            Leave Server
+            {t('serverSidebar.leaveServer')}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -649,6 +652,7 @@ function SortableFolderItem({
   onLeaveGuild,
   onRemoveGuildFromFolder,
 }: SortableFolderItemProps) {
+  const { t } = useTranslation()
   const { toggleCollapse } = useFolderStore()
   const {
     attributes,
@@ -694,7 +698,7 @@ function SortableFolderItem({
                   {...listeners}
                   onClick={() => toggleCollapse(folder.id)}
                   className={cn(
-                    'w-12 h-12 rounded-xl border flex items-center justify-center',
+                    'w-12 h-12 squircle border flex items-center justify-center',
                     'transition-all shrink-0 hover:brightness-110 active:scale-95',
                     isDragTarget && 'ring-2 ring-primary scale-110',
                   )}
@@ -717,7 +721,7 @@ function SortableFolderItem({
                 </button>
               </TooltipTrigger>
             </ContextMenuTrigger>
-            <TooltipContent side="right">{folder.name || 'Folder'}</TooltipContent>
+            <TooltipContent side="right">{folder.name || t('serverSidebar.folderNameDefault')}</TooltipContent>
           </Tooltip>
           <ContextMenuContent>
             <FolderContextItems onEdit={onEditFolder} onDissolve={onDissolveFolder} />
@@ -749,7 +753,7 @@ function SortableFolderItem({
                   onClick={() => toggleCollapse(folder.id)}
                   aria-label={`Collapse ${folder.name || 'folder'}`}
                   className={cn(
-                    'w-12 h-12 rounded-xl border flex items-center justify-center',
+                    'w-12 h-12 squircle border flex items-center justify-center',
                     'transition-all shrink-0 hover:brightness-110 active:scale-95',
                     isDragTarget && 'ring-2 ring-primary',
                   )}
@@ -762,7 +766,7 @@ function SortableFolderItem({
                 </button>
               </TooltipTrigger>
             </ContextMenuTrigger>
-            <TooltipContent side="right">{folder.name || 'Folder'}</TooltipContent>
+            <TooltipContent side="right">{folder.name || t('serverSidebar.folderNameDefault')}</TooltipContent>
           </Tooltip>
           <ContextMenuContent>
             <FolderContextItems onEdit={onEditFolder} onDissolve={onDissolveFolder} />
@@ -866,7 +870,7 @@ export default function ServerSidebar() {
     if (guilds) {
       syncGuilds(guilds.map((g) => String(g.id)))
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guilds, syncGuilds, settingsVersion])
 
   // Navigate away from deleted server
@@ -1166,7 +1170,7 @@ export default function ServerSidebar() {
             <TooltipTrigger asChild>
               <button
                 onClick={() => navigate('/app/@me')}
-                className="w-12 h-12 rounded-[24px] hover:rounded-[16px] transition-all bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0"
+                className="w-12 h-12 squircle transition-all bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0"
               >
                 GC
               </button>
@@ -1241,7 +1245,7 @@ export default function ServerSidebar() {
             <TooltipTrigger asChild>
               <button
                 onClick={openCreateServer}
-                className="w-12 h-12 rounded-full hover:rounded-[16px] transition-all bg-muted flex items-center justify-center text-2xl text-muted-foreground hover:text-foreground hover:bg-primary shrink-0"
+                className="w-12 h-12 squircle transition-all bg-muted flex items-center justify-center text-2xl text-muted-foreground hover:text-foreground hover:bg-primary shrink-0"
               >
                 +
               </button>
@@ -1253,7 +1257,7 @@ export default function ServerSidebar() {
             <TooltipTrigger asChild>
               <button
                 onClick={openJoinServer}
-                className="w-12 h-12 rounded-full hover:rounded-[16px] transition-all bg-muted flex items-center justify-center text-xl text-muted-foreground hover:text-foreground hover:bg-green-600 shrink-0"
+                className="w-12 h-12 squircle transition-all bg-muted flex items-center justify-center text-xl text-muted-foreground hover:text-foreground hover:bg-green-600 shrink-0"
               >
                 ⇢
               </button>

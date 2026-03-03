@@ -16,6 +16,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { toast } from 'sonner'
 import { ChannelType } from '@/types'
 import { cn } from '@/lib/utils'
+import { useTranslation } from 'react-i18next'
 
 export default function CreateChannelModal() {
   const open = useUiStore((s) => s.createChannelOpen)
@@ -23,6 +24,7 @@ export default function CreateChannelModal() {
   const parentId = useUiStore((s) => s.createChannelParentId)
   const serverId = useUiStore((s) => s.createChannelServerId)
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [channelType, setChannelType] = useState<0 | 1>(0)
   const [loading, setLoading] = useState(false)
@@ -44,7 +46,7 @@ export default function CreateChannelModal() {
       setName('')
       setChannelType(0)
     } catch {
-      toast.error('Failed to create channel')
+      toast.error(t('modals.createChannelFailed'))
     } finally {
       setLoading(false)
     }
@@ -54,12 +56,12 @@ export default function CreateChannelModal() {
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create a Channel</DialogTitle>
+          <DialogTitle>{t('modals.createChannel')}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 py-2">
           {/* Channel type */}
           <div className="space-y-2">
-            <Label>Channel Type</Label>
+            <Label>{t('modals.channelType')}</Label>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -72,7 +74,7 @@ export default function CreateChannelModal() {
                 )}
               >
                 <Hash className="w-4 h-4" />
-                Text
+                {t('modals.textChannel')}
               </button>
               <button
                 type="button"
@@ -85,29 +87,29 @@ export default function CreateChannelModal() {
                 )}
               >
                 <Volume2 className="w-4 h-4" />
-                Voice
+                {t('modals.voiceChannel')}
               </button>
             </div>
           </div>
 
           {/* Channel name */}
           <div className="space-y-2">
-            <Label htmlFor="channel-name">Channel Name</Label>
+            <Label htmlFor="channel-name">{t('modals.channelName')}</Label>
             <Input
               id="channel-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={channelType === 0 ? 'new-channel' : 'Voice Channel'}
+              placeholder={channelType === 0 ? t('modals.channelNamePlaceholderText') : t('modals.channelNamePlaceholderVoice')}
               onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={close}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={handleCreate} disabled={loading || !name.trim()}>
-            Create Channel
+            {t('modals.createChannel')}
           </Button>
         </DialogFooter>
       </DialogContent>

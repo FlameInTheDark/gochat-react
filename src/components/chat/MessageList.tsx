@@ -5,6 +5,7 @@ import type { DtoMessage } from '@/types'
 import type { MentionResolver } from '@/lib/messageParser'
 import MessageItem from './MessageItem'
 import { snowflakeToDate, snowflakeToDayLabel } from '@/lib/snowflake'
+import { useTranslation } from 'react-i18next'
 
 interface Props {
   messages: DtoMessage[]
@@ -65,6 +66,7 @@ function DateDivider({ label }: { label: string }) {
 
 function ConversationStart({ channelName }: { channelName?: string }) {
   const isChannel = !!channelName
+  const { t } = useTranslation()
   return (
     <div className="px-4 pt-10 pb-6">
       <div className="w-14 h-14 rounded-full bg-muted flex items-center justify-center mb-4">
@@ -74,12 +76,12 @@ function ConversationStart({ channelName }: { channelName?: string }) {
         }
       </div>
       <h3 className="text-2xl font-bold mb-1">
-        {isChannel ? `Welcome to #${channelName}!` : 'Beginning of conversation'}
+        {isChannel ? t('chat.welcomeChannel', { name: channelName }) : t('chat.welcomeDm')}
       </h3>
       <p className="text-sm text-muted-foreground">
         {isChannel
-          ? `This is the very beginning of the #${channelName} channel.`
-          : 'This is the beginning of your message history.'}
+          ? t('chat.welcomeChannelDesc', { name: channelName })
+          : t('chat.welcomeDmDesc')}
       </p>
     </div>
   )
@@ -127,6 +129,7 @@ export default function MessageList({
   onLoadNewer,
   onAckLatest,
 }: Props) {
+  const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const prevLengthRef = useRef(0)
@@ -347,7 +350,7 @@ export default function MessageList({
                     >
                       <div className="flex-1 h-px bg-red-500/60" />
                       <span className="text-xs font-semibold text-red-400 px-2 whitespace-nowrap">
-                        NEW MESSAGES
+                        {t('chat.newMessages')}
                       </span>
                       <div className="flex-1 h-px bg-red-500/60" />
                     </div>
@@ -376,7 +379,7 @@ export default function MessageList({
           className="absolute bottom-4 right-4 z-10 flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-lg hover:bg-primary/90 transition-colors"
         >
           <ChevronDown className="w-3.5 h-3.5" />
-          {latestReached ? 'Jump to bottom' : 'Jump to present'}
+          {latestReached ? t('chat.jumpToBottom') : t('chat.jumpToPresent')}
         </button>
       )}
     </div>

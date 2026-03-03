@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useUiStore } from '@/stores/uiStore'
 import { inviteApi } from '@/api/client'
+import { useTranslation } from 'react-i18next'
 
 // Extract invite code from a full URL or bare code
 function extractCode(input: string): string {
@@ -32,6 +33,7 @@ export default function JoinServerModal() {
   const close = useUiStore((s) => s.closeJoinServer)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -49,7 +51,7 @@ export default function JoinServerModal() {
         navigate(`/app/${String(guild.id)}`)
       }
     } catch {
-      toast.error('Invalid or expired invite link')
+      toast.error(t('modals.joinServerFailed'))
     } finally {
       setLoading(false)
     }
@@ -59,27 +61,27 @@ export default function JoinServerModal() {
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Join a Server</DialogTitle>
+          <DialogTitle>{t('modals.joinServer')}</DialogTitle>
           <DialogDescription>
-            Enter an invite link or code to join an existing server.
+            {t('modals.joinServerDesc')}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
-          <Label htmlFor="invite-code">Invite Link or Code</Label>
+          <Label htmlFor="invite-code">{t('modals.inviteLinkOrCode')}</Label>
           <Input
             id="invite-code"
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="https://…/invite/ABC123 or ABC123"
+            placeholder={t('modals.invitePlaceholder')}
             onKeyDown={(e) => e.key === 'Enter' && void handleJoin()}
           />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={close}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={() => void handleJoin()} disabled={loading || !code.trim()}>
-            Join Server
+            {t('modals.join')}
           </Button>
         </DialogFooter>
       </DialogContent>

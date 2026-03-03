@@ -13,31 +13,33 @@ import { userApi } from '@/api/client'
 import { usePresenceStore } from '@/stores/presenceStore'
 import { addPresenceSubscription } from '@/services/wsService'
 import type { DtoUser } from '@/types'
+import { useTranslation } from 'react-i18next'
 
 type Tab = 'all' | 'pending' | 'add'
 
 export default function MePage() {
   const [tab, setTab] = useState<Tab>('all')
+  const { t } = useTranslation()
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Header */}
       <div className="h-12 flex items-center gap-4 px-4 border-b border-border shrink-0">
-        <span className="font-semibold text-sm">Friends</span>
+        <span className="font-semibold text-sm">{t('friends.title')}</span>
         <Separator orientation="vertical" className="h-5" />
         <nav className="flex gap-1">
-          {(['all', 'pending', 'add'] as const).map((t) => (
+          {(['all', 'pending', 'add'] as const).map((tab) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
+              key={tab}
+              onClick={() => setTab(tab)}
               className={cn(
-                'px-3 py-1 rounded text-sm capitalize transition-colors',
-                tab === t
+                'px-3 py-1 rounded text-sm transition-colors',
+                tab === tab
                   ? 'bg-accent text-foreground'
                   : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
               )}
             >
-              {t === 'add' ? 'Add Friend' : t === 'all' ? 'All' : 'Pending'}
+              {tab === 'add' ? t('friends.tabAdd') : tab === 'all' ? t('friends.tabAll') : t('friends.tabPending')}
             </button>
           ))}
         </nav>
@@ -56,6 +58,7 @@ export default function MePage() {
 function FriendList() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
 
   const { data: friends = [], isLoading } = useQuery({
     queryKey: ['friends'],
@@ -78,7 +81,7 @@ function FriendList() {
         navigate(`/app/@me/${String(channel.id)}`)
       }
     } catch {
-      toast.error('Failed to open DM')
+      toast.error(t('friends.dmFailed'))
     }
   }
 
@@ -88,9 +91,9 @@ function FriendList() {
         request: { user_id: BigInt(String(user.id)) as unknown as number },
       })
       await queryClient.invalidateQueries({ queryKey: ['friends'] })
-      toast.success(`Unfriended ${user.name ?? 'user'}`)
+      toast.success(t('friends.unfriended', { name: user.name ?? 'user' }))
     } catch {
-      toast.error('Failed to remove friend')
+      toast.error(t('friends.unfriendFailed'))
     }
   }
 
@@ -108,7 +111,7 @@ function FriendList() {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 p-8">
         <UserPlus className="w-12 h-12 opacity-30" />
-        <p className="text-sm">No friends yet — add one using the Add Friend tab.</p>
+        <p className="text-sm">{t('friends.noFriends')}</p>
       </div>
     )
   }
@@ -116,7 +119,7 @@ function FriendList() {
   return (
     <div className="p-4">
       <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">
-        All Friends — {friends.length}
+        {t('friends.allFriends', { count: friends.length })}
       </p>
       <div className="space-y-0.5">
         {friends.map((user) => (
@@ -134,6 +137,7 @@ function FriendList() {
 
 function PendingRequests() {
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
 
   const { data: requests = [], isLoading } = useQuery({
     queryKey: ['friend-requests'],
@@ -146,9 +150,9 @@ function PendingRequests() {
         request: { user_id: BigInt(String(user.id)) as unknown as number },
       })
       await queryClient.invalidateQueries({ queryKey: ['friend-requests', 'friends'] })
-      toast.success(`Accepted friend request from ${user.name ?? 'user'}`)
+      toast.success(t('friends.accepted', { name: user.name ?? 'user' }))
     } catch {
-      toast.error('Failed to accept request')
+      toast.error(t('friends.acceptFailed'))
     }
   }
 
@@ -158,9 +162,9 @@ function PendingRequests() {
         request: { user_id: BigInt(String(user.id)) as unknown as number },
       })
       await queryClient.invalidateQueries({ queryKey: ['friend-requests'] })
-      toast.success('Friend request declined')
+      toast.success(t('friends.declined'))
     } catch {
-      toast.error('Failed to decline request')
+      toast.error(t('friends.declineFailed'))
     }
   }
 
@@ -178,7 +182,7 @@ function PendingRequests() {
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2 p-8">
         <Check className="w-12 h-12 opacity-30" />
-        <p className="text-sm">No pending friend requests.</p>
+        <p className="text-sm">{t('friends.noPending')}</p>
       </div>
     )
   }
@@ -186,7 +190,7 @@ function PendingRequests() {
   return (
     <div className="p-4">
       <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-3">
-        Incoming — {requests.length}
+        {t('friends.incoming', { count: requests.length })}
       </p>
       <div className="space-y-0.5">
         {requests.map((user) => (
@@ -207,7 +211,7 @@ function PendingRequests() {
                 variant="ghost"
                 className="w-8 h-8 text-green-500 hover:text-green-400 hover:bg-green-500/10"
                 onClick={() => void accept(user)}
-                title="Accept"
+                title={t('friends.accept')}
               >
                 <Check className="w-4 h-4" />
               </Button>
@@ -216,7 +220,7 @@ function PendingRequests() {
                 variant="ghost"
                 className="w-8 h-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                 onClick={() => void decline(user)}
-                title="Decline"
+                title={t('friends.decline')}
               >
                 <X className="w-4 h-4" />
               </Button>
@@ -231,6 +235,7 @@ function PendingRequests() {
 function AddFriend() {
   const [discriminator, setDiscriminator] = useState('')
   const [loading, setLoading] = useState(false)
+  const { t } = useTranslation()
 
   async function sendRequest() {
     const trimmed = discriminator.trim()
@@ -239,9 +244,9 @@ function AddFriend() {
     try {
       await userApi.userMeFriendsPost({ request: { discriminator: trimmed } })
       setDiscriminator('')
-      toast.success('Friend request sent!')
+      toast.success(t('friends.requestSent'))
     } catch {
-      toast.error('Failed to send friend request. Make sure the username#tag is correct.')
+      toast.error(t('friends.requestFailed'))
     } finally {
       setLoading(false)
     }
@@ -249,20 +254,20 @@ function AddFriend() {
 
   return (
     <div className="p-6 max-w-xl">
-      <h3 className="font-semibold mb-1">Add Friend</h3>
+      <h3 className="font-semibold mb-1">{t('friends.addFriendTitle')}</h3>
       <p className="text-sm text-muted-foreground mb-4">
-        Enter the username and tag (e.g. <span className="font-mono">YourFriend#1234</span>).
+        {t('friends.addFriendDesc', { example: 'YourFriend#1234' })}
       </p>
       <div className="flex gap-2">
         <Input
           value={discriminator}
           onChange={(e) => setDiscriminator(e.target.value)}
-          placeholder="username#1234"
+          placeholder={t('friends.usernamePlaceholder')}
           onKeyDown={(e) => e.key === 'Enter' && void sendRequest()}
           className="flex-1"
         />
         <Button onClick={() => void sendRequest()} disabled={loading || !discriminator.trim()}>
-          Send Request
+          {t('friends.sendRequest')}
         </Button>
       </div>
     </div>
@@ -282,6 +287,8 @@ function FriendRow({
   const status = usePresenceStore((s) => s.statuses[userId] ?? 'offline')
   const customStatus = usePresenceStore((s) => s.customStatuses[userId] ?? '')
 
+  const { t } = useTranslation()
+
   return (
     <div className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-accent/50 group">
       <UserAvatar user={user} />
@@ -291,7 +298,7 @@ function FriendRow({
           <p className="text-xs text-muted-foreground truncate italic">{customStatus}</p>
         ) : (
           <p className="text-xs text-muted-foreground capitalize">
-            {status === 'dnd' ? 'Do Not Disturb' : status}
+            {status === 'dnd' ? t('friends.doNotDisturb') : status}
           </p>
         )}
       </div>
@@ -301,7 +308,7 @@ function FriendRow({
           variant="ghost"
           className="w-8 h-8"
           onClick={onOpenDm}
-          title="Message"
+          title={t('friends.message')}
         >
           <MessageSquare className="w-4 h-4" />
         </Button>
@@ -310,7 +317,7 @@ function FriendRow({
           variant="ghost"
           className="w-8 h-8 text-destructive hover:text-destructive hover:bg-destructive/10"
           onClick={onUnfriend}
-          title="Remove Friend"
+          title={t('friends.removeFriend')}
         >
           <UserMinus className="w-4 h-4" />
         </Button>

@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/stores/uiStore'
+import { useTranslation } from 'react-i18next'
 
 interface Props {
   onConfirm: (target: { type: 'channel' | 'message'; id: string }) => Promise<void>
@@ -16,6 +17,7 @@ interface Props {
 export default function DeleteConfirmModal({ onConfirm }: Props) {
   const target = useUiStore((s) => s.deleteTarget)
   const setDeleteTarget = useUiStore((s) => s.setDeleteTarget)
+  const { t } = useTranslation()
 
   function close() {
     setDeleteTarget(null)
@@ -32,16 +34,16 @@ export default function DeleteConfirmModal({ onConfirm }: Props) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
-            Delete {target?.type === 'channel' ? 'Channel' : 'Message'}?
+            {target?.type === 'channel' ? t('modals.deleteChannelTitle') : t('modals.deleteMessageTitle')}
           </DialogTitle>
-          <DialogDescription>This action cannot be undone.</DialogDescription>
+          <DialogDescription>{t('modals.deleteWarning')}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={close}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button variant="destructive" onClick={handleConfirm}>
-            Delete
+            {t('common.delete')}
           </Button>
         </DialogFooter>
       </DialogContent>

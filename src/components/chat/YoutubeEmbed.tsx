@@ -9,7 +9,7 @@ export default function YoutubeEmbed({ videoId, url }: Props) {
   const [playing, setPlaying] = useState(false)
 
   const thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
-  const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1`
+  const embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1`
 
   return (
     // 16:9 aspect ratio, max-width matches Discord's embed width

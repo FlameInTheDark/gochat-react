@@ -18,13 +18,17 @@ import TypingIndicator from '@/components/chat/TypingIndicator'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { useMessagePagination } from '@/hooks/useMessagePagination'
+import { useTranslation } from 'react-i18next'
 
 export default function ChannelPage() {
   const { channelId, serverId } = useParams<{ channelId: string; serverId: string }>()
   const { channels } = useOutletContext<ServerOutletContext>()
   const channel = channels.find((c) => String(c.id) === channelId)
+  const isVoice = channel?.type === ChannelType.ChannelTypeGuildVoice
+
   const navigate = useNavigate()
   const location = useLocation()
+  const { t } = useTranslation()
 
   const [showMembers, setShowMembers] = useState(true)
   const [showSearch, setShowSearch] = useState(false)
@@ -62,7 +66,7 @@ export default function ChannelPage() {
     endReached, latestReached, unreadSeparatorAfter,
     loadOlder, loadNewer, ackLatest,
   } = useMessagePagination(
-    channelId,
+    isVoice ? undefined : channelId,
     jumpToMessageId,
     channel?.last_message_id != null ? String(channel.last_message_id) : undefined,
   )
@@ -125,7 +129,6 @@ export default function ChannelPage() {
 
   if (!channelId) return null
 
-  const isVoice = channel?.type === ChannelType.ChannelTypeGuildVoice
   const Icon = isVoice ? Volume2 : Hash
 
   // Voice channel view
@@ -152,13 +155,15 @@ export default function ChannelPage() {
           {isConnected ? (
             <>
               <p className="text-sm text-muted-foreground">
-                Connected · {peerEntries.length + 1} participant{peerEntries.length !== 0 ? 's' : ''}
+                {peerEntries.length === 0
+                  ? t('channel.connected', { count: 1 })
+                  : t('channel.connected_plural', { count: peerEntries.length + 1 })}
               </p>
 
               <div className="flex flex-wrap justify-center gap-4">
                 {/* Local user */}
                 <VoiceParticipant
-                  label="You"
+                  label={t('channel.you')}
                   speaking={false}
                   muted={localMuted}
                 />
@@ -180,7 +185,7 @@ export default function ChannelPage() {
               </div>
               <h3 className="text-xl font-bold">{channel?.name}</h3>
               <p className="text-sm text-muted-foreground">
-                Click the channel in the sidebar to join voice.
+                {t('channel.clickToJoin')}
               </p>
             </>
           )}
@@ -209,7 +214,7 @@ export default function ChannelPage() {
           <div className="ml-auto flex items-center gap-1">
             <button
               onClick={() => setShowSearch((v) => !v)}
-              title={showSearch ? 'Close Search' : 'Search Messages'}
+              title={showSearch ? t('channel.closeSearch') : t('channel.searchMessages')}
               className={cn(
                 'w-8 h-8 flex items-center justify-center rounded transition-colors',
                 showSearch
@@ -221,7 +226,7 @@ export default function ChannelPage() {
             </button>
             <button
               onClick={() => setShowMembers((v) => !v)}
-              title={showMembers ? 'Hide Member List' : 'Show Member List'}
+              title={showMembers ? t('channel.hideMemberList') : t('channel.showMemberList')}
               className={cn(
                 'w-8 h-8 flex items-center justify-center rounded transition-colors',
                 showMembers

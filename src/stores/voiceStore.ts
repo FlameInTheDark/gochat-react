@@ -11,9 +11,22 @@ interface VoiceState {
   channelName: string | null
   localMuted: boolean
   localDeafened: boolean
+  settings: {
+    audioInputDevice: string
+    audioOutputDevice: string
+    audioInputLevel: number
+    audioOutputLevel: number
+    autoGainControl: boolean
+    echoCancellation: boolean
+    noiseSuppression: boolean
+    inputMode: 'voice_activity' | 'push_to_talk'
+    voiceActivityThreshold: number // 0–100, sensitivity threshold for voice activity
+    pushToTalkKey: string          // key code for PTT, e.g. 'KeyV'
+  }
   peers: Record<string, VoicePeer> // keyed by userId string
 
   setVoiceChannel: (guildId: string, channelId: string, channelName: string) => void
+  setSettings: (settings: Partial<VoiceState['settings']>) => void
   addPeer: (userId: string) => void
   removePeer: (userId: string) => void
   setPeerSpeaking: (userId: string, speaking: boolean) => void
@@ -29,10 +42,25 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   channelName: null,
   localMuted: false,
   localDeafened: false,
+  settings: {
+    audioInputDevice: '',
+    audioOutputDevice: '',
+    audioInputLevel: 100,
+    audioOutputLevel: 100,
+    autoGainControl: true,
+    echoCancellation: true,
+    noiseSuppression: true,
+    inputMode: 'voice_activity',
+    voiceActivityThreshold: 50,
+    pushToTalkKey: '',
+  },
   peers: {},
 
   setVoiceChannel: (guildId, channelId, channelName) =>
     set({ guildId, channelId, channelName }),
+
+  setSettings: (settings) =>
+    set((state) => ({ settings: { ...state.settings, ...settings } })),
 
   addPeer: (userId) =>
     set((state) => ({
