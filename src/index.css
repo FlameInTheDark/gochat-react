@@ -30,10 +30,19 @@
 }
 
 @keyframes msg-highlight-fade {
+
   /* Quick blink in (first 12%), then slow fade back to nothing */
-  0%   { background-color: oklch(0.85 0.15 90 / 0); }
-  12%  { background-color: oklch(0.85 0.15 90 / 0.5); }
-  100% { background-color: oklch(0.85 0.15 90 / 0); }
+  0% {
+    background-color: oklch(0.85 0.15 90 / 0);
+  }
+
+  12% {
+    background-color: oklch(0.85 0.15 90 / 0.5);
+  }
+
+  100% {
+    background-color: oklch(0.85 0.15 90 / 0);
+  }
 }
 
 .message-highlight {
@@ -49,6 +58,7 @@
     scrollbar-width: thin;
     scrollbar-color: oklch(1 0 0 / 18%) transparent;
   }
+
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
@@ -57,18 +67,22 @@
     font-family: system-ui, -apple-system, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
+
   /* Chrome / Safari / Edge thin scrollbar */
   ::-webkit-scrollbar {
     width: 4px;
     height: 4px;
   }
+
   ::-webkit-scrollbar-track {
     background: transparent;
   }
+
   ::-webkit-scrollbar-thumb {
     background: oklch(1 0 0 / 18%);
     border-radius: 2px;
   }
+
   ::-webkit-scrollbar-thumb:hover {
     background: oklch(1 0 0 / 32%);
   }
@@ -89,14 +103,17 @@
   user-select: none;
   white-space: nowrap;
 }
+
 .mention-chip[data-type="user"] {
   background-color: oklch(0.62 0.21 259 / 0.22);
   color: oklch(0.72 0.17 254);
 }
+
 .mention-chip[data-type="channel"] {
   background-color: oklch(0.55 0.02 270 / 0.25);
   color: oklch(0.78 0.02 270);
 }
+
 .mention-chip[data-type="role"] {
   background-color: oklch(0.6 0.2 300 / 0.22);
   color: oklch(0.74 0.18 300);
@@ -116,4 +133,31 @@
  */
 .hljs {
   background: transparent !important;
+}
+
+@layer utilities {
+  .squircle {
+    mask-image: url("data:image/svg+xml,%3Csvg width='200' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M100,0 C20,0 0,20 0,100 C0,180 20,200 100,200 C180,200 200,180 200,100 C200,20 180,0 100,0 Z'/%3E%3C/svg%3E");
+    mask-size: contain;
+    mask-repeat: no-repeat;
+    mask-position: center;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg width='200' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M100,0 C20,0 0,20 0,100 C0,180 20,200 100,200 C180,200 200,180 200,100 C200,20 180,0 100,0 Z'/%3E%3C/svg%3E");
+    -webkit-mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    border-radius: 0;
+  }
+
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Hide scrollbar for IE, Edge and Firefox */
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    /* IE and Edge */
+    scrollbar-width: none;
+    /* Firefox */
+  }
 }
