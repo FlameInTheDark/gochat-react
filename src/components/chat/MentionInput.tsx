@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Smile } from 'lucide-react'
 import EmojiPicker from './EmojiPicker'
 import { cn } from '@/lib/utils'
+import { useTranslation } from 'react-i18next'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -172,6 +173,7 @@ export default function MentionInput({
   hasAttachments,
 }: Props) {
   const { serverId } = useParams<{ serverId?: string }>()
+  const { t } = useTranslation()
 
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -455,7 +457,7 @@ export default function MentionInput({
       {suggestions.length > 0 && (
         <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border border-border bg-popover shadow-lg overflow-hidden">
           <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border">
-            {suggestions[0]?.type === 'channel' ? 'Channels' : 'Members & Roles'}
+            {suggestions[0]?.type === 'channel' ? t('chat.channels') : t('chat.membersAndRoles')}
           </div>
           {suggestions.map((item, i) => (
             <button
@@ -466,11 +468,10 @@ export default function MentionInput({
                 e.preventDefault()
                 selectSuggestion(item)
               }}
-              className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors ${
-                i === activeIdx
-                  ? 'bg-accent text-accent-foreground'
-                  : 'text-foreground hover:bg-accent/50'
-              }`}
+              className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors ${i === activeIdx
+                ? 'bg-accent text-accent-foreground'
+                : 'text-foreground hover:bg-accent/50'
+                }`}
             >
               {item.type === 'channel' && (
                 <Hash className="w-4 h-4 shrink-0 text-muted-foreground" />
@@ -488,7 +489,7 @@ export default function MentionInput({
               )}
               <span className="font-medium truncate">{item.name}</span>
               {item.type === 'role' && (
-                <span className="ml-auto text-xs text-muted-foreground shrink-0">Role</span>
+                <span className="ml-auto text-xs text-muted-foreground shrink-0">{t('chat.role')}</span>
               )}
             </button>
           ))}
@@ -512,7 +513,7 @@ export default function MentionInput({
         {/* Drag-over overlay label */}
         {isDragging && (
           <div className="px-3 py-2 text-sm text-primary font-medium text-center select-none pointer-events-none">
-            Drop files to attach
+            {t('chat.dropFiles')}
           </div>
         )}
 
@@ -537,7 +538,7 @@ export default function MentionInput({
             onInput={handleInput}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            data-placeholder={`Message #${channelName ?? channelId}`}
+            data-placeholder={t('chat.messagePlaceholder', { name: `#${channelName ?? channelId}` })}
             className="mention-editor flex-1 min-h-[28px] max-h-48 overflow-y-auto outline-none text-sm text-foreground leading-6 break-words"
           />
 

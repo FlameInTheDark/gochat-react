@@ -28,6 +28,7 @@ import { userApi } from '@/api/client'
 import type { ModelUserSettingsData } from '@/client'
 import { cn } from '@/lib/utils'
 import StatusDot from '@/components/ui/StatusDot'
+import { useTranslation } from 'react-i18next'
 
 const MAX_STATUS_LEN = 128
 
@@ -46,6 +47,7 @@ export default function UserArea() {
   const customStatusText = usePresenceStore((s) => s.customStatusText)
   const setCustomStatusText = usePresenceStore((s) => s.setCustomStatusText)
   const openAppSettings = useUiStore((s) => s.openAppSettings)
+  const { t } = useTranslation()
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [draft, setDraft] = useState('')
@@ -83,9 +85,9 @@ export default function UserArea() {
       sendPresenceStatus(ownStatus, text)
       await queryClient.invalidateQueries({ queryKey: ['user-settings'] })
       setDialogOpen(false)
-      toast.success(text ? 'Custom status updated' : 'Custom status cleared')
+      toast.success(text ? t('userArea.customStatusUpdated') : t('userArea.customStatusCleared'))
     } catch {
-      toast.error('Failed to save custom status')
+      toast.error(t('userArea.customStatusFailed'))
     } finally {
       setSaving(false)
     }
@@ -128,7 +130,7 @@ export default function UserArea() {
 
         <DropdownMenuContent side="top" align="start" className="w-56">
           <DropdownMenuLabel className="text-xs font-normal opacity-60">
-            Signed in as {user?.name}
+            {t('userArea.signedInAs', { name: user?.name })}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
 
@@ -136,13 +138,13 @@ export default function UserArea() {
           <DropdownMenuItem onClick={openDialog} className="gap-2">
             <Pencil className="w-4 h-4 shrink-0" />
             <span className={cn('flex-1 truncate', !customStatusText && 'text-muted-foreground')}>
-              {customStatusText || 'Set Custom Status'}
+              {customStatusText || t('userArea.setCustomStatus')}
             </span>
             {customStatusText && (
               /* X clears status without opening the dialog */
               <span
                 role="button"
-                aria-label="Clear custom status"
+                aria-label={t('userArea.clearCustomStatus')}
                 className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
                 onClick={(e) => {
                   e.stopPropagation()
@@ -158,7 +160,7 @@ export default function UserArea() {
 
           {/* Status selector */}
           <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground pb-0.5">
-            Set Status
+            {t('userArea.setStatus')}
           </DropdownMenuLabel>
           {(Object.keys(STATUS_META) as UserStatus[]).map((status) => (
             <DropdownMenuItem
@@ -177,7 +179,7 @@ export default function UserArea() {
           <DropdownMenuSeparator />
           <DropdownMenuItem onClick={openAppSettings} className="gap-2">
             <Settings className="w-4 h-4" />
-            Settings
+            {t('userArea.settings')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -186,13 +188,13 @@ export default function UserArea() {
       <Dialog open={dialogOpen} onOpenChange={(open) => !open && setDialogOpen(false)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Set Custom Status</DialogTitle>
+            <DialogTitle>{t('userArea.customStatusDialogTitle')}</DialogTitle>
           </DialogHeader>
 
           <div className="py-1">
             <div className="relative">
               <Input
-                placeholder="What's on your mind?"
+                placeholder={t('userArea.customStatusPlaceholder')}
                 value={draft}
                 maxLength={MAX_STATUS_LEN}
                 onChange={(e) => setDraft(e.target.value)}
@@ -225,7 +227,7 @@ export default function UserArea() {
                 onClick={() => void saveCustomStatus('')}
                 disabled={saving}
               >
-                Clear Status
+                {t('userArea.clearStatus')}
               </Button>
             )}
             <div className="flex gap-2 ml-auto">
@@ -236,7 +238,7 @@ export default function UserArea() {
                 onClick={() => setDialogOpen(false)}
                 disabled={saving}
               >
-                Cancel
+                {t('userArea.cancel')}
               </Button>
               <Button
                 type="button"
@@ -244,7 +246,7 @@ export default function UserArea() {
                 onClick={() => void saveCustomStatus(draft.trim())}
                 disabled={saving}
               >
-                Save
+                {t('userArea.save')}
               </Button>
             </div>
           </DialogFooter>

@@ -4,12 +4,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { authApi } from '@/api/client'
+import { useTranslation } from 'react-i18next'
 
 export default function RegisterPage() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const { t } = useTranslation()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -21,7 +23,7 @@ export default function RegisterPage() {
       })
       navigate('/')
     } catch {
-      setError('Registration failed. Please try again.')
+      setError(t('auth.registrationFailed'))
     } finally {
       setLoading(false)
     }
@@ -30,10 +32,10 @@ export default function RegisterPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm">
-        <h1 className="text-center text-2xl font-bold">Create an account</h1>
+        <h1 className="text-center text-2xl font-bold">{t('auth.createAccountTitle')}</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">{t('auth.email')}</Label>
             <Input
               id="email"
               type="email"
@@ -44,13 +46,13 @@ export default function RegisterPage() {
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Creating account…' : 'Register'}
+            {loading ? t('auth.creatingAccount') : t('auth.register')}
           </Button>
         </form>
         <p className="text-center text-sm text-muted-foreground">
-          Already have an account?{' '}
+          {t('auth.alreadyHaveAccount')}{' '}
           <Link to="/" className="underline">
-            Sign in
+            {t('auth.signIn')}
           </Link>
         </p>
       </div>

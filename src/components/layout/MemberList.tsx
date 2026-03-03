@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MessageSquare, Copy, Shield, User } from 'lucide-react'
 import { toast } from 'sonner'
@@ -60,26 +61,28 @@ export default function MemberList({ serverId }: Props) {
     return { online, offline }
   }, [members, statuses])
 
+  const { t } = useTranslation()
+
   return (
     <div className="flex flex-col w-60 bg-sidebar border-l border-sidebar-border shrink-0">
       <ScrollArea className="flex-1">
         <div className="px-2 py-3 space-y-4">
           {online.length > 0 && (
-            <MemberGroup label="Online" count={online.length}>
+            <MemberGroup label={t('memberList.online')} count={online.length}>
               {online.map((m) => (
                 <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} />
               ))}
             </MemberGroup>
           )}
           {offline.length > 0 && (
-            <MemberGroup label="Offline" count={offline.length}>
+            <MemberGroup label={t('memberList.offline')} count={offline.length}>
               {offline.map((m) => (
                 <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} />
               ))}
             </MemberGroup>
           )}
           {members.length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-4">Loading members…</p>
+            <p className="text-xs text-muted-foreground text-center py-4">{t('memberList.loading')}</p>
           )}
         </div>
       </ScrollArea>
@@ -101,17 +104,18 @@ function MemberGroup({ label, count, children }: {
 }
 
 function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }) {
-  const navigate        = useNavigate()
-  const queryClient     = useQueryClient()
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const openUserProfile = useUiStore((s) => s.openUserProfile)
 
-  const userId      = String(member.user?.id ?? '')
-  const status      = usePresenceStore(
+  const userId = String(member.user?.id ?? '')
+  const status = usePresenceStore(
     (s) => (userId ? ((s.statuses[userId] ?? 'offline') as UserStatus) : 'offline'),
   )
   const customStatus = usePresenceStore((s) => (userId ? (s.customStatuses[userId] ?? '') : ''))
   const displayName = member.username ?? member.user?.name ?? 'Unknown'
-  const initials    = displayName.charAt(0).toUpperCase()
+  const initials = displayName.charAt(0).toUpperCase()
   const statusLabel = STATUS_META[status].label
 
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null)
@@ -141,7 +145,7 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
       await queryClient.invalidateQueries({ queryKey: ['dm-channels'] })
       if (res.data.id !== undefined) navigate(`/app/@me/${String(res.data.id)}`)
     } catch {
-      toast.error('Failed to open DM')
+      toast.error(t('memberList.dmFailed'))
     }
   }
 
@@ -165,9 +169,9 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
           return { ...m, roles: next.map(Number) }
         }),
       )
-      toast.success(currentlyHas ? 'Role removed' : 'Role assigned')
+      toast.success(currentlyHas ? t('memberList.roleRemoved') : t('memberList.roleAssigned'))
     } catch {
-      toast.error(currentlyHas ? 'Failed to remove role' : 'Failed to assign role')
+      toast.error(currentlyHas ? t('memberList.roleRemoveFailed') : t('memberList.roleAssignFailed'))
     } finally {
       setSavingRoleId(null)
     }
@@ -227,7 +231,7 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
           className="gap-2"
         >
           <User className="w-4 h-4" />
-          View Profile
+          {t('memberList.viewProfile')}
         </ContextMenuItem>
 
         {/* Roles sub-menu */}
@@ -235,7 +239,7 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
           <ContextMenuSub>
             <ContextMenuSubTrigger className="gap-2">
               <Shield className="w-4 h-4" />
-              Roles
+              {t('memberList.roles')}
             </ContextMenuSubTrigger>
             <ContextMenuSubContent className="min-w-[180px] max-h-72 overflow-y-auto">
               {allRoles.map((role) => {
@@ -270,14 +274,14 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
         <ContextMenuSeparator />
         <ContextMenuItem onClick={() => void handleMessage()} className="gap-2">
           <MessageSquare className="w-4 h-4" />
-          Message
+          {t('memberList.message')}
         </ContextMenuItem>
         <ContextMenuItem
           onClick={() => { void navigator.clipboard.writeText(userId) }}
           className="gap-2"
         >
           <Copy className="w-4 h-4" />
-          Copy User ID
+          {t('memberList.copyUserId')}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

@@ -4,6 +4,7 @@ import { sendTyping } from '@/services/wsService'
 import { toast } from 'sonner'
 import MentionInput from './MentionInput'
 import PendingAttachmentBar, { type PendingAttachment } from './PendingAttachmentBar'
+import { useTranslation } from 'react-i18next'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,7 @@ export default function MessageInput({ channelId, channelName }: Props) {
   const lastTypingRef = useRef<number>(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
+  const { t } = useTranslation()
 
   // ── Attachment management ──────────────────────────────────────────────────
 
@@ -80,7 +82,7 @@ export default function MessageInput({ channelId, channelName }: Props) {
 
     const filtered = arr.filter((f) => {
       if (f.size > MAX_FILE_SIZE) {
-        toast.error(`${f.name} exceeds the 25 MB limit`)
+        toast.error(t('chat.fileExceedsLimit', { name: f.name }))
         return false
       }
       return true
@@ -89,7 +91,7 @@ export default function MessageInput({ channelId, channelName }: Props) {
     if (filtered.length === 0) return
 
     if (pendingAttachments.length + filtered.length > MAX_FILES) {
-      toast.error(`You can attach at most ${MAX_FILES} files per message`)
+      toast.error(t('chat.maxFilesError', { count: MAX_FILES }))
       return
     }
 
@@ -196,7 +198,7 @@ export default function MessageInput({ channelId, channelName }: Props) {
         prev.filter((a) => !sending.some((s) => s.localId === a.localId)),
       )
     } catch {
-      toast.error('Failed to send message')
+      toast.error(t('chat.sendFailed'))
       // Mark in-flight attachments as failed so the user sees the error tiles.
       setPendingAttachments((prev) =>
         prev.map((a) =>

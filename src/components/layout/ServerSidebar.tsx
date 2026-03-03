@@ -33,6 +33,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { useTranslation } from 'react-i18next'
 import { userApi } from '@/api/client'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
@@ -293,6 +294,7 @@ interface FolderDialogProps {
 }
 
 function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [color, setColor] = useState(0)
 
@@ -304,7 +306,7 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
   }, [open, folder])
 
   function handleSave() {
-    onSave(name.trim() || 'New Folder', color)
+    onSave(name.trim() || t('serverSidebar.folderNameDefault'), color)
     onClose()
   }
 
@@ -312,11 +314,11 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{folder ? 'Edit Folder' : 'Create Folder'}</DialogTitle>
+          <DialogTitle>{folder ? t('serverSidebar.editFolderTitle') : t('serverSidebar.createFolderTitle')}</DialogTitle>
           <DialogDescription>
             {folder
-              ? 'Update the folder name and color.'
-              : 'Give your new folder a name and optional color.'}
+              ? t('serverSidebar.editFolderDesc')
+              : t('serverSidebar.createFolderDesc')}
           </DialogDescription>
         </DialogHeader>
 
@@ -324,7 +326,7 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
           <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Folder name"
+            placeholder={t('serverSidebar.folderName')}
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
             autoFocus
           />
@@ -348,9 +350,9 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t('common.cancel')}
           </Button>
-          <Button onClick={handleSave}>{folder ? 'Save' : 'Create'}</Button>
+          <Button onClick={handleSave}>{folder ? t('common.save') : t('serverSidebar.createFolderTitle')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -365,18 +367,19 @@ function FolderContextItems({
   onEdit: () => void
   onDissolve: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <>
       <ContextMenuItem onClick={onEdit} className="gap-2">
         <Pencil className="w-4 h-4" />
-        Edit Folder
+        {t('serverSidebar.editFolder')}
       </ContextMenuItem>
       <ContextMenuItem
         onClick={onDissolve}
         className="text-destructive focus:text-destructive gap-2"
       >
         <FolderX className="w-4 h-4" />
-        Dissolve Folder
+        {t('serverSidebar.dissolveFolder')}
       </ContextMenuItem>
     </>
   )
@@ -412,6 +415,7 @@ function SortableGuildIcon({
   onAddToFolder,
   folders,
 }: SortableGuildIconProps) {
+  const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: itemId,
   })
@@ -463,30 +467,30 @@ function SortableGuildIcon({
         <ContextMenuContent>
           <ContextMenuItem onClick={onOpenSettings} className="gap-2">
             <Settings className="w-4 h-4" />
-            Server Settings
+            {t('serverSidebar.serverSettings')}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(guild.id)) }}
             className="gap-2"
           >
             <Copy className="w-4 h-4" />
-            Copy Server ID
+            {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onNewFolder} className="gap-2">
             <FolderPlus className="w-4 h-4" />
-            New Folder
+            {t('serverSidebar.newFolder')}
           </ContextMenuItem>
           {folders.length > 0 && (
             <ContextMenuSub>
               <ContextMenuSubTrigger className="gap-2">
                 <FolderPlus className="w-4 h-4" />
-                Add to Folder
+                {t('serverSidebar.addToFolder')}
               </ContextMenuSubTrigger>
               <ContextMenuSubContent>
                 {folders.map((f) => (
                   <ContextMenuItem key={f.id} onClick={() => onAddToFolder(f.id)}>
-                    {f.name || 'Folder'}
+                    {f.name || t('serverSidebar.folderNameDefault')}
                   </ContextMenuItem>
                 ))}
               </ContextMenuSubContent>
@@ -498,7 +502,7 @@ function SortableGuildIcon({
             className="text-destructive focus:text-destructive gap-2"
           >
             <LogOut className="w-4 h-4" />
-            Leave Server
+            {t('serverSidebar.leaveServer')}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -530,6 +534,7 @@ function SortableGuildInPanel({
   onLeave,
   onRemoveFromFolder,
 }: SortableGuildInPanelProps) {
+  const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: itemId,
   })
@@ -587,19 +592,19 @@ function SortableGuildInPanel({
         <ContextMenuContent>
           <ContextMenuItem onClick={onServerSettings} className="gap-2">
             <Settings className="w-4 h-4" />
-            Server Settings
+            {t('serverSidebar.serverSettings')}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(guild.id)) }}
             className="gap-2"
           >
             <Copy className="w-4 h-4" />
-            Copy Server ID
+            {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={onRemoveFromFolder} className="gap-2">
             <FolderMinus className="w-4 h-4" />
-            Remove from Folder
+            {t('serverSidebar.removeFromFolder')}
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem
@@ -607,7 +612,7 @@ function SortableGuildInPanel({
             className="text-destructive focus:text-destructive gap-2"
           >
             <LogOut className="w-4 h-4" />
-            Leave Server
+            {t('serverSidebar.leaveServer')}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
@@ -649,6 +654,7 @@ function SortableFolderItem({
   onLeaveGuild,
   onRemoveGuildFromFolder,
 }: SortableFolderItemProps) {
+  const { t } = useTranslation()
   const { toggleCollapse } = useFolderStore()
   const {
     attributes,
@@ -717,7 +723,7 @@ function SortableFolderItem({
                 </button>
               </TooltipTrigger>
             </ContextMenuTrigger>
-            <TooltipContent side="right">{folder.name || 'Folder'}</TooltipContent>
+            <TooltipContent side="right">{folder.name || t('serverSidebar.folderNameDefault')}</TooltipContent>
           </Tooltip>
           <ContextMenuContent>
             <FolderContextItems onEdit={onEditFolder} onDissolve={onDissolveFolder} />
@@ -762,7 +768,7 @@ function SortableFolderItem({
                 </button>
               </TooltipTrigger>
             </ContextMenuTrigger>
-            <TooltipContent side="right">{folder.name || 'Folder'}</TooltipContent>
+            <TooltipContent side="right">{folder.name || t('serverSidebar.folderNameDefault')}</TooltipContent>
           </Tooltip>
           <ContextMenuContent>
             <FolderContextItems onEdit={onEditFolder} onDissolve={onDissolveFolder} />
@@ -866,7 +872,7 @@ export default function ServerSidebar() {
     if (guilds) {
       syncGuilds(guilds.map((g) => String(g.id)))
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guilds, syncGuilds, settingsVersion])
 
   // Navigate away from deleted server

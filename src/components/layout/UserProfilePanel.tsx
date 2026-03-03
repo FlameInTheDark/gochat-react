@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
@@ -31,17 +32,18 @@ const colorToHex = (color: number) =>
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function UserProfilePanel() {
-  const profile      = useUiStore((s) => s.userProfile)
-  const close        = useUiStore((s) => s.closeUserProfile)
-  const navigate     = useNavigate()
-  const queryClient  = useQueryClient()
-  const panelRef     = useRef<HTMLDivElement>(null)
+  const profile = useUiStore((s) => s.userProfile)
+  const close = useUiStore((s) => s.closeUserProfile)
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const panelRef = useRef<HTMLDivElement>(null)
+  const { t } = useTranslation()
 
   const [editingRoles, setEditingRoles] = useState(false)
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null)
 
   // Derive stable primitives BEFORE any early return so hooks order is invariant
-  const userId  = profile?.userId  ?? ''
+  const userId = profile?.userId ?? ''
   const guildId = profile?.guildId ?? null
 
   // Reset role editor whenever the panel target changes
@@ -102,15 +104,15 @@ export default function UserProfilePanel() {
   // ── Data from query cache ─────────────────────────────────────────────────
 
   const members = queryClient.getQueryData<DtoMember[]>(['members', guildId]) ?? []
-  const member  = members.find((m) => String(m.user?.id) === userId)
+  const member = members.find((m) => String(m.user?.id) === userId)
 
-  const displayName  = member?.username ?? member?.user?.name ?? fallbackName ?? 'Unknown'
-  const globalName   = member?.user?.name
+  const displayName = member?.username ?? member?.user?.name ?? fallbackName ?? t('common.unknown')
+  const globalName = member?.user?.name
   const discriminator = member?.user?.discriminator
-  const joinDate     = member?.join_at
+  const joinDate = member?.join_at
     ? new Date(member.join_at).toLocaleDateString(undefined, {
-        year: 'numeric', month: 'long', day: 'numeric',
-      })
+      year: 'numeric', month: 'long', day: 'numeric',
+    })
     : null
 
   // Member's current role IDs (from member cache; typed as number[] but string at runtime)
@@ -118,7 +120,7 @@ export default function UserProfilePanel() {
   const assignedRoles = allRoles.filter((r) => memberRoleIds.has(String(r.id)))
 
   const editingRoleIds = new Set(fetchedRoles.map((r) => String(r.id)))
-  const activeRoleIds  = editingRoles ? editingRoleIds : memberRoleIds
+  const activeRoleIds = editingRoles ? editingRoleIds : memberRoleIds
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -132,7 +134,7 @@ export default function UserProfilePanel() {
         close()
       }
     } catch {
-      toast.error('Failed to open DM')
+      toast.error(t('memberList.dmFailed'))
     }
   }
 
@@ -157,9 +159,9 @@ export default function UserProfilePanel() {
         }),
       )
       await queryClient.invalidateQueries({ queryKey: ['member-roles', guildId, userId] })
-      toast.success(currentlyHas ? 'Role removed' : 'Role assigned')
+      toast.success(currentlyHas ? t('memberList.roleRemoved') : t('memberList.roleAssigned'))
     } catch {
-      toast.error(currentlyHas ? 'Failed to remove role' : 'Failed to assign role')
+      toast.error(currentlyHas ? t('memberList.roleRemoveFailed') : t('memberList.roleAssignFailed'))
     } finally {
       setSavingRoleId(null)
     }
@@ -213,7 +215,7 @@ export default function UserProfilePanel() {
         {joinDate && (
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">
-              Member Since
+              {t('userProfile.memberSince')}
             </p>
             <p className="text-sm">{joinDate}</p>
           </div>
@@ -223,14 +225,14 @@ export default function UserProfilePanel() {
         <div>
           <div className="flex items-center justify-between mb-1.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Roles{assignedRoles.length > 0 ? ` — ${assignedRoles.length}` : ''}
+              {assignedRoles.length > 0 ? t('userProfile.rolesWithCount', { count: assignedRoles.length }) : t('userProfile.roles')}
             </p>
             {guildId && (
               <button
                 onClick={() => setEditingRoles((v) => !v)}
                 className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
               >
-                {editingRoles ? 'Done' : 'Edit'}
+                {editingRoles ? t('common.done') : t('common.edit')}
               </button>
             )}
           </div>
@@ -259,7 +261,7 @@ export default function UserProfilePanel() {
                 )
               })}
               {assignedRoles.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">No roles assigned</p>
+                <p className="text-xs text-muted-foreground italic">{t('userProfile.noRoles')}</p>
               )}
             </div>
           ) : (
@@ -267,14 +269,14 @@ export default function UserProfilePanel() {
             <div className="max-h-52 overflow-y-auto rounded-md border border-border">
               {allRoles.length === 0 && (
                 <p className="text-xs text-muted-foreground text-center py-3">
-                  No roles in this server
+                  {t('userProfile.noServerRoles')}
                 </p>
               )}
               {allRoles.map((role) => {
-                const rid          = String(role.id)
+                const rid = String(role.id)
                 const currentlyHas = activeRoleIds.has(rid)
-                const isSaving     = savingRoleId === rid
-                const hex          = colorToHex(role.color ?? 0)
+                const isSaving = savingRoleId === rid
+                const hex = colorToHex(role.color ?? 0)
                 return (
                   <button
                     key={rid}
@@ -326,7 +328,7 @@ export default function UserProfilePanel() {
             onClick={() => void handleMessage()}
           >
             <MessageSquare className="w-4 h-4" />
-            Send Message
+            {t('userProfile.sendMessage')}
           </Button>
         </div>
 

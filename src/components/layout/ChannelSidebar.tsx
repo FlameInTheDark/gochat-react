@@ -34,6 +34,7 @@ import { guildApi } from '@/api/client'
 import { ChannelType } from '@/types'
 import type { DtoChannel, DtoGuild } from '@/types'
 import { cn } from '@/lib/utils'
+import { useTranslation } from 'react-i18next'
 import VoicePanel from '@/components/voice/VoicePanel'
 import { joinVoice } from '@/services/voiceService'
 import UserArea from './UserArea'
@@ -53,10 +54,12 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)?.name
     ?? 'Server'
 
-  const openCreateChannel   = useUiStore((s) => s.openCreateChannel)
-  const openCreateCategory  = useUiStore((s) => s.openCreateCategory)
-  const openInviteModal     = useUiStore((s) => s.openInviteModal)
-  const openServerSettings  = useUiStore((s) => s.openServerSettings)
+  const { t } = useTranslation()
+
+  const openCreateChannel = useUiStore((s) => s.openCreateChannel)
+  const openCreateCategory = useUiStore((s) => s.openCreateCategory)
+  const openInviteModal = useUiStore((s) => s.openInviteModal)
+  const openServerSettings = useUiStore((s) => s.openServerSettings)
   const openChannelSettings = useUiStore((s) => s.openChannelSettings)
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
@@ -126,7 +129,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
       })
       await queryClient.invalidateQueries({ queryKey: ['channels', serverId] })
     } catch {
-      toast.error('Failed to rename')
+      toast.error(t('channelSidebar.renameFailed'))
     }
   }
 
@@ -145,7 +148,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
         await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token)
       }
     } catch {
-      toast.error('Failed to join voice channel')
+      toast.error(t('channelSidebar.joinVoiceFailed'))
     }
     navigate(`/app/${serverId}/${channelId}`)
   }
@@ -349,7 +352,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
         request: { channels: channelUpdates },
       })
     } catch {
-      toast.error('Failed to reorder channels')
+      toast.error(t('channelSidebar.reorderFailed'))
     } finally {
       await queryClient.invalidateQueries({ queryKey: ['channels', serverId] })
     }
@@ -375,25 +378,25 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
             <DropdownMenuContent className="w-56">
               <DropdownMenuItem onClick={() => openServerSettings(serverId)} className="gap-2">
                 <Settings className="w-4 h-4" />
-                Server Settings
+                {t('channelSidebar.serverSettings')}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => openInviteModal(serverId)} className="gap-2">
                 <UserPlus className="w-4 h-4" />
-                Invite People
+                {t('channelSidebar.invitePeople')}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
                 <Hash className="w-4 h-4" />
-                New Channel
+                {t('channelSidebar.newChannel')}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
                 <FolderPlus className="w-4 h-4" />
-                New Category
+                {t('channelSidebar.newCategory')}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => { void navigator.clipboard.writeText(serverId) }} className="gap-2">
                 <Copy className="w-4 h-4" />
-                Copy Server ID
+                {t('channelSidebar.copyServerId')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -401,25 +404,25 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
           <ContextMenuContent className="w-56">
             <ContextMenuItem onClick={() => openServerSettings(serverId)} className="gap-2">
               <Settings className="w-4 h-4" />
-              Server Settings
+              {t('channelSidebar.serverSettings')}
             </ContextMenuItem>
             <ContextMenuItem onClick={() => openInviteModal(serverId)} className="gap-2">
               <UserPlus className="w-4 h-4" />
-              Invite People
+              {t('channelSidebar.invitePeople')}
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
               <Hash className="w-4 h-4" />
-              New Channel
+              {t('channelSidebar.newChannel')}
             </ContextMenuItem>
             <ContextMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
               <FolderPlus className="w-4 h-4" />
-              New Category
+              {t('channelSidebar.newCategory')}
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => { void navigator.clipboard.writeText(serverId) }} className="gap-2">
               <Copy className="w-4 h-4" />
-              Copy Server ID
+              {t('channelSidebar.copyServerId')}
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
@@ -522,14 +525,14 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                             className="gap-2"
                           >
                             <Settings className="w-4 h-4" />
-                            Edit Category
+                            {t('channelSidebar.editCategory')}
                           </ContextMenuItem>
                           <ContextMenuItem
                             onClick={() => openCreateChannel(catId, serverId)}
                             className="gap-2"
                           >
                             <Plus className="w-4 h-4" />
-                            Add Channel
+                            {t('channelSidebar.addChannel')}
                           </ContextMenuItem>
                           <ContextMenuSeparator />
                           <ContextMenuItem
@@ -537,7 +540,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                             className="gap-2"
                           >
                             <Copy className="w-4 h-4" />
-                            Copy Category ID
+                            {t('channelSidebar.copyCategoryId')}
                           </ContextMenuItem>
                           <ContextMenuSeparator />
                           <ContextMenuItem
@@ -545,7 +548,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                             className="text-destructive focus:text-destructive gap-2"
                           >
                             <Trash2 className="w-4 h-4" />
-                            Delete Category
+                            {t('channelSidebar.deleteCategory')}
                           </ContextMenuItem>
                         </ContextMenuContent>
                       </ContextMenu>
@@ -587,11 +590,11 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
           <ContextMenuContent>
             <ContextMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
               <Hash className="w-4 h-4" />
-              New Channel
+              {t('channelSidebar.newChannel')}
             </ContextMenuItem>
             <ContextMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
               <FolderPlus className="w-4 h-4" />
-              New Category
+              {t('channelSidebar.newCategory')}
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
@@ -609,20 +612,20 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
       <Dialog open={!!deletingChannel} onOpenChange={(o) => !o && setDeletingChannel(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{isDeletingCategory ? 'Delete Category' : 'Delete Channel'}</DialogTitle>
+            <DialogTitle>{isDeletingCategory ? t('channelSidebar.deleteCategoryTitle') : t('channelSidebar.deleteChannelTitle')}</DialogTitle>
             <DialogDescription>
               {isDeletingCategory
-                ? <>Are you sure you want to delete the category <strong>{deletingChannel?.name}</strong>? Channels inside it will not be deleted.</>
-                : <>Are you sure you want to delete <strong>#{deletingChannel?.name}</strong>? This action cannot be undone.</>
+                ? <>{t('channelSidebar.deleteCategoryDesc', { name: deletingChannel?.name })}</>
+                : <>{t('channelSidebar.deleteChannelDesc', { name: deletingChannel?.name })}</>
               }
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeletingChannel(null)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button variant="destructive" onClick={handleDeleteChannel} disabled={deleteLoading}>
-              {isDeletingCategory ? 'Delete Category' : 'Delete Channel'}
+              {isDeletingCategory ? t('channelSidebar.deleteCategory') : t('channelSidebar.deleteChannel')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -680,6 +683,7 @@ function ChannelItem({
   onEditSave,
   onEditCancel,
 }: ChannelItemProps) {
+  const { t } = useTranslation()
   const isVoice = channel.type === ChannelType.ChannelTypeGuildVoice
   const Icon = isVoice ? Volume2 : Hash
 
@@ -746,14 +750,14 @@ function ChannelItem({
       <ContextMenuContent>
         <ContextMenuItem onClick={onOpenSettings} className="gap-2">
           <Settings className="w-4 h-4" />
-          Edit Channel
+          {t('channelSidebar.editChannel')}
         </ContextMenuItem>
         <ContextMenuItem
           onClick={() => { void navigator.clipboard.writeText(String(channel.id)) }}
           className="gap-2"
         >
           <Copy className="w-4 h-4" />
-          Copy Channel ID
+          {t('channelSidebar.copyChannelId')}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem
@@ -761,7 +765,7 @@ function ChannelItem({
           className="text-destructive focus:text-destructive gap-2"
         >
           <Trash2 className="w-4 h-4" />
-          Delete Channel
+          {t('channelSidebar.deleteChannel')}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

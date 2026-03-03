@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
 import { Trash2, Pencil, Copy, MessageSquare, Hash } from 'lucide-react'
 import { toast } from 'sonner'
@@ -58,6 +59,7 @@ interface Props {
 
 export default function MessageItem({ message, isGrouped = false, resolver }: Props) {
   const { serverId } = useParams<{ serverId?: string }>()
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const openUserProfile = useUiStore((s) => s.openUserProfile)
@@ -109,7 +111,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
         navigate(`/app/@me/${String(channel.id)}`)
       }
     } catch {
-      toast.error('Failed to open DM')
+      toast.error(t('memberList.dmFailed'))
     }
   }
 
@@ -142,7 +144,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
       updateMessage(channelId, res.data)
       setEditing(false)
     } catch {
-      toast.error('Failed to edit message')
+      toast.error(t('messageItem.editFailed'))
     } finally {
       setEditLoading(false)
     }
@@ -168,7 +170,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
       removeMessage(channelId, messageId)
       setDeleteOpen(false)
     } catch {
-      toast.error('Failed to delete message')
+      toast.error(t('messageItem.deleteFailed'))
     } finally {
       setDeleteLoading(false)
     }
@@ -234,23 +236,23 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
                     disabled={editLoading}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Enter to{' '}
+                    {t('messageItem.enterTo')}
                     <button
                       type="button"
                       onClick={() => void handleEdit()}
                       disabled={editLoading}
                       className="text-primary underline underline-offset-2 hover:opacity-80 disabled:opacity-50 cursor-pointer"
                     >
-                      save
+                      {t('messageItem.save')}
                     </button>
-                    {' · '}Esc to{' '}
+                    {t('messageItem.escTo')}
                     <button
                       type="button"
                       onClick={() => setEditing(false)}
                       disabled={editLoading}
                       className="text-primary underline underline-offset-2 hover:opacity-80 disabled:opacity-50 cursor-pointer"
                     >
-                      cancel
+                      {t('messageItem.cancel')}
                     </button>
                   </p>
                 </div>
@@ -281,21 +283,21 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
         <ContextMenuContent>
           <ContextMenuItem onClick={handleCopy} className="gap-2">
             <Copy className="w-4 h-4" />
-            Copy Text
+            {t('messageItem.copyText')}
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(messageId) }}
             className="gap-2"
           >
             <Hash className="w-4 h-4" />
-            Copy Message ID
+            {t('messageItem.copyMessageId')}
           </ContextMenuItem>
           {isOwn ? (
             <>
               <ContextMenuSeparator />
               <ContextMenuItem onClick={startEdit} className="gap-2">
                 <Pencil className="w-4 h-4" />
-                Edit Message
+                {t('messageItem.editMessage')}
               </ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem
@@ -303,7 +305,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
                 className="text-destructive focus:text-destructive gap-2"
               >
                 <Trash2 className="w-4 h-4" />
-                Delete Message
+                {t('messageItem.deleteMessage')}
               </ContextMenuItem>
             </>
           ) : (
@@ -311,7 +313,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
               <ContextMenuSeparator />
               <ContextMenuItem onClick={() => void handleMessageUser()} className="gap-2">
                 <MessageSquare className="w-4 h-4" />
-                Message User
+                {t('messageItem.messageUser')}
               </ContextMenuItem>
             </>
           )}
@@ -321,9 +323,9 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
       <Dialog open={deleteOpen} onOpenChange={(o) => !o && setDeleteOpen(false)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Message</DialogTitle>
+            <DialogTitle>{t('messageItem.deleteTitle')}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete this message? This action cannot be undone.
+              {t('messageItem.deleteDesc')}
             </DialogDescription>
           </DialogHeader>
           {message.content && (
@@ -333,10 +335,10 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleteLoading}>
-              Delete
+              {t('messageItem.deleteMessage')}
             </Button>
           </DialogFooter>
         </DialogContent>

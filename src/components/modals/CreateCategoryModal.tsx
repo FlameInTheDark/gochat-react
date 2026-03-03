@@ -13,12 +13,14 @@ import { Label } from '@/components/ui/label'
 import { guildApi } from '@/api/client'
 import { useUiStore } from '@/stores/uiStore'
 import { toast } from 'sonner'
+import { useTranslation } from 'react-i18next'
 
 export default function CreateCategoryModal() {
   const open = useUiStore((s) => s.createCategoryOpen)
   const close = useUiStore((s) => s.closeCreateCategory)
   const serverId = useUiStore((s) => s.createCategoryServerId)
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -34,7 +36,7 @@ export default function CreateCategoryModal() {
       close()
       setName('')
     } catch {
-      toast.error('Failed to create category')
+      toast.error(t('modals.createCategoryFailed'))
     } finally {
       setLoading(false)
     }
@@ -44,23 +46,23 @@ export default function CreateCategoryModal() {
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create a Category</DialogTitle>
+          <DialogTitle>{t('modals.createCategory')}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 py-2">
-          <Label htmlFor="category-name">Category Name</Label>
+          <Label htmlFor="category-name">{t('modals.categoryName')}</Label>
           <Input
             id="category-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="TEXT CHANNELS"
+            placeholder={t('modals.categoryNamePlaceholder')}
           />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={close}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={handleCreate} disabled={loading || !name.trim()}>
-            Create
+            {t('common.create')}
           </Button>
         </DialogFooter>
       </DialogContent>

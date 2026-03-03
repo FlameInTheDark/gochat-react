@@ -17,6 +17,7 @@ import { useVoiceStore } from '@/stores/voiceStore'
 import { sendPresenceStatus } from '@/services/wsService'
 import { useFolderStore } from '@/stores/folderStore'
 import { useReadStateStore } from '@/stores/readStateStore'
+import i18n from '@/i18n'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 
@@ -48,7 +49,7 @@ function LoadingScreen() {
     <div className="flex h-screen w-screen items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-4 text-muted-foreground">
         <div className="w-10 h-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-        <p className="text-sm">Loading…</p>
+        <p className="text-sm">{i18n.t('app.loading')}</p>
       </div>
     </div>
   )
@@ -120,7 +121,7 @@ export default function AppLayout() {
         validatedTokenRef.current = token
         // Restore saved presence status + custom status text before the WS
         // connects so resubscribe() sends the correct op:3 on the very first hello.
-        const savedStatus     = settingsRes?.data?.settings?.status?.status
+        const savedStatus = settingsRes?.data?.settings?.status?.status
         const savedCustomText = settingsRes?.data?.settings?.status?.custom_status_text ?? ''
         if (savedCustomText) {
           usePresenceStore.getState().setCustomStatusText(savedCustomText)
@@ -141,6 +142,11 @@ export default function AppLayout() {
         // determine where to scroll on channel open (unread separator position).
         if (settingsRes?.data) {
           useReadStateStore.getState().setFromSettings(settingsRes.data)
+        }
+        // Apply saved display language
+        const savedLanguage = settingsRes?.data?.settings?.language
+        if (savedLanguage && savedLanguage.trim()) {
+          void i18n.changeLanguage(savedLanguage)
         }
         // Restore voice settings
         if (settingsRes?.data?.settings?.devices) {
@@ -175,8 +181,8 @@ export default function AppLayout() {
     return () => {
       controller.abort()
     }
-  // token is the only real dependency; navigate/setUser/logout are stable refs
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // token is the only real dependency; navigate/setUser/logout are stable refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   // No token — effect already navigated away; render nothing during transition

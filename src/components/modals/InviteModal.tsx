@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input'
 import { useUiStore } from '@/stores/uiStore'
 import { inviteApi } from '@/api/client'
 import type { DtoGuildInvite } from '@/client'
+import { useTranslation } from 'react-i18next'
 
 function getInviteUrl(code: string) {
   return `${location.origin}/invite/${code}`
@@ -23,6 +24,7 @@ export default function InviteModal() {
   const close = useUiStore((s) => s.closeInviteModal)
   const serverId = useUiStore((s) => s.inviteModalServerId)
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [creating, setCreating] = useState(false)
 
   const { data: invites = [] } = useQuery({
@@ -44,7 +46,7 @@ export default function InviteModal() {
       })
       await queryClient.invalidateQueries({ queryKey: ['invites', serverId] })
     } catch {
-      toast.error('Failed to create invite')
+      toast.error(t('modals.createInviteFailed'))
     } finally {
       setCreating(false)
     }
@@ -59,26 +61,26 @@ export default function InviteModal() {
       })
       await queryClient.invalidateQueries({ queryKey: ['invites', serverId] })
     } catch {
-      toast.error('Failed to delete invite')
+      toast.error(t('modals.deleteInviteFailed'))
     }
   }
 
   function copyInvite(code: string) {
     void navigator.clipboard.writeText(getInviteUrl(code))
-    toast.success('Invite link copied!')
+    toast.success(t('modals.inviteCopied'))
   }
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && close()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Invite People</DialogTitle>
+          <DialogTitle>{t('modals.invitePeople')}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
           {invites.length === 0 ? (
             <p className="text-sm text-muted-foreground py-2">
-              No active invites. Create one below.
+              {t('modals.noActiveInvites')}
             </p>
           ) : (
             <div className="space-y-2">
@@ -93,7 +95,7 @@ export default function InviteModal() {
                     size="icon"
                     variant="ghost"
                     onClick={() => invite.code && copyInvite(invite.code)}
-                    title="Copy link"
+                    title={t('modals.copyLink')}
                   >
                     <Copy className="w-4 h-4" />
                   </Button>
@@ -102,7 +104,7 @@ export default function InviteModal() {
                     variant="ghost"
                     className="text-destructive hover:text-destructive"
                     onClick={() => void deleteInvite(invite)}
-                    title="Delete invite"
+                    title={t('modals.deleteInvite')}
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>
@@ -118,7 +120,7 @@ export default function InviteModal() {
             variant="outline"
           >
             <Plus className="w-4 h-4 mr-2" />
-            Create New Invite
+            {t('modals.createNewInvite')}
           </Button>
         </div>
       </DialogContent>
