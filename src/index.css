@@ -120,10 +120,11 @@
 }
 
 /* Placeholder for the contenteditable editor */
-.mention-editor:empty::before {
+.mention-editor.is-empty::before {
   content: attr(data-placeholder);
   color: var(--color-muted-foreground);
   pointer-events: none;
+  position: absolute;
 }
 
 /*

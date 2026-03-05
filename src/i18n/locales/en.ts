@@ -339,6 +339,7 @@ const en: Translation = {
         noRoles: 'No roles assigned',
         noServerRoles: 'No roles in this server',
         sendMessage: 'Send Message',
+        addFriend: 'Add Friend',
     },
 
     // ── Common ────────────────────────────────────────────────────────────────

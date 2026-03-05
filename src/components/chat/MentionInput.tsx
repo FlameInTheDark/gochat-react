@@ -219,6 +219,14 @@ export default function MentionInput({
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [])
 
+  // Initialize empty class on mount
+  useEffect(() => {
+    const el = editorRef.current
+    if (el) {
+      el.classList.add('is-empty')
+    }
+  }, [])
+
   function computeSuggestions(q: { trigger: '@' | '#'; query: string }) {
     const query = q.query.toLowerCase()
 
@@ -311,6 +319,11 @@ export default function MentionInput({
   function handleInput() {
     const el = editorRef.current
     if (!el) return
+    
+    // Check if editor is truly empty (no visible text)
+    const isEmpty = !el.textContent?.trim()
+    el.classList.toggle('is-empty', isEmpty)
+    
     const q = getMentionQuery(el)
     if (q) {
       computeSuggestions(q)
@@ -354,7 +367,11 @@ export default function MentionInput({
       // Allow send with empty text when there are pending attachments
       if (!content && !hasAttachments) return
       onSend(content)
-      el.innerHTML = ''
+      // Clear editor completely - remove all children to ensure it's empty
+      while (el.firstChild) {
+        el.removeChild(el.firstChild)
+      }
+      el.classList.add('is-empty')
       setSuggestions([])
       return
     }

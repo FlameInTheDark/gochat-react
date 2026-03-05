@@ -311,6 +311,7 @@ export interface Translation {
         noRoles: string
         noServerRoles: string
         sendMessage: string
+        addFriend: string
     }
     common: {
         save: string

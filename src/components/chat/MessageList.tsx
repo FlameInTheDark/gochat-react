@@ -6,6 +6,7 @@ import type { MentionResolver } from '@/lib/messageParser'
 import MessageItem from './MessageItem'
 import { snowflakeToDate, snowflakeToDayLabel } from '@/lib/snowflake'
 import { useTranslation } from 'react-i18next'
+import { useAppearanceStore, DEFAULT_CHAT_SPACING } from '@/stores/appearanceStore'
 
 interface Props {
   messages: DtoMessage[]
@@ -131,6 +132,7 @@ export default function MessageList({
 }: Props) {
   const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const chatSpacing = useAppearanceStore((s) => s.chatSpacing) ?? DEFAULT_CHAT_SPACING
   const isAtBottomRef = useRef(true)
   const prevLengthRef = useRef(0)
   const [showJumpButton, setShowJumpButton] = useState(false)
@@ -355,7 +357,7 @@ export default function MessageList({
                       <div className="flex-1 h-px bg-red-500/60" />
                     </div>
                   )}
-                  <div data-message-id={String(msg.id)}>
+                  <div data-message-id={String(msg.id)} style={{ paddingTop: chatSpacing }}>
                     <MessageItem message={msg} isGrouped={grouped} resolver={resolver} />
                   </div>
                 </Fragment>

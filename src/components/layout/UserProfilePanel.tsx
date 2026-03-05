@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
-import { MessageSquare } from 'lucide-react'
+import { MessageSquare, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/stores/uiStore'
@@ -95,6 +95,13 @@ export default function UserProfilePanel() {
     staleTime: 15_000,
   })
 
+  // Get friends list to check if user is already a friend
+  const { data: friends = [] } = useQuery({
+    queryKey: ['friends'],
+    queryFn: () => userApi.userMeFriendsGet().then((r) => r.data ?? []),
+    staleTime: 30_000,
+  })
+
   // ── Early return — after ALL hooks ────────────────────────────────────────
 
   if (!profile) return null
@@ -152,6 +159,21 @@ export default function UserProfilePanel() {
       }
     } catch {
       toast.error(t('memberList.dmFailed'))
+    }
+  }
+
+  const isSelf = currentUser?.id !== undefined && String(currentUser.id) === userId
+  const isFriend = friends.some((f) => String(f.id) === userId)
+  const memberDiscriminator = member?.user?.discriminator
+
+  async function handleSendFriendRequest() {
+    if (!memberDiscriminator) return
+    try {
+      await userApi.userMeFriendsPost({ request: { discriminator: memberDiscriminator } })
+      await queryClient.invalidateQueries({ queryKey: ['friends'] })
+      toast.success(t('friends.requestSent'))
+    } catch {
+      toast.error(t('friends.requestFailed'))
     }
   }
 
@@ -337,7 +359,18 @@ export default function UserProfilePanel() {
         </div>
 
         {/* Actions */}
-        <div className="border-t border-border pt-3">
+        <div className="border-t border-border pt-3 space-y-2">
+          {!isSelf && !isFriend && memberDiscriminator && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="w-full gap-2"
+              onClick={() => void handleSendFriendRequest()}
+            >
+              <UserPlus className="w-4 h-4" />
+              {t('userProfile.addFriend')}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="secondary"

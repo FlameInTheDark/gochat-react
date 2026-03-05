@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useAuthStore } from '@/stores/authStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useVoiceStore } from '@/stores/voiceStore'
+import { useAppearanceStore, DEFAULT_CHAT_SPACING, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore'
 import { applyVoiceSettings } from '@/services/voiceService'
 import { useNavigate } from 'react-router-dom'
 import { userApi, uploadApi, axiosInstance } from '@/api/client'
@@ -84,8 +85,8 @@ export default function AppSettingsModal() {
   const [savingAccount, setSavingAccount] = useState(false)
 
   // Appearance
-  const [fontScale, setFontScale] = useState(1.0)
-  const [chatSpacing, setChatSpacing] = useState(16)
+  const [fontScale, setFontScale] = useState(DEFAULT_FONT_SCALE)
+  const [chatSpacing, setChatSpacing] = useState(DEFAULT_CHAT_SPACING)
   const [savingAppearance, setSavingAppearance] = useState(false)
 
   // Voice & Video
@@ -125,13 +126,19 @@ export default function AppSettingsModal() {
     }
   }, [open, user?.name])
 
+  const { setFontScale: setAppearenceFontScale, setChatSpacing: setAppearanceChatSpacing } = useAppearanceStore()
+
   // Init appearance from loaded settings
   useEffect(() => {
     if (settingsData?.appearance) {
-      setFontScale(settingsData.appearance.chat_font_scale ?? 1.0)
-      setChatSpacing(settingsData.appearance.chat_spacing ?? 16)
+      const fontScale = settingsData.appearance.chat_font_scale ?? 1.0
+      const chatSpacing = settingsData.appearance.chat_spacing ?? 16
+      setFontScale(fontScale)
+      setChatSpacing(chatSpacing)
+      setAppearenceFontScale(fontScale)
+      setAppearanceChatSpacing(chatSpacing)
     }
-  }, [settingsData])
+  }, [settingsData, setAppearenceFontScale, setAppearanceChatSpacing])
 
   // Init language from loaded settings
   useEffect(() => {
@@ -278,6 +285,8 @@ export default function AppSettingsModal() {
     setSavingAppearance(true)
     try {
       await patchSettings({ appearance: { chat_font_scale: fontScale, chat_spacing: chatSpacing } })
+      setAppearenceFontScale(fontScale)
+      setAppearanceChatSpacing(chatSpacing)
       toast.success(t('settings.appearanceSaved'))
     } catch {
       toast.error(t('settings.appearanceFailed'))
