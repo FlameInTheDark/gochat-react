@@ -15,6 +15,7 @@
 
 import JSONBig from 'json-bigint'
 import { useVoiceStore } from '@/stores/voiceStore'
+import { usePresenceStore } from '@/stores/presenceStore'
 import { sendRaw } from './wsService'
 
 // BigInt-aware serializer for SFU WS messages (channel IDs are int64 Snowflakes).
@@ -44,6 +45,9 @@ let bindingAliveTimer: number | null = null
 let sfuHeartbeatTimer: number | null = null
 let pendingCandidates: RTCIceCandidateInit[] = []
 let currentChannelId: string | null = null
+
+// Voice channel member event listeners cleanup function
+let memberEventCleanup: (() => void) | null = null
 
 // Shared AudioContext for all remote peers.
 let audioCtx: AudioContext | null = null
@@ -405,10 +409,12 @@ function createPeerConnection(): RTCPeerConnection {
     playAudio()
 
     const settings = useVoiceStore.getState().settings
+    const peerVolume = useVoiceStore.getState().peers[userId]?.volume ?? 100
     const source = ctx.createMediaStreamSource(stream)
     const gain = ctx.createGain()
-    const baseGain = settings.audioOutputLevel / 100
-    gain.gain.value = useVoiceStore.getState().localDeafened ? 0 : baseGain
+    // Apply master output level * per-user volume * deafen state
+    const effectiveGain = (settings.audioOutputLevel / 100) * (peerVolume / 100)
+    gain.gain.value = useVoiceStore.getState().localDeafened ? 0 : effectiveGain
 
     source.connect(gain)
     gain.connect(ctx.destination)
@@ -520,6 +526,17 @@ function cleanup(sendPresenceClear = true) {
 
   pendingCandidates = []
   currentChannelId = null
+
+  // Clean up voice channel member event listeners
+  if (memberEventCleanup) {
+    memberEventCleanup()
+    memberEventCleanup = null
+  }
+
+  // Clear voice channel users from presence store for this channel
+  if (currentChannelId) {
+    usePresenceStore.getState().clearVoiceChannel(currentChannelId)
+  }
 
   if (sendPresenceClear) {
     sendRaw({ op: 3, d: { status: 'online', voice_channel_id: 0 } })
@@ -694,6 +711,40 @@ export async function joinVoice(
   // Update voice store and presence
   useVoiceStore.getState().setVoiceChannel(guildId, channelId, channelName)
   sendRaw({ op: 3, d: { status: 'online', voice_channel_id: BigInt(channelId) } })
+
+  // Listen for other users joining/leaving this voice channel via main gateway events
+  const handleMemberJoinVoice = (e: Event) => {
+    const detail = (e as CustomEvent).detail as { user_id?: string | number }
+    if (detail?.user_id !== undefined) {
+      const userId = String(detail.user_id)
+      vlog('ws:member_join_voice received for user=%s', userId)
+      useVoiceStore.getState().addPeer(userId)
+    }
+  }
+
+  const handleMemberLeaveVoice = (e: Event) => {
+    const detail = (e as CustomEvent).detail as { user_id?: string | number }
+    if (detail?.user_id !== undefined) {
+      const userId = String(detail.user_id)
+      vlog('ws:member_leave_voice received for user=%s', userId)
+      useVoiceStore.getState().removePeer(userId)
+      if (audioGains[userId]) {
+        audioGains[userId].disconnect()
+        delete audioGains[userId]
+      }
+    }
+  }
+
+  window.addEventListener('ws:member_join_voice', handleMemberJoinVoice)
+  window.addEventListener('ws:member_leave_voice', handleMemberLeaveVoice)
+
+  // Store cleanup function for event listeners
+  memberEventCleanup = () => {
+    window.removeEventListener('ws:member_join_voice', handleMemberJoinVoice)
+    window.removeEventListener('ws:member_leave_voice', handleMemberLeaveVoice)
+    vlog('voiceService: voice channel member event listeners removed')
+  }
+
   vlog('joinVoice: setup complete, waiting for SFU offer...')
 }
 
@@ -729,15 +780,33 @@ export function setMuted(muted: boolean) {
 
   sfuSend({ op: 7, t: T_MUTE_SELF, d: { muted } })
   useVoiceStore.getState().setLocalMuted(muted)
+
+  // Send presence update with new mute state
+  const store = useVoiceStore.getState()
+  if (store.channelId) {
+    sendRaw({
+      op: 3,
+      d: {
+        status: 'online',
+        platform: 'web',
+        voice_channel_id: BigInt(store.channelId),
+        mute: muted,
+        deafen: store.localDeafened,
+      },
+    })
+    vlog('setMuted: sent presence update with mute=%s', muted)
+  }
 }
 
 export function setDeafened(deafened: boolean) {
   vlog('setDeafened: %s', deafened)
   const settings = useVoiceStore.getState().settings
   const baseGain = settings.audioOutputLevel / 100
-  // Mute / unmute all remote gain nodes
+  // Mute / unmute all remote gain nodes, applying per-user volume
   for (const [uid, gain] of Object.entries(audioGains)) {
-    gain.gain.value = deafened ? 0 : baseGain
+    const peerVolume = useVoiceStore.getState().peers[uid]?.volume ?? 100
+    const effectiveGain = baseGain * (peerVolume / 100)
+    gain.gain.value = deafened ? 0 : effectiveGain
     vlog('setDeafened: gain for userId=%s → %.2f', uid, gain.gain.value)
   }
   // Apply sinkId to AudioContext if supported
@@ -755,10 +824,152 @@ export function setDeafened(deafened: boolean) {
     }
   }
   useVoiceStore.getState().setLocalDeafened(deafened)
+
+  // Send presence update with new deafen state
+  const store = useVoiceStore.getState()
+  if (store.channelId) {
+    sendRaw({
+      op: 3,
+      d: {
+        status: 'online',
+        platform: 'web',
+        voice_channel_id: BigInt(store.channelId),
+        mute: store.localMuted,
+        deafen: deafened,
+      },
+    })
+    vlog('setDeafened: sent presence update with deafen=%s', deafened)
+  }
+}
+
+export function setPeerVolume(userId: string, volume: number) {
+  vlog('setPeerVolume: userId=%s volume=%d', userId, volume)
+  // Clamp volume to 0-200 range
+  const clampedVolume = Math.max(0, Math.min(200, volume))
+  
+  // Update the store
+  useVoiceStore.getState().setPeerVolume(userId, clampedVolume)
+  
+  // Apply to the gain node if it exists
+  const gain = audioGains[userId]
+  if (gain) {
+    const settings = useVoiceStore.getState().settings
+    const localDeafened = useVoiceStore.getState().localDeafened
+    const baseGain = settings.audioOutputLevel / 100
+    const effectiveGain = localDeafened ? 0 : baseGain * (clampedVolume / 100)
+    gain.gain.value = effectiveGain
+    vlog('setPeerVolume: applied gain=%.2f for userId=%s', effectiveGain, userId)
+  }
+}
+
+/**
+ * Re-acquires the microphone with current audio processing settings.
+ * Used when echoCancellation or noiseSuppression settings change.
+ */
+async function reacquireMicrophone(): Promise<void> {
+  if (!peerConnection) return
+
+  const settings = useVoiceStore.getState().settings
+  const wasMuted = useVoiceStore.getState().localMuted
+
+  vlog('reacquireMicrophone: re-acquiring with echoCancellation=%s noiseSuppression=%s',
+    settings.echoCancellation, settings.noiseSuppression)
+
+  // Stop and remove existing sent tracks from peer connection
+  for (const track of sentTracks) {
+    try { track.stop() } catch { /* already stopped */ }
+    const sender = peerConnection.getSenders().find(s => s.track === track)
+    if (sender) {
+      peerConnection.removeTrack(sender)
+    }
+  }
+  sentTracks = []
+
+  // Stop local stream tracks
+  if (localStream) {
+    for (const track of localStream.getTracks()) {
+      track.stop()
+    }
+    localStream = null
+  }
+
+  // Disconnect local input gain
+  if (localInputGain) {
+    localInputGain.disconnect()
+    localInputGain = null
+  }
+
+  // Request new microphone access with updated settings
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: settings.audioInputDevice ? { exact: settings.audioInputDevice } : undefined,
+        autoGainControl: settings.autoGainControl,
+        echoCancellation: settings.echoCancellation,
+        noiseSuppression: settings.noiseSuppression,
+      },
+      video: false
+    })
+
+    const ctx = getAudioContext()
+    const source = ctx.createMediaStreamSource(localStream)
+    localInputGain = ctx.createGain()
+    localInputGain.gain.value = settings.audioInputLevel / 100
+    source.connect(localInputGain)
+
+    const destination = ctx.createMediaStreamDestination()
+    localInputGain.connect(destination)
+    const processedStream = destination.stream
+    const processedTracks = processedStream.getAudioTracks()
+
+    for (const track of processedTracks) {
+      peerConnection.addTrack(track, processedStream)
+      sentTracks.push(track)
+      track.enabled = !wasMuted
+    }
+
+    vlog('reacquireMicrophone: success, added %d processed track(s)', processedTracks.length)
+  } catch (err) {
+    verr('reacquireMicrophone: failed - %s', (err as Error).message)
+    // Try with default device as fallback
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          autoGainControl: settings.autoGainControl,
+          echoCancellation: settings.echoCancellation,
+          noiseSuppression: settings.noiseSuppression,
+        },
+        video: false
+      })
+
+      const ctx = getAudioContext()
+      const source = ctx.createMediaStreamSource(localStream)
+      localInputGain = ctx.createGain()
+      localInputGain.gain.value = settings.audioInputLevel / 100
+      source.connect(localInputGain)
+
+      const destination = ctx.createMediaStreamDestination()
+      localInputGain.connect(destination)
+      const processedStream = destination.stream
+      const processedTracks = processedStream.getAudioTracks()
+
+      for (const track of processedTracks) {
+        peerConnection.addTrack(track, processedStream)
+        sentTracks.push(track)
+        track.enabled = !wasMuted
+      }
+
+      vlog('reacquireMicrophone: fallback success, added %d processed track(s)', processedTracks.length)
+    } catch (fallbackErr) {
+      verr('reacquireMicrophone: fallback also failed - %s', (fallbackErr as Error).message)
+    }
+  }
 }
 
 /**
  * Updates the output gain of all currently connected peers and the local input gain.
+ * If audio processing settings (echoCancellation/noiseSuppression) changed while
+ * connected, re-acquires the microphone with new constraints.
  */
 export function applyVoiceSettings() {
   const store = useVoiceStore.getState()
@@ -776,6 +987,11 @@ export function applyVoiceSettings() {
 
   if (audioCtx && 'setSinkId' in audioCtx && settings.audioOutputDevice) {
     void (audioCtx as unknown as AudioContextWithSinkId).setSinkId(settings.audioOutputDevice).catch(() => {})
+  }
+
+  // Re-acquire microphone if connected - new audio processing settings require fresh getUserMedia
+  if (peerConnection && localStream) {
+    void reacquireMicrophone()
   }
 }
 

@@ -1,17 +1,19 @@
 /**
- * MicTest — Discord-style microphone test component for Voice & Video settings.
+ * MicTest — Real-time microphone monitoring for Voice & Video settings.
  *
  * Features:
  *   - Real-time volume meter showing mic input level
- *   - "Let's Check" / "Stop Testing" button that records a short clip
- *   - Plays back the recording so the user can hear how they sound
+ *   - Live microphone monitoring (hear yourself in real-time)
+ *   - Automatically mutes/deafens user in voice channel during test
  *   - Respects selected input device, volume, and audio processing settings
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Mic, Square, Play, RotateCcw } from 'lucide-react'
+import { Mic, Square, Headphones } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useVoiceStore } from '@/stores/voiceStore'
+import { setMuted, setDeafened } from '@/services/voiceService'
 
 interface MicTestProps {
   inputDeviceId: string
@@ -23,12 +25,8 @@ interface MicTestProps {
   outputLevel: number     // 0–200
 }
 
-type TestState = 'idle' | 'recording' | 'playing'
-
 // Number of bars in the volume meter
 const METER_BARS = 20
-// Max recording duration (seconds) — Discord uses ~5s
-const MAX_RECORD_SECONDS = 5
 
 export default function MicTest({
   inputDeviceId,
@@ -39,23 +37,25 @@ export default function MicTest({
   outputDeviceId,
   outputLevel,
 }: MicTestProps) {
-  const [testState, setTestState] = useState<TestState>('idle')
+  const [isTesting, setIsTesting] = useState(false)
   const [volume, setVolume] = useState(0) // 0–1 normalized
-  const [recordingUrl, setRecordingUrl] = useState<string | null>(null)
-  const [playbackProgress, setPlaybackProgress] = useState(0)
-  const [recordProgress, setRecordProgress] = useState(0)
   const [permissionDenied, setPermissionDenied] = useState(false)
+
+  // Track previous voice state to restore after test
+  const prevVoiceStateRef = useRef<{ muted: boolean; deafened: boolean } | null>(null)
+  const wasInVoiceChannelRef = useRef(false)
 
   const streamRef = useRef<MediaStream | null>(null)
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const gainRef = useRef<GainNode | null>(null)
-  const rafRef = useRef<number | null>(null)
-  const recorderRef = useRef<MediaRecorder | null>(null)
-  const chunksRef = useRef<Blob[]>([])
+  const destinationRef = useRef<MediaStreamAudioDestinationNode | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const recordTimerRef = useRef<number | null>(null)
-  const recordStartRef = useRef<number>(0)
+  const rafRef = useRef<number | null>(null)
+
+  // Get voice channel state
+  const channelId = useVoiceStore((s) => s.channelId)
+  const isInVoiceChannel = !!channelId
 
   // Cleanup function
   const stopEverything = useCallback(() => {
@@ -63,43 +63,52 @@ export default function MicTest({
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
-    if (recordTimerRef.current !== null) {
-      clearInterval(recordTimerRef.current)
-      recordTimerRef.current = null
-    }
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      recorderRef.current.stop()
-    }
-    recorderRef.current = null
+
+    // Stop playback audio
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current.currentTime = 0
+      audioRef.current = null
     }
+
+    // Stop stream tracks
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {
         track.stop()
       }
       streamRef.current = null
     }
+
+    // Close audio context
     if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
       void audioCtxRef.current.close()
       audioCtxRef.current = null
     }
+
     analyserRef.current = null
     gainRef.current = null
+    destinationRef.current = null
     setVolume(0)
-    setRecordProgress(0)
-    setPlaybackProgress(0)
+  }, [])
+
+  // Restore voice channel state when stopping test
+  const restoreVoiceState = useCallback(() => {
+    if (wasInVoiceChannelRef.current && prevVoiceStateRef.current) {
+      // Restore previous mute/deafen state
+      setMuted(prevVoiceStateRef.current.muted)
+      setDeafened(prevVoiceStateRef.current.deafened)
+    }
+    wasInVoiceChannelRef.current = false
+    prevVoiceStateRef.current = null
   }, [])
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopEverything()
-      if (recordingUrl) URL.revokeObjectURL(recordingUrl)
+      restoreVoiceState()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [stopEverything, restoreVoiceState])
 
   // Update gain when inputLevel changes during test
   useEffect(() => {
@@ -107,6 +116,13 @@ export default function MicTest({
       gainRef.current.gain.value = inputLevel / 100
     }
   }, [inputLevel])
+
+  // Update output volume when outputLevel changes during test
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = outputLevel / 100
+    }
+  }, [outputLevel])
 
   // Poll the analyser to read mic volume
   const startMeterLoop = useCallback(() => {
@@ -132,10 +148,25 @@ export default function MicTest({
     loop()
   }, [])
 
-  // Acquire mic and set up audio pipeline
-  const acquireMic = useCallback(async () => {
+  // Start real-time mic monitoring
+  const handleStartTest = useCallback(async () => {
     setPermissionDenied(false)
+
+    // Save current voice state and mute/deafen if in voice channel
+    if (isInVoiceChannel) {
+      const store = useVoiceStore.getState()
+      wasInVoiceChannelRef.current = true
+      prevVoiceStateRef.current = {
+        muted: store.localMuted,
+        deafened: store.localDeafened,
+      }
+      // Mute and deafen in voice channel
+      setMuted(true)
+      setDeafened(true)
+    }
+
     try {
+      // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: inputDeviceId ? { exact: inputDeviceId } : undefined,
@@ -147,25 +178,95 @@ export default function MicTest({
       })
       streamRef.current = stream
 
+      // Create audio context
       const ctx = new AudioContext()
       audioCtxRef.current = ctx
 
+      // Create source from mic stream
       const source = ctx.createMediaStreamSource(stream)
+
+      // Check actual channel count from the track settings
+      const audioTrack = stream.getAudioTracks()[0]
+      const trackSettings = audioTrack?.getSettings()
+      const channelCount = trackSettings?.channelCount ?? source.channelCount ?? 2
+
+      // Create gain node for input level control
       const gain = ctx.createGain()
       gain.gain.value = inputLevel / 100
       gainRef.current = gain
 
+      // Create analyser for volume meter
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 2048
       analyserRef.current = analyser
 
-      // For the meter: source -> gain -> analyser
-      source.connect(gain)
-      gain.connect(analyser)
-      // Don't connect to destination — we don't want to hear ourselves during test
+      // Create destination for monitoring output
+      const destination = ctx.createMediaStreamDestination()
+      destinationRef.current = destination
 
+      // Handle mono-to-stereo conversion for single-channel microphones
+      // Some microphones only output to left channel, we want to hear it in both ears
+      if (channelCount === 1) {
+        // Use ChannelMerger to duplicate mono to both left and right channels
+        const merger = ctx.createChannelMerger(2)
+
+        // Connect the mono source to both merger inputs (0=left, 1=right)
+        // For a mono source, connect it twice - once to each channel of the merger
+        gain.connect(merger, 0, 0)
+        gain.connect(merger, 0, 1)
+
+        // Now create a new MediaStreamDestination that has 2 channels
+        // Connect merger output to destination
+        merger.connect(analyser)
+        analyser.connect(destination)
+
+        // Force the destination stream to be stereo by setting channelCount on the track
+        const destTrack = destination.stream.getAudioTracks()[0]
+        if (destTrack) {
+          // Apply constraints to ensure stereo output
+          destTrack.applyConstraints({ channelCount: 2 }).catch(() => {
+            // If constraints fail, the audio might still work
+          })
+        }
+      } else {
+        // For stereo mics that might only have left channel audio,
+        // we still want to ensure both channels have audio
+        const splitter = ctx.createChannelSplitter(2)
+        const merger = ctx.createChannelMerger(2)
+
+        gain.connect(splitter)
+        // Connect left channel to both left and right outputs
+        splitter.connect(merger, 0, 0)
+        splitter.connect(merger, 0, 1)
+
+        merger.connect(analyser)
+        analyser.connect(destination)
+      }
+
+      // Connect source to gain
+      source.connect(gain)
+
+      // Create audio element for playback
+      const audio = new Audio()
+      audio.srcObject = destination.stream
+      audio.volume = outputLevel / 100
+      audio.muted = false
+      audioRef.current = audio
+
+      // Set output device if supported
+      if (outputDeviceId && 'setSinkId' in audio) {
+        await (audio as unknown as { setSinkId(id: string): Promise<void> })
+          .setSinkId(outputDeviceId)
+          .catch(() => {})
+      }
+
+      // Start playback
+      await audio.play()
+
+      // Start volume meter
       startMeterLoop()
-      return { stream, ctx, gain }
+
+      setIsTesting(true)
     } catch (err) {
       const error = err as Error
       if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
@@ -185,6 +286,12 @@ export default function MicTest({
           audioCtxRef.current = ctx
 
           const source = ctx.createMediaStreamSource(stream)
+
+          // Check actual channel count from the track settings
+          const audioTrack = stream.getAudioTracks()[0]
+          const trackSettings = audioTrack?.getSettings()
+          const channelCount = trackSettings?.channelCount ?? source.channelCount ?? 2
+
           const gain = ctx.createGain()
           gain.gain.value = inputLevel / 100
           gainRef.current = gain
@@ -193,154 +300,56 @@ export default function MicTest({
           analyser.fftSize = 2048
           analyserRef.current = analyser
 
+          const destination = ctx.createMediaStreamDestination()
+          destinationRef.current = destination
+
+          // Handle mono-to-stereo conversion for single-channel microphones
+          if (channelCount === 1) {
+            const merger = ctx.createChannelMerger(2)
+            gain.connect(merger, 0, 0)
+            gain.connect(merger, 0, 1)
+            merger.connect(analyser)
+            analyser.connect(destination)
+            const destTrack = destination.stream.getAudioTracks()[0]
+            if (destTrack) {
+              destTrack.applyConstraints({ channelCount: 2 }).catch(() => {})
+            }
+          } else {
+            // For stereo mics that might only have left channel audio
+            const splitter = ctx.createChannelSplitter(2)
+            const merger = ctx.createChannelMerger(2)
+            gain.connect(splitter)
+            splitter.connect(merger, 0, 0)
+            splitter.connect(merger, 0, 1)
+            merger.connect(analyser)
+            analyser.connect(destination)
+          }
+
           source.connect(gain)
-          gain.connect(analyser)
 
+          const audio = new Audio()
+          audio.srcObject = destination.stream
+          audio.volume = outputLevel / 100
+          audioRef.current = audio
+
+          await audio.play()
           startMeterLoop()
-          return { stream, ctx, gain }
+          setIsTesting(true)
         } catch {
-          return null
+          restoreVoiceState()
         }
-      }
-      return null
-    }
-  }, [inputDeviceId, inputLevel, autoGainControl, echoCancellation, noiseSuppression, startMeterLoop])
-
-  // Start recording
-  const handleStartTest = useCallback(async () => {
-    // Clean up previous recording
-    if (recordingUrl) {
-      URL.revokeObjectURL(recordingUrl)
-      setRecordingUrl(null)
-    }
-
-    const result = await acquireMic()
-    if (!result) return
-
-    setTestState('recording')
-    chunksRef.current = []
-    recordStartRef.current = Date.now()
-    setRecordProgress(0)
-
-    // Create a processed stream for recording (with gain applied)
-    const destination = result.ctx.createMediaStreamDestination()
-    result.gain.connect(destination)
-
-    const recorder = new MediaRecorder(destination.stream, {
-      mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : 'audio/webm',
-    })
-    recorderRef.current = recorder
-
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data)
-    }
-
-    recorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: recorder.mimeType })
-      const url = URL.createObjectURL(blob)
-      setRecordingUrl(url)
-
-      // Stop mic and cleanup audio pipeline
-      if (streamRef.current) {
-        for (const track of streamRef.current.getTracks()) track.stop()
-        streamRef.current = null
-      }
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-      if (audioCtxRef.current && audioCtxRef.current.state !== 'closed') {
-        void audioCtxRef.current.close()
-      }
-      audioCtxRef.current = null
-      analyserRef.current = null
-      gainRef.current = null
-      setVolume(0)
-      setRecordProgress(0)
-    }
-
-    recorder.start(100) // collect data every 100ms
-
-    // Track recording progress
-    recordTimerRef.current = window.setInterval(() => {
-      const elapsed = (Date.now() - recordStartRef.current) / 1000
-      setRecordProgress(Math.min(1, elapsed / MAX_RECORD_SECONDS))
-      if (elapsed >= MAX_RECORD_SECONDS) {
-        handleStopRecording()
-      }
-    }, 50)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [acquireMic, recordingUrl])
-
-  // Stop recording
-  const handleStopRecording = useCallback(() => {
-    if (recordTimerRef.current !== null) {
-      clearInterval(recordTimerRef.current)
-      recordTimerRef.current = null
-    }
-    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-      recorderRef.current.stop()
-    }
-    setTestState('idle')
-  }, [])
-
-  // Play back recording
-  const handlePlayback = useCallback(() => {
-    if (!recordingUrl) return
-
-    const audio = new Audio(recordingUrl)
-    audioRef.current = audio
-    audio.volume = outputLevel / 100
-
-    // Set output device if supported
-    if (outputDeviceId && 'setSinkId' in audio) {
-      void (audio as unknown as { setSinkId(id: string): Promise<void> })
-        .setSinkId(outputDeviceId)
-        .catch(() => {})
-    }
-
-    setTestState('playing')
-    setPlaybackProgress(0)
-
-    audio.ontimeupdate = () => {
-      if (audio.duration && isFinite(audio.duration)) {
-        setPlaybackProgress(audio.currentTime / audio.duration)
+      } else {
+        restoreVoiceState()
       }
     }
+  }, [inputDeviceId, inputLevel, autoGainControl, echoCancellation, noiseSuppression, outputDeviceId, outputLevel, isInVoiceChannel, startMeterLoop, restoreVoiceState])
 
-    audio.onended = () => {
-      setTestState('idle')
-      setPlaybackProgress(0)
-    }
-
-    audio.onerror = () => {
-      setTestState('idle')
-      setPlaybackProgress(0)
-    }
-
-    void audio.play()
-  }, [recordingUrl, outputDeviceId, outputLevel])
-
-  // Stop playback
-  const handleStopPlayback = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.currentTime = 0
-    }
-    setTestState('idle')
-    setPlaybackProgress(0)
-  }, [])
-
-  // Reset everything
-  const handleReset = useCallback(() => {
+  // Stop testing
+  const handleStopTest = useCallback(() => {
     stopEverything()
-    if (recordingUrl) URL.revokeObjectURL(recordingUrl)
-    setRecordingUrl(null)
-    setTestState('idle')
-    setPermissionDenied(false)
-  }, [stopEverything, recordingUrl])
+    restoreVoiceState()
+    setIsTesting(false)
+  }, [stopEverything, restoreVoiceState])
 
   // Active bars in the meter
   const activeBars = Math.round(volume * METER_BARS)
@@ -356,7 +365,7 @@ export default function MicTest({
         <div className="flex items-center gap-2">
           <Mic className={cn(
             'w-4 h-4 shrink-0 transition-colors',
-            testState === 'recording' ? 'text-green-400' : 'text-muted-foreground',
+            isTesting ? 'text-green-400' : 'text-muted-foreground',
           )} />
           <div className="flex-1 flex gap-[2px] h-3">
             {Array.from({ length: METER_BARS }).map((_, i) => {
@@ -389,31 +398,19 @@ export default function MicTest({
         )}
       </div>
 
-      {/* Progress bar — shown during recording or playback */}
-      {(testState === 'recording' || testState === 'playing') && (
-        <div className="space-y-1">
-          <div className="h-1 bg-muted rounded-full overflow-hidden">
-            <div
-              className={cn(
-                'h-full rounded-full transition-all duration-100',
-                testState === 'recording' ? 'bg-red-500' : 'bg-primary',
-              )}
-              style={{
-                width: `${(testState === 'recording' ? recordProgress : playbackProgress) * 100}%`,
-              }}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {testState === 'recording'
-              ? `Recording... ${Math.ceil(MAX_RECORD_SECONDS - recordProgress * MAX_RECORD_SECONDS)}s remaining`
-              : 'Playing back...'}
+      {/* Voice channel warning */}
+      {isInVoiceChannel && isTesting && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
+          <Headphones className="w-4 h-4 text-yellow-500" />
+          <p className="text-xs text-yellow-600 dark:text-yellow-400">
+            You are muted and deafened in the voice channel while testing your microphone.
           </p>
         </div>
       )}
 
       {/* Controls */}
       <div className="flex items-center gap-2">
-        {testState === 'idle' && !recordingUrl && (
+        {!isTesting ? (
           <Button
             variant="outline"
             size="sm"
@@ -421,75 +418,25 @@ export default function MicTest({
             className="gap-2"
           >
             <Mic className="w-3.5 h-3.5" />
-            Let's Check
+            Test Microphone
           </Button>
-        )}
-
-        {testState === 'recording' && (
+        ) : (
           <Button
             variant="outline"
             size="sm"
-            onClick={handleStopRecording}
+            onClick={handleStopTest}
             className="gap-2 border-red-500/50 text-red-400 hover:text-red-300 hover:bg-red-500/10"
           >
             <Square className="w-3 h-3 fill-current" />
-            Stop Recording
-          </Button>
-        )}
-
-        {testState === 'idle' && recordingUrl && (
-          <>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handlePlayback}
-              className="gap-2"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              Play Back
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleStartTest()}
-              className="gap-2"
-            >
-              <Mic className="w-3.5 h-3.5" />
-              Record Again
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleReset}
-              className="gap-2 text-muted-foreground"
-              title="Reset"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </Button>
-          </>
-        )}
-
-        {testState === 'playing' && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleStopPlayback}
-            className="gap-2"
-          >
-            <Square className="w-3 h-3 fill-current" />
-            Stop
+            Stop Testing
           </Button>
         )}
       </div>
 
       <p className="text-xs text-muted-foreground leading-relaxed">
-        {testState === 'idle' && !recordingUrl
-          ? 'Record a short clip to check how your microphone sounds with your current settings.'
-          : testState === 'idle' && recordingUrl
-            ? 'Your recording is ready. Play it back to hear how you sound, or record again.'
-            : testState === 'recording'
-              ? 'Speak into your microphone now. The recording will stop automatically after 5 seconds.'
-              : 'Listening to your recording through the selected output device.'}
+        {!isTesting
+          ? 'Test your microphone to hear how you sound with your current settings. If you are in a voice channel, you will be temporarily muted and deafened during the test.'
+          : 'Speak into your microphone to hear yourself in real-time. Your voice channel audio is muted while testing.'}
       </p>
     </div>
   )

@@ -22,9 +22,11 @@ import StatusDot from '@/components/ui/StatusDot'
 import { guildApi, rolesApi, userApi } from '@/api/client'
 import { usePresenceStore, STATUS_META, type UserStatus } from '@/stores/presenceStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useAuthStore } from '@/stores/authStore'
 import { addPresenceSubscription } from '@/services/wsService'
 import { cn } from '@/lib/utils'
-import type { DtoMember } from '@/types'
+import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
+import type { DtoMember, DtoGuild } from '@/types'
 import type { DtoRole } from '@/client'
 
 interface Props {
@@ -127,6 +129,26 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
     enabled: !!serverId,
     staleTime: 60_000,
   })
+
+  // Current user permissions check for role management
+  const currentUser = useAuthStore((s) => s.user)
+  const { data: members } = useQuery({
+    queryKey: ['members', serverId],
+    queryFn: () => guildApi.guildGuildIdMembersGet({ guildId: serverId }).then((r) => r.data ?? []),
+    enabled: !!serverId,
+    staleTime: 30_000,
+  })
+
+  // Resolve guild data for owner check
+  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
+  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
+
+  const currentMember = members?.find((m) => m.user?.id === currentUser?.id)
+  const effectivePermissions = currentMember && allRoles
+    ? calculateEffectivePermissions(currentMember as DtoMember, allRoles)
+    : 0
+  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
+  const canManageRoles = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_ROLES)
 
   // Member's current role IDs as a Set for O(1) lookup
   const memberRoleIds = new Set((member.roles ?? []).map(String))
@@ -234,8 +256,8 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
           {t('memberList.viewProfile')}
         </ContextMenuItem>
 
-        {/* Roles sub-menu */}
-        {allRoles.length > 0 && (
+        {/* Roles sub-menu - only show for users with Manage Roles permission, Admin, or Owner */}
+        {canManageRoles && allRoles.length > 0 && (
           <ContextMenuSub>
             <ContextMenuSubTrigger className="gap-2">
               <Shield className="w-4 h-4" />

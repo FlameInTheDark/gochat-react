@@ -4,6 +4,8 @@ import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { useUnreadStore } from '@/stores/unreadStore'
 import { useTypingStore } from '@/stores/typingStore'
 import { useReadStateStore } from '@/stores/readStateStore'
+import { useVoiceStore } from '@/stores/voiceStore'
+import { useAuthStore } from '@/stores/authStore'
 import type { DtoMessage } from '@/types'
 
 // Resolve the WebSocket URL lazily at connection time.
@@ -186,6 +188,10 @@ interface WsPresenceEvent {
   custom_status_text?: string
   since?: number
   voice_channel_id?: string | number
+  mute?: boolean
+  deafen?: boolean
+  username?: string
+  avatar_url?: string
   client_status?: Record<string, string>
 }
 
@@ -246,6 +252,40 @@ function handleMessage(event: MessageEvent) {
       store.setPresence(uid, normalizeStatus(presence.status))
       // Always sync custom_status_text — empty string clears a previously set status
       store.setCustomStatus(uid, presence.custom_status_text ?? '')
+
+      // Sync mute/deafen state for users in voice channels
+      if (presence.voice_channel_id !== undefined) {
+        const voiceStore = useVoiceStore.getState()
+        const presenceStore = usePresenceStore.getState()
+        const currentUserId = useAuthStore.getState().user?.id
+        const channelId = String(presence.voice_channel_id)
+
+        // Track user in voice channel for sidebar display (including current user)
+        // Add/update user in voice channel with mute/deafen state
+        presenceStore.addUserToVoiceChannel(channelId, {
+          userId: uid,
+          username: presence.username ?? `User ${uid.slice(0, 6)}`,
+          avatarUrl: presence.avatar_url,
+          muted: presence.mute ?? false,
+          deafened: presence.deafen ?? false,
+        })
+
+        // Sync mute/deafen state for other users (not ourselves)
+        if (uid !== String(currentUserId ?? '')) {
+          voiceStore.setPeerMuted(uid, presence.mute ?? false)
+          voiceStore.setPeerDeafened(uid, presence.deafen ?? false)
+        }
+      } else {
+        // User left voice channel - remove from tracking only if they were in one
+        const presenceStore = usePresenceStore.getState()
+        const voiceUsers = presenceStore.voiceChannelUsers
+        const wasInAnyChannel = Object.values(voiceUsers).some((users) =>
+          users.some((u) => u.userId === uid)
+        )
+        if (wasInAnyChannel) {
+          presenceStore.removeUserFromAllVoiceChannels(uid)
+        }
+      }
     }
     return
   }
@@ -427,12 +467,30 @@ function handleMessage(event: MessageEvent) {
 
     // t=205: Guild Member Join Voice
     if (t === 205) {
+      const eventData = d as { user_id?: string | number; channel_id?: string | number; username?: string; avatar_url?: string; mute?: boolean; deafen?: boolean } | undefined
+      if (eventData?.user_id !== undefined && eventData?.channel_id !== undefined) {
+        const userId = String(eventData.user_id)
+        const channelId = String(eventData.channel_id)
+        usePresenceStore.getState().addUserToVoiceChannel(channelId, {
+          userId,
+          username: eventData.username ?? `User ${userId.slice(0, 6)}`,
+          avatarUrl: eventData.avatar_url,
+          muted: eventData.mute ?? false,
+          deafened: eventData.deafen ?? false,
+        })
+      }
       window.dispatchEvent(new CustomEvent('ws:member_join_voice', { detail: d }))
       return
     }
 
     // t=206: Guild Member Leave Voice
     if (t === 206) {
+      const eventData = d as { user_id?: string | number; channel_id?: string | number } | undefined
+      if (eventData?.user_id !== undefined && eventData?.channel_id !== undefined) {
+        const userId = String(eventData.user_id)
+        const channelId = String(eventData.channel_id)
+        usePresenceStore.getState().removeUserFromVoiceChannel(channelId, userId)
+      }
       window.dispatchEvent(new CustomEvent('ws:member_leave_voice', { detail: d }))
       return
     }
@@ -440,6 +498,28 @@ function handleMessage(event: MessageEvent) {
     // t=208: Voice Region Changing (pre-rebind notification)
     if (t === 208) {
       window.dispatchEvent(new CustomEvent('ws:voice_region_changing', { detail: d }))
+      return
+    }
+
+    // t=209: Voice State Update — mute/deafen state changed for a user
+    if (t === 209) {
+      const voiceState = d as { user_id?: string | number; channel_id?: string | number; mute?: boolean; deafen?: boolean; username?: string; avatar_url?: string } | undefined
+      if (voiceState?.user_id !== undefined && voiceState?.channel_id !== undefined) {
+        const userId = String(voiceState.user_id)
+        const channelId = String(voiceState.channel_id)
+        // Update voice store for peer state
+        useVoiceStore.getState().setPeerMuted(userId, voiceState.mute ?? false)
+        useVoiceStore.getState().setPeerDeafened(userId, voiceState.deafen ?? false)
+        // Update presence store for sidebar display
+        usePresenceStore.getState().addUserToVoiceChannel(channelId, {
+          userId,
+          username: voiceState.username ?? `User ${userId.slice(0, 6)}`,
+          avatarUrl: voiceState.avatar_url,
+          muted: voiceState.mute ?? false,
+          deafened: voiceState.deafen ?? false,
+        })
+      }
+      window.dispatchEvent(new CustomEvent('ws:voice_state_update', { detail: d }))
       return
     }
 

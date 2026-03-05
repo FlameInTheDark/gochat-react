@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQueryClient, useQuery } from '@tanstack/react-query'
 import { Trash2, Pencil, Copy, MessageSquare, Hash } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -22,17 +22,19 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { messageApi, userApi } from '@/api/client'
+import { messageApi, userApi, rolesApi, guildApi } from '@/api/client'
 import { useMessageStore } from '@/stores/messageStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useUiStore } from '@/stores/uiStore'
 import { snowflakeToTime, snowflakeToDate } from '@/lib/snowflake'
+import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 import { parseMessageContent, extractYouTubeEmbeds, type MentionResolver } from '@/lib/messageParser'
 import MessageAttachments from '@/components/chat/MessageAttachments'
 import InviteEmbed from '@/components/chat/InviteEmbed'
 import YoutubeEmbed from '@/components/chat/YoutubeEmbed'
-import type { DtoMessage } from '@/types'
+import type { DtoMessage, DtoMember, DtoGuild } from '@/types'
+import type { DtoRole } from '@/client'
 
 /** Extract unique invite codes from a message string.
  *  Matches URLs of the form: http(s)://host/invite/CODE
@@ -57,6 +59,30 @@ interface Props {
   resolver?: MentionResolver
 }
 
+// Join message type constant
+const JOIN_MESSAGE_TYPE = 2
+
+// Default English join messages (fallback)
+const DEFAULT_JOIN_MESSAGES = [
+  'has joined the party!',
+  'just landed in the server!',
+  'has arrived! Welcome aboard!',
+  'joined the conversation. Say hi!',
+  'has entered the building!',
+  'is here! Time to celebrate!',
+]
+
+/**
+ * Get a join message for a user based on their ID.
+ * The same user will always get the same message.
+ */
+function getJoinMessage(userId: string | number | undefined, messages: string[]): string {
+  if (!userId || messages.length === 0) return messages[0] ?? DEFAULT_JOIN_MESSAGES[0]
+  // Use user ID to deterministically select a message
+  const hash = String(userId).split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+  return messages[hash % messages.length]
+}
+
 export default function MessageItem({ message, isGrouped = false, resolver }: Props) {
   const { serverId } = useParams<{ serverId?: string }>()
   const { t } = useTranslation()
@@ -71,9 +97,39 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
   const [editLoading, setEditLoading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Fetch roles and current user's member data for permission checking
+  const { data: roles = [] } = useQuery<DtoRole[]>({
+    queryKey: ['roles', serverId],
+    queryFn: () => rolesApi.guildGuildIdRolesGet({ guildId: serverId! }).then((r) => r.data ?? []),
+    enabled: !!serverId,
+  })
+
+  const { data: currentMember } = useQuery<DtoMember>({
+    queryKey: ['member', serverId, 'me'],
+    queryFn: () => userApi.userMeGuildsGuildIdMemberGet({ guildId: serverId! }).then((r) => r.data),
+    enabled: !!serverId,
+  })
+
+  // Fetch guild to check if current user is owner
+  const { data: guild } = useQuery<DtoGuild>({
+    queryKey: ['guild', serverId],
+    queryFn: () => guildApi.guildGuildIdGet({ guildId: serverId! }).then((r) => r.data!),
+    enabled: !!serverId,
+  })
+
+  // Calculate effective permissions
+  const userPermissions = currentMember && roles.length > 0
+    ? calculateEffectivePermissions(currentMember, roles)
+    : 0
+
   const removeMessage = useMessageStore((s) => s.removeMessage)
   const updateMessage = useMessageStore((s) => s.updateMessage)
   const currentUser = useAuthStore((s) => s.user)
+
+  // Check if current user is the server owner
+  const isOwner = currentUser && guild?.owner !== undefined && String(guild.owner) === String(currentUser.id)
+
+  const canManageMessages = isOwner || hasPermission(userPermissions, PermissionBits.MANAGE_MESSAGES)
 
   const authorName = message.author?.name ?? 'Unknown'
   const initials = authorName.charAt(0).toUpperCase()
@@ -174,6 +230,38 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
     } finally {
       setDeleteLoading(false)
     }
+  }
+
+  // Check if this is a join message
+  const isJoinMessage = message.type === JOIN_MESSAGE_TYPE
+
+  // Render join message differently
+  if (isJoinMessage) {
+    // Get translated join messages - ensure it's a valid array
+    let joinMessages: string[]
+    try {
+      const translationResult = t('joinMessages', { returnObjects: true })
+      joinMessages = Array.isArray(translationResult) ? translationResult : DEFAULT_JOIN_MESSAGES
+    } catch {
+      joinMessages = DEFAULT_JOIN_MESSAGES
+    }
+
+    return (
+      <div className="flex items-center justify-center py-2 px-4">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <button
+            onClick={handleAuthorClick}
+            className="font-medium text-foreground hover:underline cursor-pointer"
+          >
+            {authorName}
+          </button>
+          <span>{getJoinMessage(message.author?.id, joinMessages)}</span>
+          <span className="text-xs" title={fullTimestamp}>
+            {timestamp}
+          </span>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -315,6 +403,18 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
                 <MessageSquare className="w-4 h-4" />
                 {t('messageItem.messageUser')}
               </ContextMenuItem>
+              {canManageMessages && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    onClick={() => setDeleteOpen(true)}
+                    className="text-destructive focus:text-destructive gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {t('messageItem.deleteMessage')}
+                  </ContextMenuItem>
+                </>
+              )}
             </>
           )}
         </ContextMenuContent>

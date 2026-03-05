@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useUiStore } from '@/stores/uiStore'
+import { useAuthStore } from '@/stores/authStore'
 import { guildApi, inviteApi, rolesApi, uploadApi } from '@/api/client'
 import type { DtoGuildInvite, DtoMember } from '@/types'
 import type { DtoRole } from '@/client'
@@ -177,6 +178,17 @@ export default function ServerSettingsModal() {
     enabled: open && !!guildId,
     staleTime: 30_000,
   })
+
+  // Current user and owner check
+  const currentUser = useAuthStore((s) => s.user)
+  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
+
+  // Redirect away from danger section if not owner
+  useEffect(() => {
+    if (section === 'danger' && !isOwner) {
+      setSection('overview')
+    }
+  }, [section, isOwner])
 
   const { data: members = [] } = useQuery<DtoMember[]>({
     queryKey: ['members', guildId],
@@ -471,29 +483,34 @@ export default function ServerSettingsModal() {
               {guild?.name ?? 'Server Settings'}
             </p>
             <div className="space-y-0.5">
-              {NAV.map((s, i) => (
-                <>
-                  {s.danger && i > 0 && (
-                    <div key={`sep-${s.key}`} className="my-2 h-px bg-border mx-3" />
-                  )}
-                  <button
-                    key={s.key}
-                    onClick={() => setSection(s.key)}
-                    className={cn(
-                      'w-full text-left px-3 py-1.5 rounded text-sm transition-colors',
-                      s.danger
-                        ? section === s.key
-                          ? 'bg-destructive/20 text-destructive'
-                          : 'text-destructive/70 hover:text-destructive hover:bg-destructive/10'
-                        : section === s.key
-                          ? 'bg-accent text-foreground'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              {NAV.map((s, i) => {
+                // Hide danger section for non-owners
+                if (s.danger && !isOwner) return null
+                
+                return (
+                  <>
+                    {s.danger && i > 0 && (
+                      <div key={`sep-${s.key}`} className="my-2 h-px bg-border mx-3" />
                     )}
-                  >
-                    {s.label}
-                  </button>
-                </>
-              ))}
+                    <button
+                      key={s.key}
+                      onClick={() => setSection(s.key)}
+                      className={cn(
+                        'w-full text-left px-3 py-1.5 rounded text-sm transition-colors',
+                        s.danger
+                          ? section === s.key
+                            ? 'bg-destructive/20 text-destructive'
+                            : 'text-destructive/70 hover:text-destructive hover:bg-destructive/10'
+                          : section === s.key
+                            ? 'bg-accent text-foreground'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                      )}
+                    >
+                      {s.label}
+                    </button>
+                  </>
+                )
+              })}
             </div>
           </div>
         </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Hash, Volume2, MicOff, Users, Search } from 'lucide-react'
+import { Hash, Volume2, MicOff, Headphones, Users, Search } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
 import { guildApi, rolesApi } from '@/api/client'
 import { useVoiceStore } from '@/stores/voiceStore'
@@ -14,8 +14,9 @@ import MemberList from '@/components/layout/MemberList'
 import SearchPanel from '@/components/chat/SearchPanel'
 import { subscribeChannel } from '@/services/wsService'
 import { useUiStore } from '@/stores/uiStore'
+import { useAuthStore } from '@/stores/authStore'
 import TypingIndicator from '@/components/chat/TypingIndicator'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { useMessagePagination } from '@/hooks/useMessagePagination'
 import { useTranslation } from 'react-i18next'
@@ -74,6 +75,10 @@ export default function ChannelPage() {
   const voiceChannelId = useVoiceStore((s) => s.channelId)
   const voicePeers = useVoiceStore((s) => s.peers)
   const localMuted = useVoiceStore((s) => s.localMuted)
+  const localDeafened = useVoiceStore((s) => s.localDeafened)
+
+  // Get current user for avatar display in voice
+  const currentUser = useAuthStore((s) => s.user)
 
   // Guild data for mention resolution in messages — reuse cached queries
   const { data: members } = useQuery({
@@ -134,7 +139,9 @@ export default function ChannelPage() {
   // Voice channel view
   if (isVoice) {
     const isConnected = voiceChannelId === channelId
-    const peerEntries = Object.entries(voicePeers)
+    // Filter out the current user from peers since we render them separately
+    const currentUserId = String(currentUser?.id ?? '')
+    const peerEntries = Object.entries(voicePeers).filter(([userId]) => userId !== currentUserId)
 
     return (
       <div className="flex flex-col flex-1 min-h-0">
@@ -163,17 +170,19 @@ export default function ChannelPage() {
               <div className="flex flex-wrap justify-center gap-4">
                 {/* Local user */}
                 <VoiceParticipant
-                  label={t('channel.you')}
+                  label={`${currentUser?.name ?? t('channel.you')} (You)`}
+                  avatarUrl={currentUser?.avatar?.url}
                   speaking={false}
                   muted={localMuted}
+                  deafened={localDeafened}
                 />
                 {/* Remote peers */}
                 {peerEntries.map(([userId, peer]) => (
-                  <VoiceParticipant
+                  <VoiceParticipantRemote
                     key={userId}
-                    label={userId}
-                    speaking={peer.speaking}
-                    muted={peer.muted}
+                    userId={userId}
+                    peer={peer}
+                    members={members}
                   />
                 ))}
               </div>
@@ -277,12 +286,16 @@ export default function ChannelPage() {
 
 function VoiceParticipant({
   label,
+  avatarUrl,
   speaking,
   muted,
+  deafened,
 }: {
   label: string
+  avatarUrl?: string
   speaking: boolean
   muted: boolean
+  deafened?: boolean
 }) {
   const initials = label.charAt(0).toUpperCase()
   return (
@@ -294,15 +307,47 @@ function VoiceParticipant({
             speaking && 'ring-2 ring-green-500 ring-offset-2 ring-offset-background',
           )}
         >
+          {avatarUrl && <AvatarImage src={avatarUrl} alt={label} className="object-cover" />}
           <AvatarFallback className="text-lg">{initials}</AvatarFallback>
         </Avatar>
-        {muted && (
+        {/* Status indicator: show deafen over mute, or just one */}
+        {deafened ? (
+          <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
+            <Headphones className="w-3 h-3 text-white" />
+          </div>
+        ) : muted ? (
           <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
             <MicOff className="w-3 h-3 text-white" />
           </div>
-        )}
+        ) : null}
       </div>
       <span className="text-xs text-muted-foreground truncate max-w-[64px]">{label}</span>
     </div>
+  )
+}
+
+// Separate component for remote peers to handle member lookup with proper reactivity
+function VoiceParticipantRemote({
+  userId,
+  peer,
+  members,
+}: {
+  userId: string
+  peer: { speaking: boolean; muted: boolean; deafened?: boolean }
+  members: { user?: { id?: number; name?: string; avatar?: { url?: string } }; username?: string }[] | undefined
+}) {
+  // Find member - compare as strings since userId from voice is string, member.user.id is number
+  const member = members?.find((m) => String(m.user?.id) === userId)
+  const displayName = member?.username ?? member?.user?.name ?? `User ${userId.slice(0, 6)}`
+  const avatarUrl = member?.user?.avatar?.url
+
+  return (
+    <VoiceParticipant
+      label={displayName}
+      avatarUrl={avatarUrl}
+      speaking={peer.speaking}
+      muted={peer.muted}
+      deafened={peer.deafened}
+    />
   )
 }

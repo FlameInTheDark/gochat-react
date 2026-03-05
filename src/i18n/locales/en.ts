@@ -276,6 +276,14 @@ const en: Translation = {
         escTo: ' · Esc to ',
         cancel: 'cancel',
     },
+    joinMessages: [
+        'has joined the party!',
+        'just landed in the server!',
+        'has arrived! Welcome aboard!',
+        'joined the conversation. Say hi!',
+        'has entered the building!',
+        'is here! Time to celebrate!',
+    ],
     serverSidebar: {
         editFolder: 'Edit Folder',
         dissolveFolder: 'Dissolve Folder',

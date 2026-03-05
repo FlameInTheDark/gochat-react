@@ -3,6 +3,8 @@ import { create } from 'zustand'
 export interface VoicePeer {
   speaking: boolean
   muted: boolean // server-muted
+  deafened: boolean // server-deafened
+  volume: number // 0-200, user-adjustable volume for this peer
 }
 
 interface VoiceState {
@@ -31,6 +33,8 @@ interface VoiceState {
   removePeer: (userId: string) => void
   setPeerSpeaking: (userId: string, speaking: boolean) => void
   setPeerMuted: (userId: string, muted: boolean) => void
+  setPeerDeafened: (userId: string, deafened: boolean) => void
+  setPeerVolume: (userId: string, volume: number) => void
   setLocalMuted: (muted: boolean) => void
   setLocalDeafened: (deafened: boolean) => void
   reset: () => void
@@ -66,7 +70,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((state) => ({
       peers: state.peers[userId]
         ? state.peers
-        : { ...state.peers, [userId]: { speaking: false, muted: false } },
+        : { ...state.peers, [userId]: { speaking: false, muted: false, deafened: false, volume: 100 } },
     })),
 
   removePeer: (userId) =>
@@ -80,7 +84,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((state) => ({
       peers: {
         ...state.peers,
-        [userId]: { ...(state.peers[userId] ?? { muted: false }), speaking },
+        [userId]: { ...(state.peers[userId] ?? { muted: false, deafened: false, volume: 100 }), speaking },
       },
     })),
 
@@ -88,7 +92,23 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((state) => ({
       peers: {
         ...state.peers,
-        [userId]: { ...(state.peers[userId] ?? { speaking: false }), muted },
+        [userId]: { ...(state.peers[userId] ?? { speaking: false, deafened: false, volume: 100 }), muted },
+      },
+    })),
+
+  setPeerDeafened: (userId, deafened) =>
+    set((state) => ({
+      peers: {
+        ...state.peers,
+        [userId]: { ...(state.peers[userId] ?? { speaking: false, muted: false, volume: 100 }), deafened },
+      },
+    })),
+
+  setPeerVolume: (userId, volume) =>
+    set((state) => ({
+      peers: {
+        ...state.peers,
+        [userId]: { ...(state.peers[userId] ?? { speaking: false, muted: false, deafened: false }), volume },
       },
     })),
 

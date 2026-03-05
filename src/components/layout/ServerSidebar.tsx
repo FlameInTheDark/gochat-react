@@ -34,7 +34,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useTranslation } from 'react-i18next'
-import { userApi } from '@/api/client'
+import { userApi, guildApi, rolesApi } from '@/api/client'
+import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -63,6 +64,8 @@ import { useFolderStore, type GuildFolder } from '@/stores/folderStore'
 import { useUnreadStore } from '@/stores/unreadStore'
 import { cn } from '@/lib/utils'
 import type { DtoGuild } from '@/types'
+import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
+import type { DtoRole, DtoMember } from '@/client'
 
 // ── Detect if a dragged guild is overlapping an icon enough to "merge" ────────
 // Returns true when the dragged item's centre is within ±20% of the target's
@@ -399,6 +402,8 @@ interface SortableGuildIconProps {
   onNewFolder: () => void
   onAddToFolder: (folderId: string) => void
   folders: GuildFolder[]
+  canManageServer: boolean
+  isOwner: boolean
 }
 
 function SortableGuildIcon({
@@ -414,6 +419,8 @@ function SortableGuildIcon({
   onNewFolder,
   onAddToFolder,
   folders,
+  canManageServer,
+  isOwner,
 }: SortableGuildIconProps) {
   const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -464,10 +471,12 @@ function SortableGuildIcon({
         </Tooltip>
 
         <ContextMenuContent>
-          <ContextMenuItem onClick={onOpenSettings} className="gap-2">
-            <Settings className="w-4 h-4" />
-            {t('serverSidebar.serverSettings')}
-          </ContextMenuItem>
+          {canManageServer && (
+            <ContextMenuItem onClick={onOpenSettings} className="gap-2">
+              <Settings className="w-4 h-4" />
+              {t('serverSidebar.serverSettings')}
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(guild.id)) }}
             className="gap-2"
@@ -475,34 +484,42 @@ function SortableGuildIcon({
             <Copy className="w-4 h-4" />
             {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onNewFolder} className="gap-2">
-            <FolderPlus className="w-4 h-4" />
-            {t('serverSidebar.newFolder')}
-          </ContextMenuItem>
-          {folders.length > 0 && (
-            <ContextMenuSub>
-              <ContextMenuSubTrigger className="gap-2">
+          {canManageServer && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onNewFolder} className="gap-2">
                 <FolderPlus className="w-4 h-4" />
-                {t('serverSidebar.addToFolder')}
-              </ContextMenuSubTrigger>
-              <ContextMenuSubContent>
-                {folders.map((f) => (
-                  <ContextMenuItem key={f.id} onClick={() => onAddToFolder(f.id)}>
-                    {f.name || t('serverSidebar.folderNameDefault')}
-                  </ContextMenuItem>
-                ))}
-              </ContextMenuSubContent>
-            </ContextMenuSub>
+                {t('serverSidebar.newFolder')}
+              </ContextMenuItem>
+              {folders.length > 0 && (
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger className="gap-2">
+                    <FolderPlus className="w-4 h-4" />
+                    {t('serverSidebar.addToFolder')}
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent>
+                    {folders.map((f) => (
+                      <ContextMenuItem key={f.id} onClick={() => onAddToFolder(f.id)}>
+                        {f.name || t('serverSidebar.folderNameDefault')}
+                      </ContextMenuItem>
+                    ))}
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+              )}
+            </>
           )}
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={onLeave}
-            className="text-destructive focus:text-destructive gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            {t('serverSidebar.leaveServer')}
-          </ContextMenuItem>
+          {!isOwner && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onClick={onLeave}
+                className="text-destructive focus:text-destructive gap-2"
+              >
+                <LogOut className="w-4 h-4" />
+                {t('serverSidebar.leaveServer')}
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
     </div>
@@ -520,6 +537,8 @@ interface SortableGuildInPanelProps {
   onServerSettings: () => void
   onLeave: () => void
   onRemoveFromFolder: () => void
+  canManageServer: boolean
+  isOwner: boolean
 }
 
 function SortableGuildInPanel({
@@ -532,6 +551,8 @@ function SortableGuildInPanel({
   onServerSettings,
   onLeave,
   onRemoveFromFolder,
+  canManageServer,
+  isOwner,
 }: SortableGuildInPanelProps) {
   const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -588,10 +609,12 @@ function SortableGuildInPanel({
         </Tooltip>
 
         <ContextMenuContent>
-          <ContextMenuItem onClick={onServerSettings} className="gap-2">
-            <Settings className="w-4 h-4" />
-            {t('serverSidebar.serverSettings')}
-          </ContextMenuItem>
+          {canManageServer && (
+            <ContextMenuItem onClick={onServerSettings} className="gap-2">
+              <Settings className="w-4 h-4" />
+              {t('serverSidebar.serverSettings')}
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(guild.id)) }}
             className="gap-2"
@@ -599,19 +622,27 @@ function SortableGuildInPanel({
             <Copy className="w-4 h-4" />
             {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onRemoveFromFolder} className="gap-2">
-            <FolderMinus className="w-4 h-4" />
-            {t('serverSidebar.removeFromFolder')}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={onLeave}
-            className="text-destructive focus:text-destructive gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            {t('serverSidebar.leaveServer')}
-          </ContextMenuItem>
+          {canManageServer && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onRemoveFromFolder} className="gap-2">
+                <FolderMinus className="w-4 h-4" />
+                {t('serverSidebar.removeFromFolder')}
+              </ContextMenuItem>
+            </>
+          )}
+          {!isOwner && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onClick={onLeave}
+                className="text-destructive focus:text-destructive gap-2"
+              >
+                <LogOut className="w-4 h-4" />
+                {t('serverSidebar.leaveServer')}
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
     </div>
@@ -634,6 +665,8 @@ interface SortableFolderItemProps {
   onGuildSettings: (guildId: string) => void
   onLeaveGuild: (guild: DtoGuild) => void
   onRemoveGuildFromFolder: (guildId: string) => void
+  canManageServerMap: Map<string, boolean>
+  isOwnerMap: Map<string, boolean>
 }
 
 function SortableFolderItem({
@@ -651,6 +684,8 @@ function SortableFolderItem({
   onGuildSettings,
   onLeaveGuild,
   onRemoveGuildFromFolder,
+  canManageServerMap,
+  isOwnerMap,
 }: SortableFolderItemProps) {
   const { t } = useTranslation()
   const { toggleCollapse } = useFolderStore()
@@ -798,6 +833,8 @@ function SortableFolderItem({
                 onServerSettings={() => onGuildSettings(guildId)}
                 onLeave={() => onLeaveGuild(guild)}
                 onRemoveFromFolder={() => onRemoveGuildFromFolder(guildId)}
+                canManageServer={canManageServerMap.get(guildId) ?? false}
+                isOwner={isOwnerMap.get(guildId) ?? false}
               />
             )
           })}
@@ -861,6 +898,94 @@ export default function ServerSidebar() {
     queryKey: ['guilds'],
     queryFn: () => userApi.userMeGuildsGet().then((r) => r.data ?? []),
   })
+
+  // Current user for permission checks
+  const currentUser = useAuthStore((s) => s.user)
+
+  // Fetch members and roles for each guild to check permissions
+  const { data: membersMap } = useQuery({
+    queryKey: ['members', 'all'],
+    queryFn: async () => {
+      if (!guilds) return new Map<string, DtoMember[]>()
+      const results = new Map<string, DtoMember[]>()
+      await Promise.all(
+        guilds.map(async (g) => {
+          try {
+            const members = await guildApi.guildGuildIdMembersGet({ guildId: String(g.id) })
+            results.set(String(g.id), members.data ?? [])
+          } catch {
+            results.set(String(g.id), [])
+          }
+        }),
+      )
+      return results
+    },
+    enabled: !!guilds && guilds.length > 0,
+    staleTime: 30_000,
+  })
+
+  const { data: rolesMap } = useQuery({
+    queryKey: ['roles', 'all'],
+    queryFn: async () => {
+      if (!guilds) return new Map<string, DtoRole[]>()
+      const results = new Map<string, DtoRole[]>()
+      await Promise.all(
+        guilds.map(async (g) => {
+          try {
+            const roles = await rolesApi.guildGuildIdRolesGet({ guildId: String(g.id) })
+            results.set(String(g.id), roles.data ?? [])
+          } catch {
+            results.set(String(g.id), [])
+          }
+        }),
+      )
+      return results
+    },
+    enabled: !!guilds && guilds.length > 0,
+    staleTime: 60_000,
+  })
+
+  // Compute canManageServer for each guild
+  const canManageServerMap = useMemo(() => {
+    const map = new Map<string, boolean>()
+    if (!guilds || !membersMap || !rolesMap || !currentUser) return map
+
+    for (const guild of guilds) {
+      const guildId = String(guild.id)
+      const members = membersMap.get(guildId) ?? []
+      const roles = rolesMap.get(guildId) ?? []
+      const member = members.find((m) => m.user?.id === currentUser.id)
+      
+      // Check if user is the owner
+      const isOwner = guild.owner != null && String(guild.owner) === String(currentUser.id)
+      
+      if (member && roles.length > 0) {
+        const effectivePermissions = calculateEffectivePermissions(member as DtoMember, roles as DtoRole[])
+        const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
+        map.set(
+          guildId,
+          isOwner || hasPermission(effectivePermissions, PermissionBits.MANAGE_SERVER) || isAdmin,
+        )
+      } else {
+        // Owner always has permission even if not a member
+        map.set(guildId, isOwner)
+      }
+    }
+    return map
+  }, [guilds, membersMap, rolesMap, currentUser])
+
+  // Compute isOwner for each guild
+  const isOwnerMap = useMemo(() => {
+    const map = new Map<string, boolean>()
+    if (!guilds || !currentUser) return map
+
+    for (const guild of guilds) {
+      const guildId = String(guild.id)
+      const isOwner = guild.owner != null && String(guild.owner) === String(currentUser.id)
+      map.set(guildId, isOwner)
+    }
+    return map
+  }, [guilds, currentUser])
 
   // Sync itemOrder when guild list changes OR when settings have just been loaded.
   // The settingsVersion dep ensures syncGuilds re-fires after loadFromSettings
@@ -1203,6 +1328,8 @@ export default function ServerSidebar() {
                     onNewFolder={() => openCreateFolder(guildId)}
                     onAddToFolder={(fid) => addGuildToFolder(fid, guildId)}
                     folders={folders}
+                    canManageServer={canManageServerMap.get(guildId) ?? false}
+                    isOwner={isOwnerMap.get(guildId) ?? false}
                   />
                 )
               }
@@ -1232,6 +1359,8 @@ export default function ServerSidebar() {
                     onGuildSettings={(gid) => openServerSettings(gid)}
                     onLeaveGuild={(g) => setLeavingGuild(g)}
                     onRemoveGuildFromFolder={(gid) => removeGuildFromFolder(gid)}
+                    canManageServerMap={canManageServerMap}
+                    isOwnerMap={isOwnerMap}
                   />
                 )
               }

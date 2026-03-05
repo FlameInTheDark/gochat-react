@@ -255,6 +255,7 @@ export interface Translation {
         escTo: string
         cancel: string
     }
+    joinMessages: string[]
     serverSidebar: {
         editFolder: string
         dissolveFolder: string

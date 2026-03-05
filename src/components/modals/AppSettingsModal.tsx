@@ -375,13 +375,12 @@ export default function AppSettingsModal() {
               </p>
               <div className="space-y-0.5">
                 {NAV.map((s, i) => (
-                  <>
+                  <div key={s.key}>
                     {/* Separator before Danger Zone */}
                     {s.danger && i > 0 && (
-                      <div key={`sep-${s.key}`} className="my-2 h-px bg-border mx-3" />
+                      <div className="my-2 h-px bg-border mx-3" />
                     )}
                     <button
-                      key={s.key}
                       onClick={() => setSection(s.key)}
                       className={cn(
                         'w-full text-left px-3 py-1.5 rounded text-sm transition-colors',
@@ -396,7 +395,7 @@ export default function AppSettingsModal() {
                     >
                       {s.label}
                     </button>
-                  </>
+                  </div>
                 ))}
               </div>
             </div>
