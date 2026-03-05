@@ -538,7 +538,7 @@ export default function MentionInput({
             onInput={handleInput}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            data-placeholder={t('chat.messagePlaceholder', { name: `#${channelName ?? channelId}` })}
+            data-placeholder={t('chat.messagePlaceholder', { name: channelName ?? channelId })}
             className="mention-editor flex-1 min-h-[28px] max-h-48 overflow-y-auto outline-none text-sm text-foreground leading-6 break-words"
           />
 

@@ -15,6 +15,9 @@ const ru: Translation = {
         creatingAccount: 'Создание аккаунта…',
         alreadyHaveAccount: 'Уже есть аккаунт?',
         registrationFailed: 'Регистрация не удалась. Попробуйте ещё раз.',
+        welcomeBack: 'С возвращением!',
+        openApp: 'Открыть приложение',
+        switchAccount: 'Сменить аккаунт',
     },
 
     // ── App layout / loading ──────────────────────────────────────────────────
@@ -323,6 +326,14 @@ const ru: Translation = {
         deleteChannelTitle: 'Удалить канал',
         deleteCategoryDesc: 'Вы уверены, что хотите удалить категорию {{name}}? Каналы внутри нее не будут удалены.',
         deleteChannelDesc: 'Вы уверены, что хотите удалить #{{name}}? Это действие нельзя отменить.',
+        volume: 'Громкость',
+    },
+    voicePanel: {
+        connecting: 'Подключение...',
+        routing: 'Маршрутизация RTC',
+        connected: 'Голос подключен',
+        disconnected: 'Отключено',
+        ping: '{{ping}}мс',
     },
     userProfile: {
         memberSince: 'Вступил(а)',

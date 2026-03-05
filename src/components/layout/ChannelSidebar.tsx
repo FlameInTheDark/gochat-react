@@ -1017,7 +1017,7 @@ function VoiceChannelUserItem({
             <ContextMenuSeparator />
             <div className="px-2 py-1.5 min-w-[160px]">
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs text-muted-foreground">{t('channelSidebar.volume', 'Volume')}</span>
+                <span className="text-xs text-muted-foreground">{t('channelSidebar.volume')}</span>
                 <span className="text-xs font-medium">{peerVolume}%</span>
               </div>
               <Slider

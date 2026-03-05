@@ -34,8 +34,6 @@ export default function MicTest({
   autoGainControl,
   echoCancellation,
   noiseSuppression,
-  outputDeviceId,
-  outputLevel,
 }: MicTestProps) {
   const [isTesting, setIsTesting] = useState(false)
   const [volume, setVolume] = useState(0) // 0–1 normalized
@@ -49,8 +47,6 @@ export default function MicTest({
   const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const gainRef = useRef<GainNode | null>(null)
-  const destinationRef = useRef<MediaStreamAudioDestinationNode | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
   const rafRef = useRef<number | null>(null)
 
   // Get voice channel state
@@ -62,13 +58,6 @@ export default function MicTest({
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
-    }
-
-    // Stop playback audio
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.currentTime = 0
-      audioRef.current = null
     }
 
     // Stop stream tracks
@@ -87,7 +76,6 @@ export default function MicTest({
 
     analyserRef.current = null
     gainRef.current = null
-    destinationRef.current = null
     setVolume(0)
   }, [])
 
@@ -116,13 +104,6 @@ export default function MicTest({
       gainRef.current.gain.value = inputLevel / 100
     }
   }, [inputLevel])
-
-  // Update output volume when outputLevel changes during test
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = outputLevel / 100
-    }
-  }, [outputLevel])
 
   // Poll the analyser to read mic volume
   const startMeterLoop = useCallback(() => {
@@ -185,11 +166,6 @@ export default function MicTest({
       // Create source from mic stream
       const source = ctx.createMediaStreamSource(stream)
 
-      // Check actual channel count from the track settings
-      const audioTrack = stream.getAudioTracks()[0]
-      const trackSettings = audioTrack?.getSettings()
-      const channelCount = trackSettings?.channelCount ?? source.channelCount ?? 2
-
       // Create gain node for input level control
       const gain = ctx.createGain()
       gain.gain.value = inputLevel / 100
@@ -200,68 +176,24 @@ export default function MicTest({
       analyser.fftSize = 2048
       analyserRef.current = analyser
 
-      // Create destination for monitoring output
-      const destination = ctx.createMediaStreamDestination()
-      destinationRef.current = destination
-
-      // Handle mono-to-stereo conversion for single-channel microphones
-      // Some microphones only output to left channel, we want to hear it in both ears
-      if (channelCount === 1) {
-        // Use ChannelMerger to duplicate mono to both left and right channels
-        const merger = ctx.createChannelMerger(2)
-
-        // Connect the mono source to both merger inputs (0=left, 1=right)
-        // For a mono source, connect it twice - once to each channel of the merger
-        gain.connect(merger, 0, 0)
-        gain.connect(merger, 0, 1)
-
-        // Now create a new MediaStreamDestination that has 2 channels
-        // Connect merger output to destination
-        merger.connect(analyser)
-        analyser.connect(destination)
-
-        // Force the destination stream to be stereo by setting channelCount on the track
-        const destTrack = destination.stream.getAudioTracks()[0]
-        if (destTrack) {
-          // Apply constraints to ensure stereo output
-          destTrack.applyConstraints({ channelCount: 2 }).catch(() => {
-            // If constraints fail, the audio might still work
-          })
-        }
-      } else {
-        // For stereo mics that might only have left channel audio,
-        // we still want to ensure both channels have audio
-        const splitter = ctx.createChannelSplitter(2)
-        const merger = ctx.createChannelMerger(2)
-
-        gain.connect(splitter)
-        // Connect left channel to both left and right outputs
-        splitter.connect(merger, 0, 0)
-        splitter.connect(merger, 0, 1)
-
-        merger.connect(analyser)
-        analyser.connect(destination)
-      }
-
-      // Connect source to gain
+      // Connect source -> gain for processing
       source.connect(gain)
 
-      // Create audio element for playback
-      const audio = new Audio()
-      audio.srcObject = destination.stream
-      audio.volume = outputLevel / 100
-      audio.muted = false
-      audioRef.current = audio
+      // For monitoring, connect gain directly to audio context destination
+      // This is the most reliable way to hear the microphone
+      gain.connect(ctx.destination)
 
-      // Set output device if supported
-      if (outputDeviceId && 'setSinkId' in audio) {
-        await (audio as unknown as { setSinkId(id: string): Promise<void> })
-          .setSinkId(outputDeviceId)
-          .catch(() => {})
+      // Also connect to analyser for volume meter (branching is allowed in Web Audio)
+      gain.connect(analyser)
+
+      // Resume audio context if suspended (browsers require user interaction)
+      if (ctx.state === 'suspended') {
+        await ctx.resume()
       }
 
-      // Start playback
-      await audio.play()
+      // Note: We're using ctx.destination directly for monitoring instead of
+      // MediaStreamDestination + Audio element, as this is more reliable for
+      // simple mic testing. The output device is controlled by the OS.
 
       // Start volume meter
       startMeterLoop()
@@ -287,11 +219,6 @@ export default function MicTest({
 
           const source = ctx.createMediaStreamSource(stream)
 
-          // Check actual channel count from the track settings
-          const audioTrack = stream.getAudioTracks()[0]
-          const trackSettings = audioTrack?.getSettings()
-          const channelCount = trackSettings?.channelCount ?? source.channelCount ?? 2
-
           const gain = ctx.createGain()
           gain.gain.value = inputLevel / 100
           gainRef.current = gain
@@ -300,39 +227,20 @@ export default function MicTest({
           analyser.fftSize = 2048
           analyserRef.current = analyser
 
-          const destination = ctx.createMediaStreamDestination()
-          destinationRef.current = destination
-
-          // Handle mono-to-stereo conversion for single-channel microphones
-          if (channelCount === 1) {
-            const merger = ctx.createChannelMerger(2)
-            gain.connect(merger, 0, 0)
-            gain.connect(merger, 0, 1)
-            merger.connect(analyser)
-            analyser.connect(destination)
-            const destTrack = destination.stream.getAudioTracks()[0]
-            if (destTrack) {
-              destTrack.applyConstraints({ channelCount: 2 }).catch(() => {})
-            }
-          } else {
-            // For stereo mics that might only have left channel audio
-            const splitter = ctx.createChannelSplitter(2)
-            const merger = ctx.createChannelMerger(2)
-            gain.connect(splitter)
-            splitter.connect(merger, 0, 0)
-            splitter.connect(merger, 0, 1)
-            merger.connect(analyser)
-            analyser.connect(destination)
-          }
-
+          // Connect source -> gain for processing
           source.connect(gain)
 
-          const audio = new Audio()
-          audio.srcObject = destination.stream
-          audio.volume = outputLevel / 100
-          audioRef.current = audio
+          // For monitoring, connect gain directly to audio context destination
+          gain.connect(ctx.destination)
 
-          await audio.play()
+          // Also connect to analyser for volume meter
+          gain.connect(analyser)
+
+          // Resume audio context if suspended (browsers require user interaction)
+          if (ctx.state === 'suspended') {
+            await ctx.resume()
+          }
+
           startMeterLoop()
           setIsTesting(true)
         } catch {
@@ -342,7 +250,7 @@ export default function MicTest({
         restoreVoiceState()
       }
     }
-  }, [inputDeviceId, inputLevel, autoGainControl, echoCancellation, noiseSuppression, outputDeviceId, outputLevel, isInVoiceChannel, startMeterLoop, restoreVoiceState])
+  }, [inputDeviceId, inputLevel, autoGainControl, echoCancellation, noiseSuppression, isInVoiceChannel, startMeterLoop, restoreVoiceState])
 
   // Stop testing
   const handleStopTest = useCallback(() => {

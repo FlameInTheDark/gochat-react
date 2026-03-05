@@ -7,12 +7,16 @@ export interface VoicePeer {
   volume: number // 0-200, user-adjustable volume for this peer
 }
 
+export type VoiceConnectionState = 'connecting' | 'routing' | 'connected' | 'disconnected'
+
 interface VoiceState {
   channelId: string | null
   guildId: string | null
   channelName: string | null
   localMuted: boolean
   localDeafened: boolean
+  ping: number // RTT in ms
+  connectionState: VoiceConnectionState
   settings: {
     audioInputDevice: string
     audioOutputDevice: string
@@ -37,6 +41,8 @@ interface VoiceState {
   setPeerVolume: (userId: string, volume: number) => void
   setLocalMuted: (muted: boolean) => void
   setLocalDeafened: (deafened: boolean) => void
+  setPing: (ping: number) => void
+  setConnectionState: (state: VoiceConnectionState) => void
   reset: () => void
 }
 
@@ -46,6 +52,8 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   channelName: null,
   localMuted: false,
   localDeafened: false,
+  ping: 0,
+  connectionState: 'disconnected',
   settings: {
     audioInputDevice: '',
     audioOutputDevice: '',
@@ -116,6 +124,10 @@ export const useVoiceStore = create<VoiceState>((set) => ({
 
   setLocalDeafened: (localDeafened) => set({ localDeafened }),
 
+  setPing: (ping) => set({ ping }),
+
+  setConnectionState: (connectionState) => set({ connectionState }),
+
   reset: () =>
     set({
       channelId: null,
@@ -123,6 +135,8 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       channelName: null,
       localMuted: false,
       localDeafened: false,
+      ping: 0,
+      connectionState: 'disconnected',
       peers: {},
     }),
 }))

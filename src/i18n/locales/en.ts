@@ -15,6 +15,9 @@ const en: Translation = {
         creatingAccount: 'Creating account…',
         alreadyHaveAccount: 'Already have an account?',
         registrationFailed: 'Registration failed. Please try again.',
+        welcomeBack: 'Welcome back!',
+        openApp: 'Open App',
+        switchAccount: 'Switch Account',
     },
 
     // ── App layout / loading ──────────────────────────────────────────────────
@@ -320,6 +323,14 @@ const en: Translation = {
         deleteChannelTitle: 'Delete Channel',
         deleteCategoryDesc: 'Are you sure you want to delete the category {{name}}? Channels inside it will not be deleted.',
         deleteChannelDesc: 'Are you sure you want to delete #{{name}}? This action cannot be undone.',
+        volume: 'Volume',
+    },
+    voicePanel: {
+        connecting: 'Connecting...',
+        routing: 'RTC Routing',
+        connected: 'Voice Connected',
+        disconnected: 'Disconnected',
+        ping: '{{ping}}ms',
     },
     userProfile: {
         memberSince: 'Member Since',

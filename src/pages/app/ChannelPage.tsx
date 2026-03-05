@@ -264,7 +264,14 @@ export default function ChannelPage() {
           onAckLatest={ackLatest}
         />
         <TypingIndicator channelId={channelId} />
-        <MessageInput channelId={channelId} channelName={channel?.name} />
+        <MessageInput
+          channelId={channelId}
+          channelName={
+            channel?.type === ChannelType.ChannelTypeGuildVoice
+              ? `🔊 ${channel?.name ?? channelId}`
+              : `#${channel?.name ?? channelId}`
+          }
+        />
       </div>
 
       {/* Search panel */}

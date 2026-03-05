@@ -13,6 +13,9 @@ export interface Translation {
         creatingAccount: string
         alreadyHaveAccount: string
         registrationFailed: string
+        welcomeBack: string
+        openApp: string
+        switchAccount: string
     }
     app: {
         loading: string
@@ -292,6 +295,14 @@ export interface Translation {
         deleteChannelTitle: string
         deleteCategoryDesc: string
         deleteChannelDesc: string
+        volume: string
+    }
+    voicePanel: {
+        connecting: string
+        routing: string
+        connected: string
+        disconnected: string
+        ping: string
     }
     userProfile: {
         memberSince: string

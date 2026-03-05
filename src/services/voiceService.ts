@@ -52,6 +52,9 @@ let memberEventCleanup: (() => void) | null = null
 // Shared AudioContext for all remote peers.
 let audioCtx: AudioContext | null = null
 
+// Ping tracking for RTT calculation
+let lastPingTime: number = 0
+
 interface AudioContextWithSinkId extends AudioContext {
   setSinkId(sinkId: string): Promise<void>
 }
@@ -158,7 +161,7 @@ async function handleOffer(sdp: string) {
   }
 
   await peerConnection.setRemoteDescription({ type: 'offer', sdp })
-  vlog('handleOffer: remote description set, signalingState=%s', peerConnection.signalingState)
+  vlog('handleOffer: remote description set, signalingState=%s, connectionState=%s', peerConnection.signalingState, peerConnection.connectionState)
 
   // Drain any ICE candidates that arrived before the remote description was set
   if (pendingCandidates.length > 0) {
@@ -173,7 +176,13 @@ async function handleOffer(sdp: string) {
   vlog('handleOffer: answer created (%d chars)', answer.sdp?.length ?? 0)
   
   await peerConnection.setLocalDescription(answer)
-  vlog('handleOffer: local description set, signalingState=%s', peerConnection.signalingState)
+  vlog('handleOffer: local description set, signalingState=%s, connectionState=%s', peerConnection.signalingState, peerConnection.connectionState)
+  
+  // Check if already connected after setting local description
+  if (peerConnection.connectionState === 'connected') {
+    vlog('handleOffer: already connected after answer, updating state')
+    useVoiceStore.getState().setConnectionState('connected')
+  }
   
   sfuSend({ op: 7, t: T_ANSWER, d: { sdp: answer.sdp } })
   vlog('handleOffer: answer sent')
@@ -191,8 +200,19 @@ function onSfuMessage(event: MessageEvent) {
   const { op, t, d } = payload
   console.debug(TAG + ' ← SFU op=%d t=%s', S, op, t ?? '—', d)
 
-  // op=2: heartbeat pong from SFU — no action needed
-  if (op === 2) { return }
+  // op=2: heartbeat pong from SFU — calculate RTT
+  if (op === 2) {
+    const now = Date.now()
+    // Only calculate if we have a valid lastPingTime
+    if (lastPingTime > 0) {
+      const rtt = now - lastPingTime
+      // Sanity check: RTT should be between 0 and 10 seconds
+      if (rtt >= 0 && rtt <= 10000) {
+        useVoiceStore.getState().setPing(rtt)
+      }
+    }
+    return
+  }
 
   // op=7 is SFU signaling
   if (op === 7) {
@@ -205,6 +225,7 @@ function onSfuMessage(event: MessageEvent) {
       case T_OFFER: {
         const { sdp } = d as { sdp: string }
         vevt('OFFER received (%d chars)', sdp.length)
+        useVoiceStore.getState().setConnectionState('routing')
         void handleOffer(sdp)
         break
       }
@@ -295,6 +316,13 @@ function createPeerConnection(): RTCPeerConnection {
 
   pc.oniceconnectionstatechange = () => {
     vevt('ICE connection state → %s', pc.iceConnectionState)
+    // Also set connected state via ICE connection as backup
+    if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+      if (useVoiceStore.getState().connectionState !== 'connected') {
+        vlog('ICE CONNECTED/COMPLETED — setting voice state to connected')
+        useVoiceStore.getState().setConnectionState('connected')
+      }
+    }
     if (pc.iceConnectionState === 'failed') {
       verr('ICE FAILED — no media path could be established')
     }
@@ -305,13 +333,22 @@ function createPeerConnection(): RTCPeerConnection {
   }
 
   pc.onconnectionstatechange = () => {
-    vevt('PC connection state → %s', pc.connectionState)
-    if (pc.connectionState === 'connected') {
+    const state = pc.connectionState
+    vevt('PC connection state → %s', state)
+    if (state === 'connected') {
       vlog('WebRTC CONNECTED — media should be flowing')
-    }
-    if (pc.connectionState === 'failed') {
+      useVoiceStore.getState().setConnectionState('connected')
+    } else if (state === 'connecting') {
+      vlog('WebRTC CONNECTING — establishing connection')
+    } else if (state === 'failed') {
       verr('PC connection FAILED')
     }
+  }
+
+  // Check if already connected (race condition)
+  if (pc.connectionState === 'connected') {
+    vlog('WebRTC ALREADY CONNECTED — setting voice state')
+    useVoiceStore.getState().setConnectionState('connected')
   }
 
   pc.onsignalingstatechange = () => {
@@ -564,6 +601,9 @@ export async function joinVoice(
 
   currentChannelId = channelId
 
+  // Set connecting state
+  useVoiceStore.getState().setConnectionState('connecting')
+
   // Warm up the AudioContext now, while inside the user-gesture scope, and
   // ensure it's running so the audio pipeline produces real audio (not silence).
   vlog('joinVoice: warming up AudioContext')
@@ -679,11 +719,18 @@ export async function joinVoice(
     vlog('joinVoice: sending RTCJoin (t=%d)', T_JOIN)
     sfuSend(joinMsg)
 
+    // Send initial ping immediately for fast RTT measurement
+    vlog('joinVoice: sending initial ping')
+    lastPingTime = Date.now()
+    const initialPing = JSON.stringify({ op: 2, d: { ts: lastPingTime } })
+    sfuSocket?.send(initialPing)
+
     // Start SFU heartbeat
     vlog('joinVoice: starting SFU heartbeat every %d ms', SFU_HEARTBEAT_INTERVAL)
     sfuHeartbeatTimer = window.setInterval(() => {
       if (sfuSocket?.readyState === WebSocket.OPEN) {
-        const ping = JSON.stringify({ op: 2, d: { ts: Date.now() } })
+        lastPingTime = Date.now()
+        const ping = JSON.stringify({ op: 2, d: { ts: lastPingTime } })
         sfuSocket.send(ping)
       }
     }, SFU_HEARTBEAT_INTERVAL)
