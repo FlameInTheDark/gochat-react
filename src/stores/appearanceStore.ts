@@ -18,8 +18,8 @@ export const useAppearanceStore = create<AppearanceState>()(
     (set, get) => ({
       fontScale: DEFAULT_FONT_SCALE,
       chatSpacing: DEFAULT_CHAT_SPACING,
-      setFontScale: (fontScale) => set({ fontScale }),
-      setChatSpacing: (chatSpacing) => set({ chatSpacing }),
+      setFontScale: (fontScale) => set({ fontScale: fontScale > 0 ? fontScale : DEFAULT_FONT_SCALE }),
+      setChatSpacing: (chatSpacing) => set({ chatSpacing: chatSpacing >= 0 ? chatSpacing : DEFAULT_CHAT_SPACING }),
       getFontScale: () => get().fontScale ?? DEFAULT_FONT_SCALE,
       getChatSpacing: () => get().chatSpacing ?? DEFAULT_CHAT_SPACING,
     }),

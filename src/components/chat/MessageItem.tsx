@@ -90,7 +90,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const openUserProfile = useUiStore((s) => s.openUserProfile)
-  const fontScale = useAppearanceStore((s) => s.fontScale) ?? DEFAULT_FONT_SCALE
+  const fontScale = useAppearanceStore((s) => s.fontScale) || DEFAULT_FONT_SCALE
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)

@@ -179,9 +179,17 @@ export default function MicTest({
       // Connect source -> gain for processing
       source.connect(gain)
 
-      // For monitoring, connect gain directly to audio context destination
-      // This is the most reliable way to hear the microphone
-      gain.connect(ctx.destination)
+      // Down-mix all channels to mono so a USB mic that only sends left channel
+      // doesn't play only in the left ear.
+      gain.channelCount = 1
+      gain.channelCountMode = 'explicit'
+      gain.channelInterpretation = 'speakers'
+
+      // Up-mix mono back to stereo for playback
+      const merger = ctx.createChannelMerger(2)
+      gain.connect(merger, 0, 0) // mono → left
+      gain.connect(merger, 0, 1) // mono → right
+      merger.connect(ctx.destination)
 
       // Also connect to analyser for volume meter (branching is allowed in Web Audio)
       gain.connect(analyser)
@@ -230,8 +238,16 @@ export default function MicTest({
           // Connect source -> gain for processing
           source.connect(gain)
 
-          // For monitoring, connect gain directly to audio context destination
-          gain.connect(ctx.destination)
+          // Down-mix all channels to mono (fixes USB mic that sends only left channel)
+          gain.channelCount = 1
+          gain.channelCountMode = 'explicit'
+          gain.channelInterpretation = 'speakers'
+
+          // Up-mix mono back to stereo for playback
+          const merger = ctx.createChannelMerger(2)
+          gain.connect(merger, 0, 0) // mono → left
+          gain.connect(merger, 0, 1) // mono → right
+          merger.connect(ctx.destination)
 
           // Also connect to analyser for volume meter
           gain.connect(analyser)

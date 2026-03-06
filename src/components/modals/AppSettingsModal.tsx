@@ -135,8 +135,8 @@ export default function AppSettingsModal() {
   // Init appearance from loaded settings
   useEffect(() => {
     if (settingsData?.appearance) {
-      const fontScale = settingsData.appearance.chat_font_scale ?? 1.0
-      const chatSpacing = settingsData.appearance.chat_spacing ?? 16
+      const fontScale = settingsData.appearance.chat_font_scale || DEFAULT_FONT_SCALE
+      const chatSpacing = settingsData.appearance.chat_spacing ?? DEFAULT_CHAT_SPACING
       setFontScale(fontScale)
       setChatSpacing(chatSpacing)
       setAppearenceFontScale(fontScale)
