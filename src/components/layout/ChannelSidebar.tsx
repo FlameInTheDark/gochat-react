@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Hash, Volume2, MicOff, Headphones, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare } from 'lucide-react'
+import { ChevronDown, ChevronRight, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { useUiStore } from '@/stores/uiStore'
 import { useUnreadStore } from '@/stores/unreadStore'
+import { useMentionStore } from '@/stores/mentionStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
@@ -116,11 +117,33 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     ch.type === ChannelType.ChannelTypeGuild || ch.type === ChannelType.ChannelTypeGuildVoice
   const sorted = (arr: DtoChannel[]) => [...arr].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 
+  // Channel visibility: owners and admins see everything; for private channels,
+  // the user must have at least one role listed in channel.roles.
+  const memberRoleIds = new Set((currentMember?.roles ?? []).map(String))
+  function canViewChannel(ch: DtoChannel): boolean {
+    if (isOwner || isAdmin) return true
+    if (!ch.private) return true
+    return (ch.roles ?? []).some((r) => memberRoleIds.has(String(r)))
+  }
+
   const categoryIds = new Set(channels.filter(isCat).map((c) => String(c.id)))
-  const categories = sorted(channels.filter(isCat))
+  const allCategories = sorted(channels.filter(isCat))
+  // Visible categories: only those the user can see
+  const categories = allCategories.filter(canViewChannel)
+  const visibleCategoryIds = new Set(categories.map((c) => String(c.id)))
+
   const allRegular = channels.filter(isRegular)
+  // Visible regular channels: must pass own access check, and if inside a category,
+  // that category must also be visible (a private inaccessible category hides its children).
+  const visibleRegular = allRegular.filter((ch) => {
+    if (!canViewChannel(ch)) return false
+    const parentId = ch.parent_id ? String(ch.parent_id) : null
+    if (parentId && categoryIds.has(parentId) && !visibleCategoryIds.has(parentId)) return false
+    return true
+  })
+
   const uncategorized = sorted(
-    allRegular.filter((c) => !c.parent_id || !categoryIds.has(String(c.parent_id))),
+    visibleRegular.filter((c) => !c.parent_id || !categoryIds.has(String(c.parent_id))),
   )
 
   const isDeletingCategory = deletingChannel?.type === ChannelType.ChannelTypeGuildCategory
@@ -542,7 +565,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                 {categories.map((cat) => {
                   const catId = String(cat.id)
                   const isCollapsed = collapsed.has(catId)
-                  const children = sorted(allRegular.filter((c) => String(c.parent_id) === catId))
+                  const children = sorted(visibleRegular.filter((c) => String(c.parent_id) === catId))
                   const catIndicator =
                     dropIndicator?.id === catId
                       ? dropIndicator.before ? 'top' : 'bottom'
@@ -728,16 +751,17 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   )
 }
 
-// Thin wrapper that reads the unread state and voice channel users from Zustand
-function ChannelItemWithUnread(props: Omit<ChannelItemProps, 'isUnread' | 'voiceUsers'>) {
+// Thin wrapper that reads the unread state, mention count, and voice channel users from Zustand
+function ChannelItemWithUnread(props: Omit<ChannelItemProps, 'isUnread' | 'mentionCount' | 'voiceUsers'>) {
   const isUnread = useUnreadStore((s) => s.channels.has(String(props.channel.id)))
+  const mentionCount = useMentionStore((s) => s.mentions[String(props.channel.id)]?.count ?? 0)
   const isVoice = props.channel.type === ChannelType.ChannelTypeGuildVoice
   const channelId = String(props.channel.id)
   // Get the raw array reference from store
   const voiceUsers = usePresenceStore((s) =>
     isVoice ? s.voiceChannelUsers[channelId] : undefined,
   )
-  return <ChannelItem {...props} isUnread={isUnread} voiceUsers={voiceUsers} />
+  return <ChannelItem {...props} isUnread={isUnread} mentionCount={mentionCount} voiceUsers={voiceUsers} />
 }
 
 interface ChannelItemProps {
@@ -745,6 +769,7 @@ interface ChannelItemProps {
   serverId: string
   isActive: boolean
   isUnread: boolean
+  mentionCount: number
   navigate: (path: string) => void
   onDelete: (ch: DtoChannel) => void
   onVoiceJoin: (ch: DtoChannel) => void
@@ -770,6 +795,7 @@ function ChannelItem({
   serverId,
   isActive,
   isUnread,
+  mentionCount,
   navigate,
   onDelete,
   onVoiceJoin,
@@ -865,8 +891,14 @@ function ChannelItem({
             ) : (
               <>
                 <span className="truncate flex-1">{channel.name}</span>
-                {/* Unread dot — only visible when unread and not active */}
-                {isUnread && !isActive && (
+                {/* Mention badge (red, with count) takes priority over unread dot */}
+                {mentionCount > 0 && !isActive && (
+                  <span className="ml-auto shrink-0 min-w-[1.125rem] h-[1.125rem] rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center px-1 leading-none">
+                    {mentionCount > 99 ? '99+' : mentionCount}
+                  </span>
+                )}
+                {/* Unread dot — only when unread and no pending mentions */}
+                {mentionCount === 0 && isUnread && !isActive && (
                   <span className="ml-auto shrink-0 w-2 h-2 rounded-full bg-foreground" />
                 )}
               </>
@@ -935,6 +967,7 @@ function VoiceChannelUserItem({
   const openUserProfile = useUiStore((s) => s.openUserProfile)
   const currentUser = useAuthStore((s) => s.user)
   const peerVolume = useVoiceStore((s) => s.peers[user.userId]?.volume ?? 100)
+  const isSpeaking = useVoiceStore((s) => s.peers[user.userId]?.speaking ?? false)
   const lastPosRef = useRef({ x: 0, y: 0 })
   const isCurrentUser = currentUser?.id !== undefined && String(currentUser.id) === user.userId
 
@@ -964,21 +997,31 @@ function VoiceChannelUserItem({
           onContextMenu={handleContextMenu}
           className="flex items-center gap-2 px-2 py-1 rounded text-sm text-muted-foreground hover:text-foreground hover:bg-accent/30 cursor-pointer"
         >
-          <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center shrink-0 overflow-hidden">
+          <div
+            className={cn(
+              'w-5 h-5 rounded-full bg-muted flex items-center justify-center shrink-0 overflow-hidden transition-all',
+              isSpeaking && 'ring-2 ring-green-500 ring-offset-1 ring-offset-sidebar',
+            )}
+          >
             {user.avatarUrl ? (
               <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
             ) : (
               <span className="text-[10px] font-medium">{user.username.charAt(0).toUpperCase()}</span>
             )}
           </div>
-          <span className="truncate text-xs flex-1">{user.username}</span>
+          <span className="truncate text-xs flex-1">
+            {user.username}
+            {isCurrentUser && (
+              <span className="ml-1 text-[10px] text-muted-foreground/60">(You)</span>
+            )}
+          </span>
           {/* Mute/Deafen indicators - show both if both are true */}
           <div className="flex items-center gap-1">
             {user.muted && (
               <MicOff className="w-3 h-3 text-destructive shrink-0" />
             )}
             {user.deafened && (
-              <Headphones className="w-3 h-3 text-destructive shrink-0" />
+              <HeadphoneOff className="w-3 h-3 text-destructive shrink-0" />
             )}
           </div>
         </div>

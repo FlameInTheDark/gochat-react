@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Hash, Volume2, MicOff, Headphones, Users, Search } from 'lucide-react'
+import { Hash, Volume2, MicOff, HeadphoneOff, Users, Search } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
 import { guildApi, rolesApi } from '@/api/client'
 import { useVoiceStore } from '@/stores/voiceStore'
@@ -13,6 +13,8 @@ import MessageInput from '@/components/chat/MessageInput'
 import MemberList from '@/components/layout/MemberList'
 import SearchPanel from '@/components/chat/SearchPanel'
 import { subscribeChannel } from '@/services/wsService'
+import { joinVoice } from '@/services/voiceService'
+import { toast } from 'sonner'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import TypingIndicator from '@/components/chat/TypingIndicator'
@@ -76,6 +78,8 @@ export default function ChannelPage() {
   const voicePeers = useVoiceStore((s) => s.peers)
   const localMuted = useVoiceStore((s) => s.localMuted)
   const localDeafened = useVoiceStore((s) => s.localDeafened)
+  const localCameraEnabled = useVoiceStore((s) => s.localCameraEnabled)
+  const localVideoStream = useVoiceStore((s) => s.localVideoStream)
 
   // Get current user for avatar display in voice
   const currentUser = useAuthStore((s) => s.user)
@@ -136,6 +140,18 @@ export default function ChannelPage() {
 
   const Icon = isVoice ? Volume2 : Hash
 
+  async function handleJoinVoice() {
+    if (!channel || !serverId || !channelId) return
+    try {
+      const res = await guildApi.guildGuildIdVoiceChannelIdJoinPost({ guildId: serverId, channelId })
+      if (res.data.sfu_url && res.data.sfu_token) {
+        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token)
+      }
+    } catch {
+      toast.error(t('channelSidebar.joinVoiceFailed'))
+    }
+  }
+
   // Voice channel view
   if (isVoice) {
     const isConnected = voiceChannelId === channelId
@@ -158,7 +174,7 @@ export default function ChannelPage() {
         </div>
 
         {/* Voice participants */}
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6">
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 overflow-auto">
           {isConnected ? (
             <>
               <p className="text-sm text-muted-foreground">
@@ -167,14 +183,16 @@ export default function ChannelPage() {
                   : t('channel.connected_plural', { count: peerEntries.length + 1 })}
               </p>
 
-              <div className="flex flex-wrap justify-center gap-4">
+              <div className="flex flex-wrap justify-center gap-4 w-full">
                 {/* Local user */}
                 <VoiceParticipant
-                  label={`${currentUser?.name ?? t('channel.you')} (You)`}
+                  label={`${currentUser?.name ?? t('channel.you')} (${t('channel.you')})`}
                   avatarUrl={currentUser?.avatar?.url}
                   speaking={false}
                   muted={localMuted}
                   deafened={localDeafened}
+                  videoStream={localCameraEnabled ? localVideoStream : null}
+                  isLocal
                 />
                 {/* Remote peers */}
                 {peerEntries.map(([userId, peer]) => (
@@ -196,6 +214,12 @@ export default function ChannelPage() {
               <p className="text-sm text-muted-foreground">
                 {t('channel.clickToJoin')}
               </p>
+              <button
+                onClick={() => void handleJoinVoice()}
+                className="mt-2 px-5 py-2 rounded-md bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
+              >
+                {t('channel.joinVoice')}
+              </button>
             </>
           )}
         </div>
@@ -263,7 +287,7 @@ export default function ChannelPage() {
           onLoadNewer={loadNewer}
           onAckLatest={ackLatest}
         />
-        <TypingIndicator channelId={channelId} />
+        <TypingIndicator channelId={channelId} serverId={serverId ?? ''} />
         <MessageInput
           channelId={channelId}
           channelName={
@@ -291,44 +315,172 @@ export default function ChannelPage() {
   )
 }
 
+/**
+ * Attaches a MediaStream to a <video> element.
+ * For remote streams, calls onFrozen/onActive based on whether new frames
+ * are being decoded — used to detect when the sender disables their camera
+ * without a mute event from the SFU.
+ */
+function VideoFeed({
+  stream,
+  mirror = false,
+  onFrozen,
+  onActive,
+}: {
+  stream: MediaStream
+  mirror?: boolean
+  onFrozen?: () => void
+  onActive?: () => void
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    el.srcObject = stream
+    el.play().catch(() => {})
+    return () => { el.srcObject = null }
+  }, [stream])
+
+  // Freeze detection: poll totalVideoFrames every second.
+  // If it stops advancing for 3 consecutive checks (~3 s), the track is frozen.
+  useEffect(() => {
+    if (!onFrozen && !onActive) return
+    const el = videoRef.current
+    if (!el) return
+
+    let lastFrames = -1
+    let staleCount = 0
+    const STALE_LIMIT = 3
+
+    const check = () => {
+      const q = el.getVideoPlaybackQuality?.()
+      if (!q) return
+      const frames = q.totalVideoFrames
+      if (frames === lastFrames) {
+        staleCount++
+        if (staleCount === STALE_LIMIT) onFrozen?.()
+      } else {
+        if (staleCount >= STALE_LIMIT) onActive?.()
+        staleCount = 0
+        lastFrames = frames
+      }
+    }
+
+    const timer = setInterval(check, 1000)
+    return () => clearInterval(timer)
+  }, [stream, onFrozen, onActive])
+
+  return (
+    <video
+      ref={videoRef}
+      autoPlay
+      playsInline
+      muted
+      className={cn('w-full h-full object-cover rounded-lg', mirror && '[transform:scaleX(-1)]')}
+    />
+  )
+}
+
 function VoiceParticipant({
   label,
   avatarUrl,
   speaking,
   muted,
   deafened,
+  videoStream,
+  isLocal,
 }: {
   label: string
   avatarUrl?: string
   speaking: boolean
   muted: boolean
   deafened?: boolean
+  videoStream?: MediaStream | null
+  isLocal?: boolean
 }) {
   const initials = label.charAt(0).toUpperCase()
+
+  // Local freeze-detection state for remote streams.
+  // When the sender silences their track, the SFU stops forwarding frames but
+  // doesn't immediately send a mute event — the video element freezes on the
+  // last frame. We detect this and hide the tile until frames resume.
+  const [frozenLocally, setFrozenLocally] = useState(false)
+
+  // Reset frozen state whenever the stream identity changes (new camera session)
+  useEffect(() => { setFrozenLocally(false) }, [videoStream])
+
+  const handleFrozen = useCallback(() => setFrozenLocally(true), [])
+  const handleActive = useCallback(() => setFrozenLocally(false), [])
+
+  // Local user's camera state is controlled directly via localCameraEnabled —
+  // no need for freeze detection.
+  const hasVideo = !!videoStream && (isLocal || !frozenLocally)
+
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="relative">
-        <Avatar
-          className={cn(
-            'w-16 h-16 transition-all',
-            speaking && 'ring-2 ring-green-500 ring-offset-2 ring-offset-background',
-          )}
-        >
-          {avatarUrl && <AvatarImage src={avatarUrl} alt={label} className="object-cover" />}
-          <AvatarFallback className="text-lg">{initials}</AvatarFallback>
-        </Avatar>
-        {/* Status indicator: show deafen over mute, or just one */}
-        {deafened ? (
-          <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
-            <Headphones className="w-3 h-3 text-white" />
-          </div>
-        ) : muted ? (
-          <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
-            <MicOff className="w-3 h-3 text-white" />
-          </div>
-        ) : null}
+      <div
+        className={cn(
+          'relative overflow-hidden transition-all duration-150',
+          hasVideo
+            ? 'w-48 h-36 rounded-lg bg-zinc-900'
+            : 'w-16 h-16 rounded-full',
+          speaking && hasVideo && 'ring-2 ring-green-500 ring-offset-2 ring-offset-background',
+        )}
+      >
+        {hasVideo ? (
+          <>
+            <VideoFeed
+              key={videoStream!.id}
+              stream={videoStream!}
+              mirror={isLocal}
+              onFrozen={isLocal ? undefined : handleFrozen}
+              onActive={isLocal ? undefined : handleActive}
+            />
+            {/* Overlay: name + status icons at bottom */}
+            <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-black/50 flex items-center justify-between gap-1">
+              <span className="text-xs text-white truncate">{label}</span>
+              <div className="flex items-center gap-1 shrink-0">
+                {deafened ? (
+                  <HeadphoneOff className="w-3 h-3 text-destructive" />
+                ) : muted ? (
+                  <MicOff className="w-3 h-3 text-destructive" />
+                ) : null}
+              </div>
+            </div>
+            {/* Speaking ring on video */}
+            {speaking && (
+              <div className="absolute inset-0 ring-2 ring-green-500 rounded-lg pointer-events-none" />
+            )}
+          </>
+        ) : (
+          <>
+            <Avatar
+              className={cn(
+                'w-16 h-16 transition-all duration-150',
+                speaking && 'ring-2 ring-green-500 ring-offset-2 ring-offset-background',
+              )}
+            >
+              {avatarUrl && <AvatarImage src={avatarUrl} alt={label} className="object-cover" />}
+              <AvatarFallback className="text-lg">{initials}</AvatarFallback>
+            </Avatar>
+            {/* Status indicator */}
+            {deafened ? (
+              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
+                <HeadphoneOff className="w-3 h-3 text-white" />
+              </div>
+            ) : muted ? (
+              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
+                <MicOff className="w-3 h-3 text-white" />
+              </div>
+            ) : null}
+          </>
+        )}
       </div>
-      <span className="text-xs text-muted-foreground truncate max-w-[64px]">{label}</span>
+      {/* Label only shown for avatar mode (video mode has inline label) */}
+      {!hasVideo && (
+        <span className="text-xs text-muted-foreground truncate max-w-[80px]">{label}</span>
+      )}
     </div>
   )
 }
@@ -340,7 +492,7 @@ function VoiceParticipantRemote({
   members,
 }: {
   userId: string
-  peer: { speaking: boolean; muted: boolean; deafened?: boolean }
+  peer: { speaking: boolean; muted: boolean; deafened?: boolean; videoStream: MediaStream | null }
   members: { user?: { id?: number; name?: string; avatar?: { url?: string } }; username?: string }[] | undefined
 }) {
   // Find member - compare as strings since userId from voice is string, member.user.id is number
@@ -355,6 +507,8 @@ function VoiceParticipantRemote({
       speaking={peer.speaking}
       muted={peer.muted}
       deafened={peer.deafened}
+      videoStream={peer.videoStream}
     />
   )
 }
+

@@ -1,6 +1,5 @@
 import { useRef, useState, useCallback } from 'react'
 import { messageApi, uploadApi } from '@/api/client'
-import { sendTyping } from '@/services/wsService'
 import { toast } from 'sonner'
 import MentionInput from './MentionInput'
 import PendingAttachmentBar, { type PendingAttachment } from './PendingAttachmentBar'
@@ -8,8 +7,12 @@ import { useTranslation } from 'react-i18next'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/** Rate-limit: send typing at most once per 3 seconds. */
-const TYPING_THROTTLE_MS = 3_000
+/**
+ * Rate-limit: send typing at most once per 5 seconds.
+ * The server's typing indicator expires after ~6 s, so 5 s keeps it alive
+ * while the user is continuously typing.
+ */
+const TYPING_THROTTLE_MS = 5_000
 /** Max files per message (mirrors Discord). */
 const MAX_FILES = 10
 /** Max single-file size: 25 MB. */
@@ -216,7 +219,9 @@ export default function MessageInput({ channelId, channelName }: Props) {
     const now = Date.now()
     if (now - lastTypingRef.current > TYPING_THROTTLE_MS) {
       lastTypingRef.current = now
-      sendTyping(channelId)
+      // POST to the typing endpoint; the backend will broadcast t=301 to all
+      // channel subscribers so their typing indicators update in real-time.
+      void messageApi.messageChannelChannelIdTypingPost({ channelId })
     }
   }
 

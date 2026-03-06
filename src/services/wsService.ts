@@ -3,9 +3,11 @@ import { useMessageStore } from '@/stores/messageStore'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { useUnreadStore } from '@/stores/unreadStore'
 import { useTypingStore } from '@/stores/typingStore'
+import { useMentionStore } from '@/stores/mentionStore'
 import { useReadStateStore } from '@/stores/readStateStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useAuthStore } from '@/stores/authStore'
+import { playMentionSound } from '@/lib/sounds'
 import type { DtoMessage } from '@/types'
 
 // Resolve the WebSocket URL lazily at connection time.
@@ -181,6 +183,16 @@ interface WsTypingEvent {
   name?: string
 }
 
+// t=302: mention event — current user was @mentioned.
+//   d = { guild_id, channel_id, message_id, author_id, type }
+interface WsMentionEvent {
+  guild_id?: string | number
+  channel_id?: string | number
+  message_id?: string | number
+  author_id?: string | number
+  type?: number
+}
+
 // Presence dispatch payload — server sends as op:3 (not op:0)
 interface WsPresenceEvent {
   user_id?: string | number
@@ -352,15 +364,31 @@ function handleMessage(event: MessageEvent) {
       if (te?.channel_id != null && te?.user_id != null) {
         const channelId = String(te.channel_id)
         const userId = String(te.user_id)
-        const name = te.username ?? te.user_name ?? te.name ?? userId
-        useTypingStore.getState().startTyping(channelId, userId, name)
+        // Skip own typing events — we don't want to show ourselves as "typing"
+        const me = useAuthStore.getState().user
+        if (me == null || String(me.id) !== userId) {
+          const name = te.username ?? te.user_name ?? te.name ?? userId
+          useTypingStore.getState().startTyping(channelId, userId, name)
+        }
       }
       window.dispatchEvent(new CustomEvent('ws:channel_typing', { detail: d }))
       return
     }
 
     // t=302: Mention — the current user was @mentioned
+    //   d = { guild_id, channel_id, message_id, author_id, type }
+    //   Delivered on user.{userId} topic so only the mentioned user receives it.
     if (t === 302) {
+      const mention = d as WsMentionEvent | undefined
+      if (mention?.guild_id != null && mention?.channel_id != null) {
+        const guildId = String(mention.guild_id)
+        const channelId = String(mention.channel_id)
+        // Only track & notify if user is NOT currently viewing that channel
+        if (!window.location.pathname.endsWith(`/${channelId}`)) {
+          useMentionStore.getState().addMention(guildId, channelId)
+          playMentionSound()
+        }
+      }
       window.dispatchEvent(new CustomEvent('ws:mention', { detail: d }))
       return
     }
@@ -697,12 +725,6 @@ export function sendRaw(data: unknown) {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(_bigJsonStringify.stringify(data))
   }
-}
-
-// Notify the server that the current user is typing in a channel (op=4).
-// The caller is responsible for rate-limiting (e.g., once per 3 s).
-export function sendTyping(channelId: string) {
-  sendJson({ op: 4, d: { channel: BigInt(channelId) } })
 }
 
 // Legacy helper kept for backward compatibility (voice service etc.)

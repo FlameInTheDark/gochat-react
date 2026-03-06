@@ -17,6 +17,7 @@ import { useVoiceStore } from '@/stores/voiceStore'
 import { sendPresenceStatus } from '@/services/wsService'
 import { useFolderStore } from '@/stores/folderStore'
 import { useReadStateStore } from '@/stores/readStateStore'
+import { useMentionStore } from '@/stores/mentionStore'
 import i18n from '@/i18n'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
@@ -142,6 +143,45 @@ export default function AppLayout() {
         // determine where to scroll on channel open (unread separator position).
         if (settingsRes?.data) {
           useReadStateStore.getState().setFromSettings(settingsRes.data)
+
+          // Seed mention badges from the `mentions` snapshot in the settings response.
+          // The Go server sends PascalCase keys (ChannelId, MessageId) at runtime,
+          // not the camelCase names in the generated TypeScript types.
+          // guildId is not in the mention object — derive it from guilds_last_messages.
+          const rawMentions = settingsRes.data.mentions ?? {}
+          const readStates = useReadStateStore.getState().readStates
+          // Build channelId → guildId reverse lookup from guilds_last_messages
+          const channelGuildMap: Record<string, string> = {}
+          for (const [gId, channelMap] of Object.entries(settingsRes.data.guilds_last_messages ?? {})) {
+            for (const chId of Object.keys(channelMap)) {
+              channelGuildMap[chId] = gId
+            }
+          }
+          const mentionSeed: Record<string, { count: number; guildId: string }> = {}
+          for (const [channelId, items] of Object.entries(rawMentions)) {
+            if (!Array.isArray(items) || !items.length) continue
+            const guildId = channelGuildMap[channelId]
+            if (!guildId) continue
+            const lastRead = readStates[channelId]
+            let count = items.length
+            if (lastRead) {
+              try {
+                // PascalCase at runtime: item.MessageId (Go JSON marshaling)
+                count = items.filter((m) => {
+                  // Runtime keys are PascalCase (Go JSON marshaling without struct tags)
+                  const raw = m as unknown as Record<string, unknown>
+                  const msgId = (raw['MessageId'] ?? raw['messageId']) as string | number | undefined
+                  return msgId && BigInt(String(msgId)) > BigInt(lastRead)
+                }).length
+              } catch { /* ignore BigInt parse errors */ }
+            }
+            if (count > 0) {
+              mentionSeed[channelId] = { count, guildId }
+            }
+          }
+          if (Object.keys(mentionSeed).length > 0) {
+            useMentionStore.getState().seedMentions(mentionSeed)
+          }
         }
         // Apply saved display language
         const savedLanguage = settingsRes?.data?.settings?.language

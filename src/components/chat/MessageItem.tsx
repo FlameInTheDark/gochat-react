@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
@@ -139,6 +139,18 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
   const messageId = String(message.id)
   const isOwn = currentUser?.id !== undefined && String(message.author?.id) === String(currentUser.id)
 
+  // Highlight messages that mention the current user (@id), @everyone, or @here
+  const isMentioned = useMemo(() => {
+    const content = message.content ?? ''
+    const userId = currentUser?.id !== undefined ? String(currentUser.id) : ''
+    if (!userId) return false
+    return (
+      content.includes(`<@${userId}>`) ||
+      content.includes('@everyone') ||
+      content.includes('@here')
+    )
+  }, [message.content, currentUser?.id])
+
   // Use Snowflake ID to derive creation time (more reliable than updated_at for display)
   const timestamp = snowflakeToTime(message.id)
   const fullTimestamp = snowflakeToDate(message.id).toLocaleString()
@@ -273,6 +285,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
           <div className={cn(
             'flex items-start gap-3 px-2 rounded hover:bg-accent/40 group',
             isGrouped ? 'py-0.5' : 'py-1',
+            isMentioned && 'bg-yellow-500/10 hover:bg-yellow-500/15 border-l-2 border-yellow-500/60 pl-[6px]',
           )}>
             {isGrouped ? (
               /* Compact grouped row: no avatar — hover reveals timestamp in left gutter */

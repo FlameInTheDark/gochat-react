@@ -64,6 +64,7 @@ const en: Translation = {
         connected: 'Connected · {{count}} participant',
         connected_plural: 'Connected · {{count}} participants',
         clickToJoin: 'Click the channel in the sidebar to join voice.',
+        joinVoice: 'Join Voice',
         you: 'You',
     },
 
@@ -122,6 +123,10 @@ const en: Translation = {
         shortcut: 'Shortcut',
         pressAnyKey: 'Press any key…',
         clickToSetKey: 'Click to set key',
+        videoDevice: 'Video Device',
+        cameraPreview: 'Camera Preview',
+        testCamera: 'Test Camera',
+        stopPreview: 'Stop Preview',
         resetToDefaults: 'Reset to Defaults',
         voiceSaved: 'Voice settings saved',
         voiceFailed: 'Failed to save voice settings',
@@ -220,6 +225,9 @@ const en: Translation = {
         channels: 'Channels',
         membersAndRoles: 'Members & Roles',
         role: 'Role',
+        typingOne: '{{name}} is typing…',
+        typingTwo: '{{name1}} and {{name2}} are typing…',
+        typingSeveral: 'Several people are typing…',
     },
 
     search: {
@@ -331,6 +339,13 @@ const en: Translation = {
         connected: 'Voice Connected',
         disconnected: 'Disconnected',
         ping: '{{ping}}ms',
+        mute: 'Mute',
+        unmute: 'Unmute',
+        deafen: 'Deafen',
+        undeafen: 'Undeafen',
+        disconnect: 'Disconnect',
+        cameraOn: 'Turn On Camera',
+        cameraOff: 'Turn Off Camera',
     },
     userProfile: {
         memberSince: 'Member Since',

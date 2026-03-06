@@ -64,6 +64,7 @@ const ru: Translation = {
         connected: 'Подключено · {{count}} участник',
         connected_plural: 'Подключено · {{count}} участников',
         clickToJoin: 'Нажмите на канал в боковой панели, чтобы войти.',
+        joinVoice: 'Подключиться',
         you: 'Вы',
     },
 
@@ -122,6 +123,10 @@ const ru: Translation = {
         shortcut: 'Горячая клавиша',
         pressAnyKey: 'Нажмите любую клавишу…',
         clickToSetKey: 'Нажмите для установки',
+        videoDevice: 'Видеоустройство',
+        cameraPreview: 'Предпросмотр камеры',
+        testCamera: 'Проверить камеру',
+        stopPreview: 'Остановить',
         resetToDefaults: 'Сбросить',
         voiceSaved: 'Настройки голоса сохранены',
         voiceFailed: 'Не удалось сохранить настройки голоса',
@@ -223,6 +228,9 @@ const ru: Translation = {
         channels: 'Каналы',
         membersAndRoles: 'Участники и Роли',
         role: 'Роль',
+        typingOne: '{{name}} печатает…',
+        typingTwo: '{{name1}} и {{name2}} печатают…',
+        typingSeveral: 'Несколько человек печатают…',
     },
 
     search: {
@@ -334,6 +342,13 @@ const ru: Translation = {
         connected: 'Голос подключен',
         disconnected: 'Отключено',
         ping: '{{ping}}мс',
+        mute: 'Без звука',
+        unmute: 'Включить микрофон',
+        deafen: 'Заглушить',
+        undeafen: 'Снять заглушение',
+        disconnect: 'Отключиться',
+        cameraOn: 'Включить камеру',
+        cameraOff: 'Выключить камеру',
     },
     userProfile: {
         memberSince: 'Вступил(а)',

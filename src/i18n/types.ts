@@ -56,6 +56,7 @@ export interface Translation {
         connected: string
         connected_plural: string
         clickToJoin: string
+        joinVoice: string
         you: string
     }
     settings: {
@@ -106,6 +107,10 @@ export interface Translation {
         shortcut: string
         pressAnyKey: string
         clickToSetKey: string
+        videoDevice: string
+        cameraPreview: string
+        testCamera: string
+        stopPreview: string
         resetToDefaults: string
         voiceSaved: string
         voiceFailed: string
@@ -200,6 +205,9 @@ export interface Translation {
         channels: string
         membersAndRoles: string
         role: string
+        typingOne: string
+        typingTwo: string
+        typingSeveral: string
     }
     search: {
         link: string
@@ -303,6 +311,13 @@ export interface Translation {
         connected: string
         disconnected: string
         ping: string
+        mute: string
+        unmute: string
+        deafen: string
+        undeafen: string
+        disconnect: string
+        cameraOn: string
+        cameraOff: string
     }
     userProfile: {
         memberSince: string

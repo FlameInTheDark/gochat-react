@@ -105,6 +105,10 @@ export default function AppSettingsModal() {
   const [voiceDirty, setVoiceDirty] = useState(false)
   const [audioInputDevices, setAudioInputDevices] = useState<MediaDeviceInfo[]>([])
   const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([])
+  const [videoInputDevice, setVideoInputDevice] = useState('')
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+  const [cameraPreviewStream, setCameraPreviewStream] = useState<MediaStream | null>(null)
+  const cameraPreviewRef = useRef<HTMLVideoElement>(null)
 
   // Language
   const [selectedLanguage, setSelectedLanguage] = useState(i18n.language ?? 'en')
@@ -167,11 +171,12 @@ export default function AppSettingsModal() {
       else setInputMode('voice_activity')
       if (typeof d.voice_activity_threshold === 'number') setVoiceActivityThreshold(d.voice_activity_threshold)
       if (typeof d.push_to_talk_key === 'string') setPushToTalkKey(d.push_to_talk_key)
+      if (typeof d.video_device === 'string') setVideoInputDevice(d.video_device)
     }
     setVoiceDirty(false)
   }, [settingsData])
 
-  // Enumerate audio devices when switching to Voice section
+  // Enumerate audio/video devices when switching to Voice section
   useEffect(() => {
     if (section !== 'voice') return
     navigator.mediaDevices
@@ -179,9 +184,27 @@ export default function AppSettingsModal() {
       .then((devices) => {
         setAudioInputDevices(devices.filter((d) => d.kind === 'audioinput'))
         setAudioOutputDevices(devices.filter((d) => d.kind === 'audiooutput'))
+        setVideoDevices(devices.filter((d) => d.kind === 'videoinput'))
       })
       .catch(() => { })
   }, [section])
+
+  // Stop camera preview when leaving voice section or closing modal
+  useEffect(() => {
+    if (!open || section !== 'voice') {
+      setCameraPreviewStream((prev) => {
+        if (prev) { prev.getTracks().forEach(t => t.stop()) }
+        return null
+      })
+    }
+  }, [open, section])
+
+  // Attach camera preview stream to video element
+  useEffect(() => {
+    if (cameraPreviewRef.current && cameraPreviewStream) {
+      cameraPreviewRef.current.srcObject = cameraPreviewStream
+    }
+  }, [cameraPreviewStream])
 
   // Close on Escape
   useEffect(() => {
@@ -301,6 +324,25 @@ export default function AppSettingsModal() {
     navigate('/')
   }
 
+  async function startCameraPreview() {
+    try {
+      const videoConstraint: MediaTrackConstraints | boolean = videoInputDevice
+        ? { deviceId: { exact: videoInputDevice } }
+        : true
+      const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: false })
+      setCameraPreviewStream(stream)
+    } catch {
+      toast.error(t('settings.voiceFailed'))
+    }
+  }
+
+  function stopCameraPreview() {
+    setCameraPreviewStream((prev) => {
+      if (prev) { prev.getTracks().forEach(t => t.stop()) }
+      return null
+    })
+  }
+
   async function handleSaveVoice() {
     setSavingVoice(true)
     try {
@@ -316,6 +358,7 @@ export default function AppSettingsModal() {
           input_mode: inputMode,
           voice_activity_threshold: voiceActivityThreshold,
           push_to_talk_key: pushToTalkKey,
+          video_device: videoInputDevice || undefined,
         } as Record<string, unknown>,
       })
       useVoiceStore.getState().setSettings({
@@ -329,6 +372,7 @@ export default function AppSettingsModal() {
         inputMode,
         voiceActivityThreshold,
         pushToTalkKey,
+        videoInputDevice,
       })
       applyVoiceSettings()
       setVoiceDirty(false)
@@ -351,6 +395,7 @@ export default function AppSettingsModal() {
     setInputMode('voice_activity')
     setVoiceActivityThreshold(50)
     setPushToTalkKey('')
+    setVideoInputDevice('')
     setVoiceDirty(true)
   }
 
@@ -658,6 +703,59 @@ export default function AppSettingsModal() {
                     outputDeviceId={audioOutputDevice}
                     outputLevel={outputLevel}
                   />
+
+                  <Separator />
+
+                  {/* ── Camera Device ── */}
+                  <div className="space-y-2">
+                    <Label htmlFor="video-input">{t('settings.videoDevice')}</Label>
+                    <select
+                      id="video-input"
+                      value={videoInputDevice}
+                      onChange={(e) => { setVideoInputDevice(e.target.value); markVoiceDirty(); stopCameraPreview() }}
+                      className={selectClass}
+                    >
+                      <option value="">{t('settings.defaultDevice')}</option>
+                      {videoDevices.map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {d.label || `Camera (${d.deviceId.slice(0, 8)}…)`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* ── Camera Preview ── */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>{t('settings.cameraPreview')}</Label>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (cameraPreviewStream) {
+                            stopCameraPreview()
+                          } else {
+                            void startCameraPreview()
+                          }
+                        }}
+                      >
+                        {cameraPreviewStream ? t('settings.stopPreview') : t('settings.testCamera')}
+                      </Button>
+                    </div>
+                    {cameraPreviewStream ? (
+                      <video
+                        ref={cameraPreviewRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="w-full aspect-video rounded-lg bg-black object-cover"
+                      />
+                    ) : (
+                      <div className="w-full aspect-video rounded-lg bg-muted flex items-center justify-center">
+                        <p className="text-xs text-muted-foreground">{t('voicePanel.cameraOff')}</p>
+                      </div>
+                    )}
+                  </div>
 
                   <Separator />
 

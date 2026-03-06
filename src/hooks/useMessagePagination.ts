@@ -237,7 +237,9 @@ export function useMessagePagination(
         if (batch.length > 0) appendMessages(cid, batch)
         if (batch.length < PAGE_SIZE) {
           setLatestReached(true); latestReachedRef.current = true
-          // Reached the present — ACK the last message
+          // Reached the present — hide the "NEW MESSAGES" separator
+          setUnreadSeparatorAfter(null)
+          // ACK the last message
           const last = batch.length > 0
             ? batch[batch.length - 1]
             : messagesRef.current[messagesRef.current.length - 1]
@@ -257,8 +259,10 @@ export function useMessagePagination(
     if (!cid) return
     const last = messagesRef.current[messagesRef.current.length - 1]
     if (!last?.id) return
-    // Skip entirely when the channel is already fully read — no need to hit
-    // the API again just because the user is sitting at the bottom.
+    // Always clear the separator when the user reaches the bottom — they've
+    // seen the new messages regardless of whether the channel was "unread".
+    setUnreadSeparatorAfter(null)
+    // Skip the API ACK when the channel is already fully read.
     if (!useReadStateStore.getState().isUnread(cid)) return
     ackChannel(cid, String(last.id))
   }, [ackChannel])

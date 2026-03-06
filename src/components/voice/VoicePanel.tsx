@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity } from 'lucide-react'
+import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity, Video, VideoOff } from 'lucide-react'
 import { useVoiceStore } from '@/stores/voiceStore'
 import type { VoiceConnectionState } from '@/stores/voiceStore'
-import { leaveVoice, setMuted, setDeafened } from '@/services/voiceService'
+import { leaveVoice, setMuted, setDeafened, enableCamera, disableCamera } from '@/services/voiceService'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 
@@ -25,6 +25,7 @@ export default function VoicePanel() {
   const channelName = useVoiceStore((s) => s.channelName)
   const localMuted = useVoiceStore((s) => s.localMuted)
   const localDeafened = useVoiceStore((s) => s.localDeafened)
+  const localCameraEnabled = useVoiceStore((s) => s.localCameraEnabled)
   const storePing = useVoiceStore((s) => s.ping)
   const connectionState = useVoiceStore((s) => s.connectionState)
   const [displayPing, setDisplayPing] = useState(0)
@@ -48,32 +49,49 @@ export default function VoicePanel() {
     setDeafened(!localDeafened)
   }
 
+  function toggleCamera() {
+    if (localCameraEnabled) {
+      disableCamera()
+    } else {
+      void enableCamera()
+    }
+  }
+
+  const isTransient = connectionState === 'connecting' || connectionState === 'routing'
+  const pingValue = connectionState === 'connected' && displayPing > 0 ? displayPing : null
+
   return (
     <div className="px-2 py-2 bg-sidebar-accent border-t border-sidebar-border shrink-0">
       {/* Status line */}
       <div className="flex items-center gap-2 mb-1.5 px-1">
-        <span className={cn('w-2 h-2 rounded-full shrink-0', status.dotColor)} />
+        <span
+          className={cn(
+            'w-2 h-2 rounded-full shrink-0',
+            status.dotColor,
+            isTransient && 'animate-pulse',
+          )}
+        />
         <div className="flex-1 min-w-0">
           <p className={cn('text-xs font-medium leading-tight', status.color)}>{status.text}</p>
           <p className="text-[10px] text-muted-foreground truncate leading-tight">
             {channelName ?? channelId}
           </p>
         </div>
-        {/* Ping indicator - always show when connected */}
+        {/* Ping indicator */}
         <div
           className={cn(
             'flex items-center gap-1 text-[10px] shrink-0',
-            displayPing === 0
+            pingValue === null
               ? 'text-muted-foreground'
-              : displayPing < 160
+              : pingValue < 160
                 ? 'text-green-500'
-                : displayPing < 300
+                : pingValue < 300
                   ? 'text-orange-500'
                   : 'text-red-500',
           )}
         >
           <Activity className="w-3 h-3" />
-          <span>{t('voicePanel.ping', { ping: displayPing > 0 ? displayPing : '--' })}</span>
+          <span>{pingValue !== null ? t('voicePanel.ping', { ping: pingValue }) : '--'}</span>
         </div>
       </div>
 
@@ -81,7 +99,8 @@ export default function VoicePanel() {
       <div className="flex gap-1">
         <button
           onClick={toggleMute}
-          title={localMuted ? 'Unmute' : 'Mute'}
+          title={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
+          aria-label={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
           className={cn(
             'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
             localMuted
@@ -94,7 +113,8 @@ export default function VoicePanel() {
 
         <button
           onClick={toggleDeafen}
-          title={localDeafened ? 'Undeafen' : 'Deafen'}
+          title={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
+          aria-label={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
           className={cn(
             'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
             localDeafened
@@ -110,8 +130,23 @@ export default function VoicePanel() {
         </button>
 
         <button
+          onClick={toggleCamera}
+          title={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
+          aria-label={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
+          className={cn(
+            'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
+            localCameraEnabled
+              ? 'bg-primary/20 text-primary hover:bg-primary/30'
+              : 'hover:bg-accent text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {localCameraEnabled ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+        </button>
+
+        <button
           onClick={leaveVoice}
-          title="Disconnect from voice"
+          title={t('voicePanel.disconnect')}
+          aria-label={t('voicePanel.disconnect')}
           className="flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
         >
           <PhoneOff className="w-4 h-4" />

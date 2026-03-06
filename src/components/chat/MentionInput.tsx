@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Hash, Shield, Paperclip } from 'lucide-react'
 import { guildApi, rolesApi } from '@/api/client'
 import { ChannelType } from '@/types'
+import type { DtoChannel, DtoGuild, DtoMember, DtoRole } from '@/client'
+import { calculateEffectivePermissions, hasPermission, PermissionBits } from '@/lib/permissions'
+import { useAuthStore } from '@/stores/authStore'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Smile } from 'lucide-react'
 import EmojiPicker from './EmojiPicker'
@@ -13,7 +16,7 @@ import { useTranslation } from 'react-i18next'
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface SuggestionItem {
-  type: 'user' | 'channel' | 'role'
+  type: 'user' | 'channel' | 'role' | 'special'
   id: string
   display: string  // text shown in the chip in the editor
   token: string    // serialized token: <@id> <#id> <@&id>
@@ -174,6 +177,8 @@ export default function MentionInput({
 }: Props) {
   const { serverId } = useParams<{ serverId?: string }>()
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.user)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -208,6 +213,39 @@ export default function MentionInput({
     staleTime: 60_000,
   })
 
+  // Channel visibility — mirrors ChannelSidebar logic
+  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
+  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
+  const currentMember = members?.find((m) => m.user?.id === currentUser?.id)
+  const effectivePermissions = currentMember && roles
+    ? calculateEffectivePermissions(currentMember as DtoMember, roles as DtoRole[])
+    : 0
+  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
+  const memberRoleIds = new Set((currentMember?.roles ?? []).map(String))
+
+  function canViewChannel(ch: DtoChannel): boolean {
+    if (isOwner || isAdmin) return true
+    if (!ch.private) return true
+    return (ch.roles ?? []).some((r) => memberRoleIds.has(String(r)))
+  }
+
+  const allChannels = channels ?? []
+  const categoryIds = new Set(
+    allChannels.filter((c) => c.type === ChannelType.ChannelTypeGuildCategory).map((c) => String(c.id)),
+  )
+  const visibleCategoryIds = new Set(
+    allChannels
+      .filter((c) => c.type === ChannelType.ChannelTypeGuildCategory && canViewChannel(c))
+      .map((c) => String(c.id)),
+  )
+
+  function isChannelVisible(ch: DtoChannel): boolean {
+    if (!canViewChannel(ch)) return false
+    const parentId = ch.parent_id ? String(ch.parent_id) : null
+    if (parentId && categoryIds.has(parentId) && !visibleCategoryIds.has(parentId)) return false
+    return true
+  }
+
   // Close suggestions when clicking outside the entire component (editor + popup)
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -231,11 +269,12 @@ export default function MentionInput({
     const query = q.query.toLowerCase()
 
     if (q.trigger === '#') {
-      const items: SuggestionItem[] = (channels ?? [])
+      const items: SuggestionItem[] = allChannels
         .filter((c): c is typeof c & { name: string } => {
           if (!c.name) return false
-          // exclude category channels
+          // exclude category channels and channels the user cannot see
           if (c.type === ChannelType.ChannelTypeGuildCategory) return false
+          if (!isChannelVisible(c)) return false
           return !query || c.name.toLowerCase().includes(query)
         })
         .sort((a, b) => {
@@ -254,6 +293,15 @@ export default function MentionInput({
         }))
       setSuggestions(items)
     } else {
+      const specialItems: SuggestionItem[] = (
+        [
+          { id: 'everyone', name: 'everyone', display: '@everyone', token: '@everyone' },
+          { id: 'here', name: 'here', display: '@here', token: '@here' },
+        ] as const
+      )
+        .filter((s) => !query || s.name.startsWith(query))
+        .map((s) => ({ type: 'special' as const, ...s }))
+
       const memberItems: SuggestionItem[] = (members ?? [])
         .filter((m) => {
           if (!m.user?.id) return false
@@ -303,7 +351,7 @@ export default function MentionInput({
           color: r.color,
         }))
 
-      setSuggestions([...memberItems, ...roleItems].slice(0, 10))
+      setSuggestions([...specialItems, ...memberItems, ...roleItems].slice(0, 10))
     }
     setActiveIdx(0)
   }
@@ -492,6 +540,11 @@ export default function MentionInput({
             >
               {item.type === 'channel' && (
                 <Hash className="w-4 h-4 shrink-0 text-muted-foreground" />
+              )}
+              {item.type === 'special' && (
+                <div className="w-6 h-6 rounded-full bg-muted shrink-0 flex items-center justify-center text-[11px] font-semibold text-muted-foreground">
+                  @
+                </div>
               )}
               {item.type === 'user' && (
                 <div className="w-6 h-6 rounded-full bg-muted shrink-0 flex items-center justify-center text-[11px] font-semibold">

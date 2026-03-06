@@ -102,26 +102,30 @@ export function useWebSocket() {
   // ── React to guild-related WS events ──────────────────────────────────────
 
   useEffect(() => {
-    function onChannelCreate() {
-      // Invalidate channel list for the affected server — handled by ChannelSidebar
-      // via its own ws:channel_create listener; also refresh globally just in case.
-      void queryClient.invalidateQueries({ queryKey: ['channels'] })
-    }
-    function onChannelDelete() {
-      void queryClient.invalidateQueries({ queryKey: ['channels'] })
-    }
-    function onChannelOrder() {
-      void queryClient.invalidateQueries({ queryKey: ['channels'] })
+    function onChannelEvent(e: Event) {
+      const detail = (e as CustomEvent<{ guild_id?: string | number; channel?: { guild_id?: string | number } } | undefined>).detail
+      const guildId = detail?.guild_id !== undefined
+        ? String(detail.guild_id)
+        : detail?.channel?.guild_id !== undefined
+          ? String(detail.channel.guild_id)
+          : undefined
+      if (guildId) {
+        void queryClient.invalidateQueries({ queryKey: ['channels', guildId] })
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['channels'] })
+      }
     }
 
-    window.addEventListener('ws:channel_create', onChannelCreate)
-    window.addEventListener('ws:channel_delete', onChannelDelete)
-    window.addEventListener('ws:channel_order', onChannelOrder)
+    window.addEventListener('ws:channel_create', onChannelEvent)
+    window.addEventListener('ws:channel_update', onChannelEvent)
+    window.addEventListener('ws:channel_delete', onChannelEvent)
+    window.addEventListener('ws:channel_order', onChannelEvent)
 
     return () => {
-      window.removeEventListener('ws:channel_create', onChannelCreate)
-      window.removeEventListener('ws:channel_delete', onChannelDelete)
-      window.removeEventListener('ws:channel_order', onChannelOrder)
+      window.removeEventListener('ws:channel_create', onChannelEvent)
+      window.removeEventListener('ws:channel_update', onChannelEvent)
+      window.removeEventListener('ws:channel_delete', onChannelEvent)
+      window.removeEventListener('ws:channel_order', onChannelEvent)
     }
   }, [queryClient])
 
@@ -166,11 +170,17 @@ export function useWebSocket() {
     window.addEventListener('ws:member_added', onMemberEvent)
     window.addEventListener('ws:member_updated', onMemberEvent)
     window.addEventListener('ws:member_removed', onMemberEvent)
+    // t=203/204: role assigned to / removed from a member — refresh member list
+    // so channel visibility filtering picks up the new role set immediately.
+    window.addEventListener('ws:member_role_added', onMemberEvent)
+    window.addEventListener('ws:member_role_removed', onMemberEvent)
 
     return () => {
       window.removeEventListener('ws:member_added', onMemberEvent)
       window.removeEventListener('ws:member_updated', onMemberEvent)
       window.removeEventListener('ws:member_removed', onMemberEvent)
+      window.removeEventListener('ws:member_role_added', onMemberEvent)
+      window.removeEventListener('ws:member_role_removed', onMemberEvent)
     }
   }, [queryClient])
 

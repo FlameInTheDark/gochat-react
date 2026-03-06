@@ -41,6 +41,8 @@ const SFU_HEARTBEAT_INTERVAL = 5_000
 let sfuSocket: WebSocket | null = null
 let peerConnection: RTCPeerConnection | null = null
 let localStream: MediaStream | null = null
+let localVideoStream: MediaStream | null = null
+let localVideoSender: RTCRtpSender | null = null
 let bindingAliveTimer: number | null = null
 let sfuHeartbeatTimer: number | null = null
 let pendingCandidates: RTCIceCandidateInit[] = []
@@ -373,8 +375,6 @@ function createPeerConnection(): RTCPeerConnection {
   }
 
   pc.ontrack = (ev) => {
-    if (ev.track.kind !== 'audio') return
-
     // Resolve the remote user ID from the stream or track ID.
     let userId: string | null = null
 
@@ -405,13 +405,41 @@ function createPeerConnection(): RTCPeerConnection {
     }
 
     if (!userId) {
-      vwarn('ontrack: could NOT resolve userId from any ID candidate — audio will NOT play')
+      vwarn('ontrack: could NOT resolve userId from any ID candidate')
       vwarn('ontrack: candidates were %o', idCandidates)
       userId = 'unknown-' + (ev.track.id || Math.random().toString(36).slice(2, 9))
     }
 
-    vlog('ontrack: resolved userId=%s, adding to voiceStore', userId)
+    vlog('ontrack: resolved userId=%s kind=%s, adding to voiceStore', userId, ev.track.kind)
     useVoiceStore.getState().addPeer(userId)
+
+    // ── Video track ────────────────────────────────────────────────────────
+    if (ev.track.kind === 'video') {
+      const stream = ev.streams[0] ?? new MediaStream([ev.track])
+      vlog('ontrack: video track from userId=%s, storing stream (id=%s)', userId, stream.id)
+
+      // Only store the stream if the track is active (not immediately muted)
+      if (!ev.track.muted) {
+        useVoiceStore.getState().setPeerVideoStream(userId, stream)
+      }
+
+      ev.track.onunmute = () => {
+        vlog('remote video track UNMUTED for userId=%s — restoring stream', userId)
+        useVoiceStore.getState().setPeerVideoStream(userId!, stream)
+      }
+      ev.track.onmute = () => {
+        vwarn('remote video track MUTED for userId=%s — clearing stream', userId)
+        useVoiceStore.getState().setPeerVideoStream(userId!, null)
+      }
+      ev.track.onended = () => {
+        vwarn('remote video track ENDED for userId=%s — clearing stream', userId)
+        useVoiceStore.getState().setPeerVideoStream(userId!, null)
+      }
+      return
+    }
+
+    // ── Audio track ────────────────────────────────────────────────────────
+    if (ev.track.kind !== 'audio') return
 
     const ctx = getAudioContext()
 
@@ -518,12 +546,20 @@ function cleanup(sendPresenceClear = true) {
     peerConnection = null
   }
   if (localStream) {
-    vlog('cleanup: stopping %d local tracks', localStream.getTracks().length)
+    vlog('cleanup: stopping %d local audio tracks', localStream.getTracks().length)
     for (const track of localStream.getTracks()) {
       track.stop()
     }
     localStream = null
   }
+  if (localVideoStream) {
+    vlog('cleanup: stopping %d local video tracks', localVideoStream.getTracks().length)
+    for (const track of localVideoStream.getTracks()) {
+      track.stop()
+    }
+    localVideoStream = null
+  }
+  localVideoSender = null
   // Stop processed tracks (they're separate from localStream tracks)
   for (const track of sentTracks) {
     try { track.stop() } catch { /* already stopped */ }
@@ -887,6 +923,90 @@ export function setDeafened(deafened: boolean) {
     })
     vlog('setDeafened: sent presence update with deafen=%s', deafened)
   }
+}
+
+/**
+ * Requests camera access and starts sending video to the peer connection.
+ *
+ * First enable: addTrack() + ask SFU to renegotiate (establishes the video m-line).
+ * Subsequent enables: replaceTrack() on the existing sender — no renegotiation
+ * needed because the transceiver is already in the negotiated SDP.
+ */
+export async function enableCamera(): Promise<void> {
+  if (!peerConnection) {
+    vwarn('enableCamera: no active peer connection')
+    return
+  }
+
+  vlog('enableCamera: requesting getUserMedia(video)')
+  const videoInputDevice = useVoiceStore.getState().settings.videoInputDevice
+  const videoConstraint: MediaTrackConstraints | boolean = videoInputDevice
+    ? { deviceId: { exact: videoInputDevice } }
+    : true
+  try {
+    localVideoStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: false })
+  } catch (err) {
+    vwarn('enableCamera: getUserMedia failed — %s', (err as Error).message)
+    return
+  }
+
+  const videoTrack = localVideoStream.getVideoTracks()[0]
+  if (!videoTrack) {
+    vwarn('enableCamera: no video track in stream')
+    localVideoStream.getTracks().forEach(t => t.stop())
+    localVideoStream = null
+    return
+  }
+
+  if (localVideoSender) {
+    // Re-enable: replace the null/inactive track — no renegotiation required
+    // because the video transceiver is already present in the negotiated SDP.
+    vlog('enableCamera: re-enabling — replaceTrack() on existing sender')
+    await localVideoSender.replaceTrack(videoTrack)
+  } else {
+    // First enable: add the track (creates a new transceiver) and ask SFU to re-offer
+    vlog('enableCamera: first enable — addTrack() + requesting SFU renegotiation')
+    localVideoSender = peerConnection.addTrack(videoTrack, localVideoStream)
+    sfuSend({ event: 'negotiate' })
+  }
+
+  useVoiceStore.getState().setLocalCameraEnabled(true)
+  useVoiceStore.getState().setLocalVideoStream(localVideoStream)
+  vlog('enableCamera: camera enabled')
+}
+
+/**
+ * Stops the local camera.
+ *
+ * Uses replaceTrack(null) instead of removeTrack() so the video transceiver
+ * stays in the negotiated SDP. This lets re-enable work with just replaceTrack()
+ * and no SFU renegotiation, avoiding the "no inbound track" bug that occurs
+ * when addTrack() tries to add a second video transceiver after removeTrack().
+ */
+export function disableCamera(): void {
+  if (!localVideoSender) {
+    vwarn('disableCamera: no video sender')
+    return
+  }
+
+  vlog('disableCamera: soft-disabling via replaceTrack(null) — preserving transceiver')
+  // replaceTrack(null): sender goes silent without removing the transceiver from SDP
+  localVideoSender.replaceTrack(null).catch((e) =>
+    vwarn('disableCamera: replaceTrack(null) failed — %o', e),
+  )
+  // localVideoSender intentionally kept (non-null) for the next enable cycle
+
+  // Stop physical camera tracks (turns off the camera indicator light)
+  if (localVideoStream) {
+    for (const track of localVideoStream.getTracks()) {
+      track.stop()
+    }
+    localVideoStream = null
+  }
+
+  useVoiceStore.getState().setLocalCameraEnabled(false)
+  useVoiceStore.getState().setLocalVideoStream(null)
+  vlog('disableCamera: camera disabled')
 }
 
 export function setPeerVolume(userId: string, volume: number) {

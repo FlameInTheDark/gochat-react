@@ -5,6 +5,7 @@ export interface VoicePeer {
   muted: boolean // server-muted
   deafened: boolean // server-deafened
   volume: number // 0-200, user-adjustable volume for this peer
+  videoStream: MediaStream | null // remote video stream (null if camera off)
 }
 
 export type VoiceConnectionState = 'connecting' | 'routing' | 'connected' | 'disconnected'
@@ -15,6 +16,8 @@ interface VoiceState {
   channelName: string | null
   localMuted: boolean
   localDeafened: boolean
+  localCameraEnabled: boolean
+  localVideoStream: MediaStream | null
   ping: number // RTT in ms
   connectionState: VoiceConnectionState
   settings: {
@@ -28,6 +31,7 @@ interface VoiceState {
     inputMode: 'voice_activity' | 'push_to_talk'
     voiceActivityThreshold: number // 0–100, sensitivity threshold for voice activity
     pushToTalkKey: string          // key code for PTT, e.g. 'KeyV'
+    videoInputDevice: string       // deviceId for camera, '' = default
   }
   peers: Record<string, VoicePeer> // keyed by userId string
 
@@ -41,6 +45,9 @@ interface VoiceState {
   setPeerVolume: (userId: string, volume: number) => void
   setLocalMuted: (muted: boolean) => void
   setLocalDeafened: (deafened: boolean) => void
+  setLocalCameraEnabled: (enabled: boolean) => void
+  setLocalVideoStream: (stream: MediaStream | null) => void
+  setPeerVideoStream: (userId: string, stream: MediaStream | null) => void
   setPing: (ping: number) => void
   setConnectionState: (state: VoiceConnectionState) => void
   reset: () => void
@@ -52,6 +59,8 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   channelName: null,
   localMuted: false,
   localDeafened: false,
+  localCameraEnabled: false,
+  localVideoStream: null,
   ping: 0,
   connectionState: 'disconnected',
   settings: {
@@ -65,6 +74,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     inputMode: 'voice_activity',
     voiceActivityThreshold: 50,
     pushToTalkKey: '',
+    videoInputDevice: '',
   },
   peers: {},
 
@@ -78,12 +88,15 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((state) => ({
       peers: state.peers[userId]
         ? state.peers
-        : { ...state.peers, [userId]: { speaking: false, muted: false, deafened: false, volume: 100 } },
+        : { ...state.peers, [userId]: { speaking: false, muted: false, deafened: false, volume: 100, videoStream: null } },
     })),
 
   removePeer: (userId) =>
     set((state) => {
       const next = { ...state.peers }
+      if (next[userId]?.videoStream) {
+        next[userId].videoStream.getTracks().forEach(t => t.stop())
+      }
       delete next[userId]
       return { peers: next }
     }),
@@ -92,7 +105,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((state) => ({
       peers: {
         ...state.peers,
-        [userId]: { ...(state.peers[userId] ?? { muted: false, deafened: false, volume: 100 }), speaking },
+        [userId]: { ...(state.peers[userId] ?? { muted: false, deafened: false, volume: 100, videoStream: null }), speaking },
       },
     })),
 
@@ -100,7 +113,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((state) => ({
       peers: {
         ...state.peers,
-        [userId]: { ...(state.peers[userId] ?? { speaking: false, deafened: false, volume: 100 }), muted },
+        [userId]: { ...(state.peers[userId] ?? { speaking: false, deafened: false, volume: 100, videoStream: null }), muted },
       },
     })),
 
@@ -108,7 +121,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((state) => ({
       peers: {
         ...state.peers,
-        [userId]: { ...(state.peers[userId] ?? { speaking: false, muted: false, volume: 100 }), deafened },
+        [userId]: { ...(state.peers[userId] ?? { speaking: false, muted: false, volume: 100, videoStream: null }), deafened },
       },
     })),
 
@@ -116,13 +129,25 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     set((state) => ({
       peers: {
         ...state.peers,
-        [userId]: { ...(state.peers[userId] ?? { speaking: false, muted: false, deafened: false }), volume },
+        [userId]: { ...(state.peers[userId] ?? { speaking: false, muted: false, deafened: false, videoStream: null }), volume },
+      },
+    })),
+
+  setPeerVideoStream: (userId, stream) =>
+    set((state) => ({
+      peers: {
+        ...state.peers,
+        [userId]: { ...(state.peers[userId] ?? { speaking: false, muted: false, deafened: false, volume: 100 }), videoStream: stream },
       },
     })),
 
   setLocalMuted: (localMuted) => set({ localMuted }),
 
   setLocalDeafened: (localDeafened) => set({ localDeafened }),
+
+  setLocalCameraEnabled: (localCameraEnabled) => set({ localCameraEnabled }),
+
+  setLocalVideoStream: (localVideoStream) => set({ localVideoStream }),
 
   setPing: (ping) => set({ ping }),
 
@@ -135,6 +160,8 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       channelName: null,
       localMuted: false,
       localDeafened: false,
+      localCameraEnabled: false,
+      localVideoStream: null,
       ping: 0,
       connectionState: 'disconnected',
       peers: {},
