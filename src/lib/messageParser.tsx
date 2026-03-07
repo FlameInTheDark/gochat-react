@@ -1,5 +1,6 @@
 import React from 'react'
 import CodeBlock from '@/components/chat/CodeBlock'
+import { emojiUrl } from '@/lib/emoji'
 
 // ── Resolver ─────────────────────────────────────────────────────────────────
 
@@ -74,9 +75,11 @@ export function extractYouTubeEmbeds(
 //   8 = roleId       (<@&id>)  — MUST come before user to avoid partial match
 //   9 = userId       (<@id>)
 //  10 = channelId    (<#id>)
+//  11 = emoji name   (<:name:id>)
+//  12 = emoji id     (<:name:id>)
 // No groups: @everyone | @here | https://…
 const INLINE_SOURCE =
-  /\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|__(.+?)__|_(.+?)_|~~(.+?)~~|`([^`\n]+)`|<@&(\d+)>|<@(\d+)>|<#(\d+)>|@everyone|@here|https?:\/\/[^\s<>)]+/
+  /\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|__(.+?)__|_(.+?)_|~~(.+?)~~|`([^`\n]+)`|<@&(\d+)>|<@(\d+)>|<#(\d+)>|<:([A-Za-z0-9-]+):(\d+)>|@everyone|@here|https?:\/\/[^\s<>)]+/
     .source
 
 const PILL_CLASS: Record<'user' | 'channel' | 'role', string> = {
@@ -174,6 +177,19 @@ function parseInline(
     } else if (match[10] !== undefined) {
       // <#channelId>
       nodes.push(parseMentionPill(k, 'channel', match[10], resolver))
+    } else if (match[11] !== undefined && match[12] !== undefined) {
+      // Custom emoji <:name:id>
+      const emojiName = match[11]
+      const emojiId = match[12]
+      nodes.push(
+        <img
+          key={k}
+          src={emojiUrl(emojiId, 44)}
+          alt={`:${emojiName}:`}
+          title={`:${emojiName}:`}
+          className="inline-block h-[1.375em] w-auto align-middle mx-0.5"
+        />,
+      )
     } else if (full === '@everyone' || full === '@here') {
       nodes.push(
         <span key={k} className="bg-primary/20 text-primary rounded px-0.5 font-medium">
@@ -323,6 +339,29 @@ function appendLines(
   }
 
   flushList()
+}
+
+// ── Emoji-only detection ──────────────────────────────────────────────────────
+
+const CUSTOM_EMOJI_TOKEN_RE = /<:[A-Za-z0-9-]+:\d+>/g
+// Extended_Pictographic covers emoji, symbols, and ZWJ sequences in modern V8/browsers
+const EXTENDED_PICTOGRAPHIC_RE = /\p{Extended_Pictographic}[\uFE00-\uFE0F\u20E3]?(?:\u200D\p{Extended_Pictographic}[\uFE00-\uFE0F\u20E3]?)*/gu
+
+/**
+ * Returns true when `content` consists exclusively of emoji (custom and/or
+ * unicode) and whitespace, with at most 9 total emoji. Used to render
+ * emoji-only messages at a larger font size.
+ */
+export function isEmojiOnlyMessage(content: string): boolean {
+  if (!content.trim()) return false
+  const customCount = (content.match(CUSTOM_EMOJI_TOKEN_RE) ?? []).length
+  const stripped = content.replace(CUSTOM_EMOJI_TOKEN_RE, '')
+  const unicodeCount = (stripped.match(EXTENDED_PICTOGRAPHIC_RE) ?? []).length
+  const remaining = stripped
+    .replace(EXTENDED_PICTOGRAPHIC_RE, '')
+    .replace(/[\uFE00-\uFE0F\u200D\u20E3\s]/g, '')
+  const total = customCount + unicodeCount
+  return remaining.length === 0 && total > 0 && total <= 9
 }
 
 // ── Main export ───────────────────────────────────────────────────────────────

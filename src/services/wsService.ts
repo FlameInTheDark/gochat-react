@@ -7,7 +7,9 @@ import { useMentionStore } from '@/stores/mentionStore'
 import { useReadStateStore } from '@/stores/readStateStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useAuthStore } from '@/stores/authStore'
+import { useEmojiStore } from '@/stores/emojiStore'
 import { playMentionSound } from '@/lib/sounds'
+import { axiosInstance } from '@/api/client'
 import type { DtoMessage } from '@/types'
 
 // Resolve the WebSocket URL lazily at connection time.
@@ -31,7 +33,12 @@ const _bigJsonStringify = JSONBig({ useNativeBigInt: true })
 const _bigJsonParse = JSONBig({ storeAsString: true })
 
 let socket: WebSocket | null = null
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+// Heartbeat is driven by a Web Worker so timer callbacks are NOT subject to the
+// ≥1 second throttle browsers apply to setInterval/setTimeout in background tabs.
+// Falls back to plain setInterval if workers are unavailable (e.g. strict CSP).
+let heartbeatWorker: Worker | null = null
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null  // fallback only
 
 // Reconnect state
 let currentToken: string | null = null
@@ -58,6 +65,25 @@ let lastEventId = 0
 // existing presence session, avoiding spurious offline→online transitions.
 let currentSessionId: string | null = null
 
+// True once the server has confirmed auth for the current socket (op:1 received).
+// Reset to false each time createSocket() opens a new socket. Used in onClose()
+// to distinguish auth failures (never got op:1) from normal network drops.
+let authSucceeded = false
+
+// Timestamp when the current socket's 'open' event fired.
+// A close before AUTH_QUICK_CLOSE_MS ms after open strongly indicates the
+// server rejected the token — trigger a proactive token refresh.
+let socketOpenTime: number | null = null
+const AUTH_QUICK_CLOSE_MS = 5_000
+
+// Set true by the browser 'offline' event; cleared by 'online'.
+// Suppresses reconnect attempts while there is no network path.
+let isNetworkOffline = false
+
+// Prevents concurrent refreshTokenAndReconnect calls (e.g. both visibilitychange
+// and onClose firing at the same time after a long background suspension).
+let isRefreshingToken = false
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // All outgoing messages that contain Snowflake IDs must go through sendJson so
@@ -69,13 +95,6 @@ function sendJson(data: unknown) {
   }
 }
 
-function clearHeartbeat() {
-  if (heartbeatTimer !== null) {
-    clearInterval(heartbeatTimer)
-    heartbeatTimer = null
-  }
-}
-
 function sendHeartbeat() {
   if (socket?.readyState === WebSocket.OPEN) {
     // op=2: Heartbeat — echo the last event ID we've processed.
@@ -84,9 +103,43 @@ function sendHeartbeat() {
   }
 }
 
+function getOrCreateHeartbeatWorker(): Worker | null {
+  if (heartbeatWorker) return heartbeatWorker
+  try {
+    heartbeatWorker = new Worker(
+      new URL('./heartbeatWorker', import.meta.url),
+      { type: 'module' },
+    )
+    heartbeatWorker.onmessage = () => sendHeartbeat()
+    heartbeatWorker.onerror = () => {
+      // Worker failed (e.g. strict CSP) — null out so fallback is used
+      heartbeatWorker = null
+    }
+    return heartbeatWorker
+  } catch {
+    return null
+  }
+}
+
+function clearHeartbeat() {
+  if (heartbeatWorker) {
+    heartbeatWorker.postMessage({ type: 'stop' })
+  }
+  if (heartbeatTimer !== null) {
+    clearInterval(heartbeatTimer)
+    heartbeatTimer = null
+  }
+}
+
 function startHeartbeat(intervalMs: number) {
   clearHeartbeat()
-  heartbeatTimer = setInterval(sendHeartbeat, intervalMs)
+  const worker = getOrCreateHeartbeatWorker()
+  if (worker) {
+    worker.postMessage({ type: 'start', intervalMs })
+  } else {
+    // Fallback: plain setInterval (may be throttled in background tabs)
+    heartbeatTimer = setInterval(sendHeartbeat, intervalMs)
+  }
 }
 
 function clearReconnectTimer() {
@@ -111,6 +164,43 @@ function scheduleReconnect() {
 
 function resetReconnectDelay() {
   reconnectDelay = 1_000
+}
+
+/**
+ * Validate (and silently refresh if expired) the access token via a lightweight
+ * HTTP probe, then reconnect the WebSocket with the fresh token.
+ *
+ * Called when:
+ *   • The server closed the socket before op:1 arrived (likely expired token)
+ *   • The tab becomes visible again after a background suspension
+ *   • The network comes back online
+ *
+ * The 401 interceptor on axiosInstance already handles the full
+ * access→refresh→retry cycle and updates authStore, so a single
+ * GET /user/me call is sufficient to ensure the token is live.
+ */
+async function refreshTokenAndReconnect() {
+  if (intentionalClose || !currentToken || isRefreshingToken) return
+  isRefreshingToken = true
+  try {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    // The 401 interceptor will refresh the token if needed and retry.
+    // On success the store always holds the most recent valid token.
+    await axiosInstance.get(`${baseUrl}/user/me`)
+    const freshToken = useAuthStore.getState().token
+    if (!freshToken) return
+    currentToken = freshToken
+  } catch {
+    // Both access and refresh tokens are invalid.
+    // Logout clears authStore → useWebSocket observes token=null → calls disconnect().
+    useAuthStore.getState().logout()
+    return
+  } finally {
+    isRefreshingToken = false
+  }
+  if (!intentionalClose && currentToken) {
+    createSocket(currentToken)
+  }
 }
 
 // Re-apply all active subscriptions after a reconnect (called from hello handler)
@@ -241,6 +331,7 @@ function handleMessage(event: MessageEvent) {
   // Server sends {op:1, d:{heartbeat_interval, session_id}} after validating
   // the client's auth token.  Save the session_id for reconnect use.
   if (op === 1) {
+    authSucceeded = true   // auth confirmed — onClose will use normal backoff if it fires
     resetReconnectDelay()
     lastEventId = 0
     const hello = d as WsHelloData | undefined
@@ -457,6 +548,51 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
+    // ── Guild emoji events ───────────────────────────────────────────────────
+
+    // t=116: Guild Emoji Create — emoji upload finalized and ready
+    //   d = { emoji: { id, guild_id, name, animated } }
+    if (t === 116) {
+      const data = d as { emoji?: { id?: string; guild_id?: string; name?: string; animated?: boolean } } | undefined
+      if (data?.emoji?.id && data.emoji.guild_id && data.emoji.name) {
+        useEmojiStore.getState().addEmoji({
+          id: String(data.emoji.id),
+          guild_id: String(data.emoji.guild_id),
+          name: data.emoji.name,
+          animated: data.emoji.animated,
+        })
+      }
+      window.dispatchEvent(new CustomEvent('ws:emoji_create', { detail: d }))
+      return
+    }
+
+    // t=117: Guild Emoji Update — emoji renamed
+    //   d = { emoji: { id, guild_id, name, animated } }
+    if (t === 117) {
+      const data = d as { emoji?: { id?: string; guild_id?: string; name?: string; animated?: boolean } } | undefined
+      if (data?.emoji?.id && data.emoji.guild_id && data.emoji.name) {
+        useEmojiStore.getState().updateEmoji({
+          id: String(data.emoji.id),
+          guild_id: String(data.emoji.guild_id),
+          name: data.emoji.name,
+          animated: data.emoji.animated,
+        })
+      }
+      window.dispatchEvent(new CustomEvent('ws:emoji_update', { detail: d }))
+      return
+    }
+
+    // t=118: Guild Emoji Delete — emoji removed
+    //   d = { guild_id, emoji_id }
+    if (t === 118) {
+      const data = d as { guild_id?: string | number; emoji_id?: string | number } | undefined
+      if (data?.guild_id != null && data?.emoji_id != null) {
+        useEmojiStore.getState().removeEmoji(String(data.guild_id), String(data.emoji_id))
+      }
+      window.dispatchEvent(new CustomEvent('ws:emoji_delete', { detail: d }))
+      return
+    }
+
     // ── Guild member events ──────────────────────────────────────────────────
     // NOTE: t=200/201 are Guild Member events, NOT presence updates.
     //       Presence changes have no t field and are handled above.
@@ -622,6 +758,10 @@ function handleMessage(event: MessageEvent) {
 // ── Socket lifecycle ──────────────────────────────────────────────────────────
 
 function createSocket(token: string) {
+  // Reset auth-tracking state for the new socket
+  authSucceeded = false
+  socketOpenTime = null
+
   // Close any existing socket without triggering the reconnect path
   if (socket) {
     socket.removeEventListener('close', onClose)
@@ -634,6 +774,7 @@ function createSocket(token: string) {
   socket.addEventListener('message', handleMessage)
   socket.addEventListener('close', onClose)
   socket.addEventListener('open', () => {
+    socketOpenTime = Date.now()
     // Op 1: authenticate.  Include the previous session_id (if any) so the
     // server can reuse the presence session instead of publishing offline→online.
     const helloData: Record<string, unknown> = { token }
@@ -645,7 +786,70 @@ function createSocket(token: string) {
 function onClose() {
   clearHeartbeat()
   socket = null
+
+  const openTime = socketOpenTime
+  socketOpenTime = null
+
+  if (intentionalClose) return
+  if (isNetworkOffline) return  // 'online' event will trigger reconnect
+
+  if (!authSucceeded) {
+    // Socket closed before op:1 was received.
+    // A close within AUTH_QUICK_CLOSE_MS of the TCP open strongly indicates
+    // the server rejected the token (expired access token).
+    // For a slow close (server restart mid-handshake) fall through to normal backoff.
+    const wasQuickClose = openTime !== null && (Date.now() - openTime) < AUTH_QUICK_CLOSE_MS
+    if (wasQuickClose || openTime === null) {
+      // Likely auth failure — refresh the token then reconnect
+      void refreshTokenAndReconnect()
+      return
+    }
+  }
+
+  // Normal network-level disconnect — reconnect with exponential backoff
   scheduleReconnect()
+}
+
+// ── Browser connectivity & visibility recovery ────────────────────────────────
+//
+// These listeners are attached once at module-load time and remain active for
+// the lifetime of the page.  The intentionalClose / currentToken guards ensure
+// they are no-ops when the user is logged out.
+
+if (typeof window !== 'undefined') {
+  // Network went away — stop burning the reconnect backoff budget
+  window.addEventListener('offline', () => {
+    isNetworkOffline = true
+    clearReconnectTimer()
+    clearHeartbeat()
+    // Leave a live socket alone; it will close on its own and onClose will bail
+    // out because isNetworkOffline is true.
+  })
+
+  // Network restored — reconnect immediately with a validated token
+  window.addEventListener('online', () => {
+    isNetworkOffline = false
+    if (!intentionalClose && currentToken && socket?.readyState !== WebSocket.OPEN) {
+      clearReconnectTimer()
+      reconnectDelay = 1_000
+      void refreshTokenAndReconnect()
+    }
+  })
+
+  // Tab became visible — if the socket died while in the background, reconnect
+  // right away and validate the token (it may have expired during suspension)
+  document.addEventListener('visibilitychange', () => {
+    if (
+      !document.hidden &&
+      !intentionalClose &&
+      currentToken &&
+      socket?.readyState !== WebSocket.OPEN
+    ) {
+      clearReconnectTimer()
+      reconnectDelay = 1_000
+      void refreshTokenAndReconnect()
+    }
+  })
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -754,5 +958,11 @@ export function disconnect() {
     socket.removeEventListener('close', onClose)
     socket.close()
     socket = null
+  }
+  // Dispose the worker on logout so it doesn't linger after the user signs out.
+  // A new worker is created lazily on the next connect().
+  if (heartbeatWorker) {
+    heartbeatWorker.postMessage({ type: 'dispose' })
+    heartbeatWorker = null
   }
 }

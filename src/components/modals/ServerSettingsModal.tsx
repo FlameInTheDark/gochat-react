@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle } from 'lucide-react'
+import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -10,11 +10,13 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
-import { guildApi, inviteApi, rolesApi, uploadApi } from '@/api/client'
+import { guildApi, inviteApi, rolesApi, uploadApi, axiosInstance } from '@/api/client'
 import type { DtoGuildInvite, DtoMember } from '@/types'
-import type { DtoRole } from '@/client'
+import type { DtoGuildEmoji, DtoRole } from '@/client'
 import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
+import { useEmojiStore } from '@/stores/emojiStore'
+import { emojiUrl } from '@/lib/emoji'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -24,13 +26,14 @@ function getInviteUrl(code: string) {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Section = 'overview' | 'members' | 'roles' | 'invites' | 'danger'
+type Section = 'overview' | 'members' | 'roles' | 'invites' | 'emojis' | 'danger'
 
 const NAV: { key: Section; label: string; danger?: boolean }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'members', label: 'Members' },
   { key: 'roles', label: 'Roles' },
   { key: 'invites', label: 'Invites' },
+  { key: 'emojis', label: 'Emoji' },
   { key: 'danger', label: 'Danger Zone', danger: true },
 ]
 
@@ -170,6 +173,16 @@ export default function ServerSettingsModal() {
   const [inviteExpiry, setInviteExpiry] = useState('86400')
   const [creatingInvite, setCreatingInvite] = useState(false)
 
+  // Emojis
+  const emojiFileRef = useRef<HTMLInputElement>(null)
+  const [emojiName, setEmojiName] = useState('')
+  const [emojiFile, setEmojiFile] = useState<File | null>(null)
+  const [uploadingEmoji, setUploadingEmoji] = useState(false)
+  const [editingEmojiId, setEditingEmojiId] = useState<string | null>(null)
+  const [editingEmojiName, setEditingEmojiName] = useState('')
+  const [savingEmojiId, setSavingEmojiId] = useState<string | null>(null)
+  const [deletingEmojiId, setDeletingEmojiId] = useState<string | null>(null)
+
   // ── Queries ─────────────────────────────────────────────────────────────────
 
   const { data: guild } = useQuery({
@@ -208,6 +221,13 @@ export default function ServerSettingsModal() {
     queryKey: ['invites', guildId],
     queryFn: () => inviteApi.guildInvitesGuildIdGet({ guildId: guildId! }).then((r) => r.data ?? []),
     enabled: open && !!guildId && section === 'invites',
+    staleTime: 30_000,
+  })
+
+  const { data: guildEmojis = [], refetch: refetchEmojis } = useQuery<DtoGuildEmoji[]>({
+    queryKey: ['guild-emojis', guildId],
+    queryFn: () => guildApi.guildGuildIdEmojisGet({ guildId: guildId! }).then((r) => r.data ?? []),
+    enabled: open && !!guildId && section === 'emojis',
     staleTime: 30_000,
   })
 
@@ -446,6 +466,93 @@ export default function ServerSettingsModal() {
       toast.success('Invite revoked')
     } catch {
       toast.error('Failed to revoke invite')
+    }
+  }
+
+  // ── Emoji handlers ────────────────────────────────────────────────────────
+
+  async function handleUploadEmoji() {
+    if (!guildId || !emojiFile || !emojiName.trim()) return
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    setUploadingEmoji(true)
+    try {
+      // Step 1: create placeholder
+      const placeholderRes = await guildApi.guildGuildIdEmojisPost({
+        guildId,
+        request: {
+          name: emojiName.trim(),
+          file_size: emojiFile.size,
+          content_type: emojiFile.type || 'image/png',
+        },
+      })
+      const { id: emojiId, guild_id } = placeholderRes.data
+      if (!emojiId || !guild_id) throw new Error('Invalid placeholder response')
+
+      // Step 2: upload binary — send raw bytes, not JSON
+      await axiosInstance.post(
+        `${baseUrl}/upload/emojis/${guild_id}/${emojiId}`,
+        emojiFile,
+        {
+          headers: { 'Content-Type': emojiFile.type || 'image/png' },
+          transformRequest: [(data) => data],
+        },
+      )
+
+      // Update local store and refetch
+      useEmojiStore.getState().addEmoji({
+        id: String(emojiId),
+        name: emojiName.trim(),
+        guild_id: String(guild_id),
+      })
+      await refetchEmojis()
+      toast.success(`Emoji :${emojiName.trim()}: uploaded`)
+      setEmojiName('')
+      setEmojiFile(null)
+      if (emojiFileRef.current) emojiFileRef.current.value = ''
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Failed to upload emoji')
+    } finally {
+      setUploadingEmoji(false)
+    }
+  }
+
+  async function handleRenameEmoji(emojiId: string) {
+    if (!guildId || !editingEmojiName.trim()) return
+    setSavingEmojiId(emojiId)
+    try {
+      await guildApi.guildGuildIdEmojisEmojiIdPatch({
+        guildId,
+        emojiId,
+        request: { name: editingEmojiName.trim() },
+      })
+      useEmojiStore.getState().updateEmoji({
+        id: emojiId,
+        name: editingEmojiName.trim(),
+        guild_id: guildId,
+      })
+      await refetchEmojis()
+      setEditingEmojiId(null)
+      toast.success('Emoji renamed')
+    } catch {
+      toast.error('Failed to rename emoji')
+    } finally {
+      setSavingEmojiId(null)
+    }
+  }
+
+  async function handleDeleteEmoji(emojiId: string) {
+    if (!guildId) return
+    setDeletingEmojiId(emojiId)
+    try {
+      await guildApi.guildGuildIdEmojisEmojiIdDelete({ guildId, emojiId })
+      useEmojiStore.getState().removeEmoji(guildId, emojiId)
+      await refetchEmojis()
+      toast.success('Emoji deleted')
+    } catch {
+      toast.error('Failed to delete emoji')
+    } finally {
+      setDeletingEmojiId(null)
     }
   }
 
@@ -1009,6 +1116,166 @@ export default function ServerSettingsModal() {
                     </p>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* ── Emojis ── */}
+            {section === 'emojis' && (
+              <div className="space-y-6">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Smile className="w-5 h-5" />
+                  Emoji
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Upload custom emoji for your server. Members can use them in messages with{' '}
+                  <code className="bg-muted px-1 py-0.5 rounded text-xs">:name:</code> completion.
+                </p>
+
+                {/* Upload form */}
+                {isOwner && (
+                  <div className="rounded-lg border border-border p-4 space-y-3">
+                    <p className="text-sm font-semibold">Upload New Emoji</p>
+                    <p className="text-xs text-muted-foreground">
+                      Max 256 KB · Max 128×128 px · Animated GIF/WebP supported
+                    </p>
+                    <div className="flex gap-3 flex-wrap items-end">
+                      <div className="space-y-1 flex-1 min-w-[140px]">
+                        <Label className="text-xs">Name</Label>
+                        <Input
+                          value={emojiName}
+                          onChange={(e) => setEmojiName(e.target.value.replace(/[^A-Za-z0-9-]/g, ''))}
+                          placeholder="party-cat"
+                          className="h-8 text-sm"
+                          maxLength={32}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Letters, numbers, hyphens only</p>
+                      </div>
+                      <div className="space-y-1 flex-1 min-w-[140px]">
+                        <Label className="text-xs">Image file</Label>
+                        <input
+                          ref={emojiFileRef}
+                          type="file"
+                          accept="image/png,image/gif,image/webp,image/jpeg"
+                          className="block w-full text-xs text-muted-foreground file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-muted file:text-foreground hover:file:bg-accent cursor-pointer"
+                          onChange={(e) => setEmojiFile(e.target.files?.[0] ?? null)}
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        className="gap-2 shrink-0"
+                        onClick={() => void handleUploadEmoji()}
+                        disabled={uploadingEmoji || !emojiName.trim() || !emojiFile}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        {uploadingEmoji ? 'Uploading…' : 'Upload'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Emoji list — Static & Animated */}
+                {(() => {
+                  const staticEmojis = guildEmojis.filter((e) => !e.animated)
+                  const animatedEmojis = guildEmojis.filter((e) => e.animated)
+
+                  const renderEmojiRow = (emoji: DtoGuildEmoji) => {
+                    const eid = String(emoji.id)
+                    const isEditing = editingEmojiId === eid
+                    const isDeleting = deletingEmojiId === eid
+                    const isSaving = savingEmojiId === eid
+                    return (
+                      <div
+                        key={eid}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2 rounded-md hover:bg-accent/50 group',
+                          isDeleting && 'opacity-40',
+                        )}
+                      >
+                        <img
+                          src={emojiUrl(eid, 44)}
+                          alt={emoji.name}
+                          className="w-8 h-8 object-contain shrink-0"
+                        />
+                        {isEditing ? (
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <Input
+                              value={editingEmojiName}
+                              onChange={(e) => setEditingEmojiName(e.target.value.replace(/[^A-Za-z0-9-]/g, ''))}
+                              className="h-7 text-sm flex-1"
+                              maxLength={32}
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') void handleRenameEmoji(eid)
+                                if (e.key === 'Escape') setEditingEmojiId(null)
+                              }}
+                            />
+                            <Button size="sm" className="h-7 text-xs" onClick={() => void handleRenameEmoji(eid)} disabled={isSaving || !editingEmojiName.trim()}>
+                              Save
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingEmojiId(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="font-mono text-sm flex-1 min-w-0 truncate">:{emoji.name}:</span>
+                            {isOwner && (
+                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                <button
+                                  onClick={() => { setEditingEmojiId(eid); setEditingEmojiName(emoji.name ?? '') }}
+                                  className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                                  title="Rename"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => void handleDeleteEmoji(eid)}
+                                  disabled={isDeleting}
+                                  className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div className="space-y-6">
+                      {/* Static */}
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Static Emoji — {staticEmojis.length} / 50</p>
+                        {staticEmojis.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground rounded-md border border-dashed border-border">
+                            <Smile className="w-8 h-8 mb-2 opacity-20" />
+                            <p className="text-sm">No static emoji yet</p>
+                            {isOwner && <p className="text-xs mt-1 opacity-70">Upload a PNG, WEBP or JPG above</p>}
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">{staticEmojis.map(renderEmojiRow)}</div>
+                        )}
+                      </div>
+
+                      {/* Animated */}
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Animated Emoji — {animatedEmojis.length} / 50</p>
+                        {animatedEmojis.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground rounded-md border border-dashed border-border">
+                            <Smile className="w-8 h-8 mb-2 opacity-20" />
+                            <p className="text-sm">No animated emoji yet</p>
+                            {isOwner && <p className="text-xs mt-1 opacity-70">Upload a GIF above</p>}
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">{animatedEmojis.map(renderEmojiRow)}</div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
               </div>
             )}
 

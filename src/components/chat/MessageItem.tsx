@@ -30,7 +30,7 @@ import { useAppearanceStore, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore
 import { snowflakeToTime, snowflakeToDate } from '@/lib/snowflake'
 import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
-import { parseMessageContent, extractYouTubeEmbeds, type MentionResolver } from '@/lib/messageParser'
+import { parseMessageContent, extractYouTubeEmbeds, isEmojiOnlyMessage, type MentionResolver } from '@/lib/messageParser'
 import MessageAttachments from '@/components/chat/MessageAttachments'
 import InviteEmbed from '@/components/chat/InviteEmbed'
 import YoutubeEmbed from '@/components/chat/YoutubeEmbed'
@@ -151,6 +151,9 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
       content.includes('@here')
     )
   }, [message.content, currentUser?.id])
+
+  // Detect emoji-only messages for big rendering (max 9 emoji, no other text)
+  const emojiOnly = isEmojiOnlyMessage(message.content ?? '')
 
   // Use Snowflake ID to derive creation time (more reliable than updated_at for display)
   const timestamp = snowflakeToTime(message.id)
@@ -364,9 +367,12 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
                 <>
                   {/* Parsed message content with inline markdown */}
                   {message.content && (
-                    <div 
-                      className="text-sm break-words whitespace-pre-wrap leading-relaxed"
-                      style={{ fontSize: `${fontScale}rem` }}
+                    <div
+                      className={cn(
+                        'break-words whitespace-pre-wrap',
+                        emojiOnly ? 'leading-none py-1' : 'text-sm leading-relaxed',
+                      )}
+                      style={{ fontSize: emojiOnly ? '2.5rem' : `${fontScale}rem` }}
                     >
                       {parseMessageContent(message.content, resolver)}
                     </div>

@@ -18,7 +18,9 @@ import { sendPresenceStatus } from '@/services/wsService'
 import { useFolderStore } from '@/stores/folderStore'
 import { useReadStateStore } from '@/stores/readStateStore'
 import { useMentionStore } from '@/stores/mentionStore'
+import { useEmojiStore } from '@/stores/emojiStore'
 import i18n from '@/i18n'
+import { setupTokenRefreshScheduler } from '@/lib/tokenRefresh'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 
@@ -71,6 +73,11 @@ export default function AppLayout() {
   const token = useAuthStore((s) => s.token)
   const setUser = useAuthStore((s) => s.setUser)
   const logout = useAuthStore((s) => s.logout)
+
+  // Proactive token refresh: decodes the JWT expiry and schedules a refresh
+  // 30 s before it expires so the WS and API never hit a stale token.
+  // Runs once and subscribes to future token changes (e.g. after each refresh).
+  useEffect(() => setupTokenRefreshScheduler(), [])
 
   // Only show the loading screen when we actually have a token to validate.
   // Avoids a blank-flash on the unauthenticated redirect path.
@@ -181,6 +188,21 @@ export default function AppLayout() {
           }
           if (Object.keys(mentionSeed).length > 0) {
             useMentionStore.getState().seedMentions(mentionSeed)
+          }
+        }
+        // Seed custom emoji store from guild_emojis in settings
+        const guildEmojis = settingsRes?.data?.guild_emojis
+        if (guildEmojis) {
+          const emojiStore = useEmojiStore.getState()
+          for (const [guildId, emojiRefs] of Object.entries(guildEmojis)) {
+            emojiStore.setGuildEmojis(
+              guildId,
+              (emojiRefs ?? []).map((e) => ({
+                id: String(e.id ?? ''),
+                name: String(e.name ?? ''),
+                guild_id: guildId,
+              })),
+            )
           }
         }
         // Apply saved display language
