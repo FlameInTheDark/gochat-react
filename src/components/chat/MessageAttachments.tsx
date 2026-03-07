@@ -69,13 +69,13 @@ function getMeta(a: DtoAttachment): AttachmentMeta {
   return { url, previewUrl, kind, sizeLabel: formatSize(a.size), name, contentType, width, height, isGif }
 }
 
-function computeBounds(meta: AttachmentMeta): { width: number; height: number } {
-  const w = meta.width ?? MAX_DIM
-  const h = meta.height ?? MAX_DIM
-  if (!w && !h) return { width: MAX_DIM, height: MAX_DIM }
-  if (!w) return { width: Math.min(MAX_DIM, h), height: h }
-  if (!h) return { width: w, height: Math.min(MAX_DIM, w) }
-  const scale = Math.min(MAX_DIM / w, MAX_DIM / h, 1)
+function computeBounds(meta: AttachmentMeta, maxDim: number): { width: number; height: number } {
+  const w = meta.width ?? maxDim
+  const h = meta.height ?? maxDim
+  if (!w && !h) return { width: maxDim, height: maxDim }
+  if (!w) return { width: Math.min(maxDim, h), height: h }
+  if (!h) return { width: w, height: Math.min(maxDim, w) }
+  const scale = Math.min(maxDim / w, maxDim / h, 1)
   return { width: Math.round(w * scale), height: Math.round(h * scale) }
 }
 
@@ -240,11 +240,11 @@ function ImageTile({
 }
 
 // ── Single image with lightbox ────────────────────────────────────────────────
-function AttachmentImage({ item }: { item: RenderItem }) {
+function AttachmentImage({ item, maxDim }: { item: RenderItem; maxDim: number }) {
   const [open, setOpen] = useState(false)
   const { meta } = item
   if (!meta.previewUrl) return null
-  const bounds = computeBounds(meta)
+  const bounds = computeBounds(meta, maxDim)
 
   return (
     <>
@@ -261,7 +261,7 @@ function AttachmentImage({ item }: { item: RenderItem }) {
 }
 
 // ── Image gallery grid with shared navigable lightbox ────────────────────────
-function GalleryGroup({ items }: { items: RenderItem[] }) {
+function GalleryGroup({ items, maxDim }: { items: RenderItem[]; maxDim: number }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null)
   const cols = items.length === 1 ? 1 : 2
 
@@ -271,7 +271,7 @@ function GalleryGroup({ items }: { items: RenderItem[] }) {
         className="grid gap-1 rounded overflow-hidden"
         style={{
           gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-          maxWidth: MAX_DIM,
+          maxWidth: maxDim,
         }}
       >
         {items.map((item, i) => (
@@ -295,7 +295,7 @@ function GalleryGroup({ items }: { items: RenderItem[] }) {
 }
 
 // ── Video: custom player ───────────────────────────────────────────────────────
-function AttachmentVideo({ item }: { item: RenderItem }) {
+function AttachmentVideo({ item, maxDim }: { item: RenderItem; maxDim: number }) {
   const { meta } = item
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -324,11 +324,11 @@ function AttachmentVideo({ item }: { item: RenderItem }) {
 
   if (!meta.url) return null
 
-  const bounds = computeBounds(meta)
+  const bounds = computeBounds(meta, maxDim)
   const containerStyle: React.CSSProperties =
     meta.width && meta.height
       ? { width: bounds.width, height: bounds.height, maxWidth: '100%' }
-      : { width: '100%', maxWidth: MAX_DIM, aspectRatio: '16/9' }
+      : { width: '100%', maxWidth: maxDim, aspectRatio: '16/9' }
 
   // ── Pre-play: thumbnail + play button, no <video> in DOM ─────────────────────
   if (!hasStarted) {
@@ -594,9 +594,10 @@ function AttachmentFile({ item }: { item: RenderItem }) {
 // ── Main component ────────────────────────────────────────────────────────────
 interface Props {
   attachments: DtoAttachment[] | null | undefined
+  maxWidth?: number
 }
 
-export default function MessageAttachments({ attachments }: Props) {
+export default function MessageAttachments({ attachments, maxWidth = MAX_DIM }: Props) {
   if (!attachments?.length) return null
 
   const groups = groupForRender(attachments)
@@ -605,12 +606,12 @@ export default function MessageAttachments({ attachments }: Props) {
     <div className="mt-1 flex flex-col gap-1">
       {groups.map((group, gi) => {
         if (group.type === 'gallery') {
-          return <GalleryGroup key={gi} items={group.items} />
+          return <GalleryGroup key={gi} items={group.items} maxDim={maxWidth} />
         }
         const { item } = group
         switch (item.meta.kind) {
-          case 'image': return <AttachmentImage key={gi} item={item} />
-          case 'video': return <AttachmentVideo key={gi} item={item} />
+          case 'image': return <AttachmentImage key={gi} item={item} maxDim={maxWidth} />
+          case 'video': return <AttachmentVideo key={gi} item={item} maxDim={maxWidth} />
           case 'audio': return <AttachmentAudio key={gi} item={item} />
           default:      return <AttachmentFile  key={gi} item={item} />
         }

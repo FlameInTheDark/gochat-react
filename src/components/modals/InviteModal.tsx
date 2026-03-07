@@ -11,7 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useUiStore } from '@/stores/uiStore'
-import { inviteApi } from '@/api/client'
+import { inviteApi, axiosInstance } from '@/api/client'
 import type { DtoGuildInvite } from '@/client'
 import { useTranslation } from 'react-i18next'
 
@@ -40,10 +40,15 @@ export default function InviteModal() {
     if (!serverId) return
     setCreating(true)
     try {
-      await inviteApi.guildInvitesGuildIdPost({
-        guildId: serverId,
-        request: { expires_in_sec: 0 },
-      })
+      // 100 years in seconds; pre-serialize with JSON.stringify to avoid
+      // json-bigint mishandling numbers > 2^31 as BigInt candidates
+      const NEVER_EXPIRES_SEC = 100 * 365 * 24 * 60 * 60
+      const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+      await axiosInstance.post(
+        `${baseUrl}/guild/invites/${serverId}`,
+        JSON.stringify({ expires_in_sec: NEVER_EXPIRES_SEC }),
+        { headers: { 'Content-Type': 'application/json' } },
+      )
       await queryClient.invalidateQueries({ queryKey: ['invites', serverId] })
     } catch {
       toast.error(t('modals.createInviteFailed'))

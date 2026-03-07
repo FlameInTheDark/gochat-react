@@ -7,8 +7,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { useUiStore } from '@/stores/uiStore'
-import { guildApi, rolesApi } from '@/api/client'
-import type { DtoRole, GuildChannelRolePermission } from '@/client'
+import { guildApi, rolesApi, voiceApi } from '@/api/client'
+import type { DtoRole, GuildChannelRolePermission, VoiceRegion } from '@/client'
 import { ChannelType } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -166,9 +166,10 @@ export default function ChannelSettingsModal() {
   const [section, setSection] = useState<Section>('overview')
 
   // Overview
-  const [chanName,  setChanName]  = useState('')
-  const [chanTopic, setChanTopic] = useState('')
-  const [isPrivate, setIsPrivate] = useState(false)
+  const [chanName,     setChanName]     = useState('')
+  const [chanTopic,    setChanTopic]    = useState('')
+  const [isPrivate,    setIsPrivate]    = useState(false)
+  const [voiceRegion,  setVoiceRegion]  = useState('auto')
   const [savingOverview, setSavingOverview] = useState(false)
 
   // Permissions — left panel: selected role; right panel: per-permission states
@@ -208,6 +209,15 @@ export default function ChannelSettingsModal() {
     staleTime: 30_000,
   })
 
+  const isVoice = channel?.type === ChannelType.ChannelTypeGuildVoice
+
+  const { data: voiceRegions = [] } = useQuery<VoiceRegion[]>({
+    queryKey: ['voice-regions'],
+    queryFn: () => voiceApi.voiceRegionsGet().then((r) => r.data?.regions ?? []),
+    enabled: open && isVoice,
+    staleTime: 5 * 60_000,
+  })
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -215,6 +225,7 @@ export default function ChannelSettingsModal() {
       setChanName(channel.name ?? '')
       setChanTopic(channel.topic ?? '')
       setIsPrivate(channel.private ?? false)
+      setVoiceRegion(channel.voice_region?.trim() || 'auto')
     }
   }, [open, channel])
 
@@ -290,20 +301,40 @@ export default function ChannelSettingsModal() {
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
+  const initialVoiceRegion = channel?.voice_region?.trim() || 'auto'
+  const voiceRegionChanged = isVoice && voiceRegion !== initialVoiceRegion
+
   const overviewChanged =
     (chanName.trim() !== '' && chanName.trim() !== channel?.name) ||
     chanTopic !== (channel?.topic ?? '') ||
-    isPrivate !== (channel?.private ?? false)
+    isPrivate !== (channel?.private ?? false) ||
+    voiceRegionChanged
 
   async function handleSaveOverview() {
     if (!guildId || !channelId || !chanName.trim()) return
     setSavingOverview(true)
     try {
-      await guildApi.guildGuildIdChannelChannelIdPatch({
-        guildId,
-        channelId,
-        req: { name: chanName.trim(), topic: chanTopic, private: isPrivate },
-      })
+      const channelFieldsChanged =
+        chanName.trim() !== channel?.name ||
+        chanTopic !== (channel?.topic ?? '') ||
+        isPrivate !== (channel?.private ?? false)
+
+      if (channelFieldsChanged) {
+        await guildApi.guildGuildIdChannelChannelIdPatch({
+          guildId,
+          channelId,
+          req: { name: chanName.trim(), topic: chanTopic, private: isPrivate },
+        })
+      }
+
+      if (voiceRegionChanged) {
+        await guildApi.guildGuildIdVoiceChannelIdRegionPatch({
+          guildId,
+          channelId,
+          request: { region: voiceRegion === 'auto' ? '' : voiceRegion },
+        })
+      }
+
       await queryClient.invalidateQueries({ queryKey: ['channels', guildId] })
       await queryClient.invalidateQueries({ queryKey: ['channel', guildId, channelId] })
       toast.success('Channel updated')
@@ -445,7 +476,7 @@ export default function ChannelSettingsModal() {
                   />
                 </div>
 
-                {!isCategory && (
+                {!isCategory && !isVoice && (
                   <div className="space-y-2">
                     <Label htmlFor="chan-topic">Topic</Label>
                     <Input
@@ -454,6 +485,30 @@ export default function ChannelSettingsModal() {
                       onChange={(e) => setChanTopic(e.target.value)}
                       placeholder="Optional channel topic…"
                     />
+                  </div>
+                )}
+
+                {isVoice && (
+                  <div className="space-y-2">
+                    <Label htmlFor="chan-voice-region">Voice Region</Label>
+                    <select
+                      id="chan-voice-region"
+                      value={voiceRegion}
+                      onChange={(e) => setVoiceRegion(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="auto">Automatic</option>
+                      {voiceRegions
+                        .filter((r) => r.id && r.id !== 'auto')
+                        .map((r) => (
+                          <option key={r.id} value={r.id!}>
+                            {r.name || r.id}
+                          </option>
+                        ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      Select a preferred SFU region for this voice channel, or use Automatic.
+                    </p>
                   </div>
                 )}
 

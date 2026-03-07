@@ -58,6 +58,7 @@ interface Props {
   message: DtoMessage
   isGrouped?: boolean
   resolver?: MentionResolver
+  attachmentMaxWidth?: number
 }
 
 // Join message type constant
@@ -84,7 +85,7 @@ function getJoinMessage(userId: string | number | undefined, messages: string[])
   return messages[hash % messages.length]
 }
 
-export default function MessageItem({ message, isGrouped = false, resolver }: Props) {
+export default function MessageItem({ message, isGrouped = false, resolver, attachmentMaxWidth }: Props) {
   const { serverId } = useParams<{ serverId?: string }>()
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -371,7 +372,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
                     </div>
                   )}
                   {/* Attachments */}
-                  <MessageAttachments attachments={message.attachments} />
+                  <MessageAttachments attachments={message.attachments} maxWidth={attachmentMaxWidth} />
                   {/* YouTube embeds — one per unique video ID found in the message */}
                   {message.content && extractYouTubeEmbeds(message.content).map(({ videoId, url }) => (
                     <YoutubeEmbed key={videoId} videoId={videoId} url={url} />

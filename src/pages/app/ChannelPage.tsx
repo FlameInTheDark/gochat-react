@@ -1,16 +1,19 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Hash, Volume2, MicOff, HeadphoneOff, Users, Search } from 'lucide-react'
+import { Hash, Volume2, MicOff, HeadphoneOff, Users } from 'lucide-react'
 import { Separator } from '@/components/ui/separator'
-import { guildApi, rolesApi } from '@/api/client'
+import { guildApi, rolesApi, searchApi } from '@/api/client'
+import { SearchMessageSearchRequestHasEnum } from '@/client'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { ChannelType } from '@/types'
+import type { DtoMessage } from '@/types'
 import type { ServerOutletContext } from './ServerLayout'
 import type { MentionResolver } from '@/lib/messageParser'
 import MessageList from '@/components/chat/MessageList'
 import MessageInput from '@/components/chat/MessageInput'
 import MemberList from '@/components/layout/MemberList'
+import SearchBar, { type SearchBarHandle, type AppliedFilter } from '@/components/chat/SearchBar'
 import SearchPanel from '@/components/chat/SearchPanel'
 import { subscribeChannel } from '@/services/wsService'
 import { joinVoice } from '@/services/voiceService'
@@ -34,15 +37,17 @@ export default function ChannelPage() {
   const { t } = useTranslation()
 
   const [showMembers, setShowMembers] = useState(true)
-  const [showSearch, setShowSearch] = useState(false)
+
+  // ── Search state ────────────────────────────────────────────────────────────
+  const [searchResults, setSearchResults] = useState<DtoMessage[]>([])
+  const [searchTotalPages, setSearchTotalPages] = useState(0)
+  const [searchPage, setSearchPage] = useState(0)
+  const [isSearching, setIsSearching] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
+  const lastSearchParamsRef = useRef<{ chips: AppliedFilter[]; text: string } | null>(null)
+  const searchBarRef = useRef<SearchBarHandle>(null)
 
   // Jump-to-message from search.
-  //
-  // Strategy: read the ID from route state once, immediately clear the route
-  // state (prevents replay on back-navigation / refresh), but persist the ID
-  // in local state so it survives the state-clear and remains available for
-  // MessageList to highlight the message AFTER the async load completes.
-  // Auto-clear after 3 s (animation is 2.5 s) so new arrivals don't re-scroll.
   const jumpIdFromState =
     (location.state as { jumpToMessageId?: string } | null)?.jumpToMessageId
 
@@ -50,18 +55,16 @@ export default function ChannelPage() {
     jumpIdFromState,
   )
 
-  // Capture a new jump from route state and clear the route state.
   useEffect(() => {
     if (!jumpIdFromState) return
     setJumpToMessageId(jumpIdFromState)
     navigate(location.pathname, { replace: true, state: {} })
   }, [jumpIdFromState]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-clear local jump ID after the highlight animation finishes.
   useEffect(() => {
     if (!jumpToMessageId) return
-    const t = setTimeout(() => setJumpToMessageId(undefined), 3_000)
-    return () => clearTimeout(t)
+    const timer = setTimeout(() => setJumpToMessageId(undefined), 3_000)
+    return () => clearTimeout(timer)
   }, [jumpToMessageId])
 
   const {
@@ -81,10 +84,8 @@ export default function ChannelPage() {
   const localCameraEnabled = useVoiceStore((s) => s.localCameraEnabled)
   const localVideoStream = useVoiceStore((s) => s.localVideoStream)
 
-  // Get current user for avatar display in voice
   const currentUser = useAuthStore((s) => s.user)
 
-  // Guild data for mention resolution in messages — reuse cached queries
   const { data: members } = useQuery({
     queryKey: ['members', serverId],
     queryFn: () =>
@@ -130,11 +131,67 @@ export default function ChannelPage() {
     [members, channels, roles, handleUserClick, handleChannelClick],
   )
 
-  // Subscribe to real-time messages for this channel
-  // (read state is managed by useMessagePagination / readStateStore)
   useEffect(() => {
     if (channelId) subscribeChannel(channelId)
   }, [channelId])
+
+  // Clear search when navigating to a different channel
+  useEffect(() => {
+    clearSearch()
+  }, [channelId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function doSearch(params: { chips: AppliedFilter[]; text: string }, pageNum: number) {
+    const content = params.text
+    const hasFilters = params.chips.filter((f) => f.type === 'has').map((f) => f.apiValue as SearchMessageSearchRequestHasEnum)
+    const fromChip = params.chips.find((f) => f.type === 'from')
+    const inChip = params.chips.find((f) => f.type === 'in')
+
+    if (!content && !hasFilters.length && !fromChip && !inChip) return
+
+    const targetChannelId = inChip?.apiValue ?? channelId!
+    lastSearchParamsRef.current = params
+
+    setIsSearching(true)
+    setHasSearched(true)
+    try {
+      const res = await searchApi.searchGuildIdMessagesPost({
+        guildId: serverId!,
+        request: {
+          content: content || undefined,
+          author_id: fromChip ? (fromChip.apiValue as unknown as string) : undefined,
+          channel_id: targetChannelId as unknown as string,
+          has: hasFilters.length ? hasFilters : undefined,
+          page: pageNum,
+        },
+      })
+      const raw = res.data
+      const first = Array.isArray(raw) ? raw[0] : raw
+      setSearchResults((first as { messages?: DtoMessage[] })?.messages ?? [])
+      setSearchTotalPages((first as { pages?: number })?.pages ?? 1)
+      setSearchPage(pageNum)
+    } catch {
+      setSearchResults([])
+      setSearchTotalPages(0)
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
+  function clearSearch() {
+    setSearchResults([])
+    setSearchTotalPages(0)
+    setSearchPage(0)
+    setIsSearching(false)
+    setHasSearched(false)
+    lastSearchParamsRef.current = null
+    searchBarRef.current?.clear()
+  }
+
+  function goToPage(page: number) {
+    if (lastSearchParamsRef.current) {
+      void doSearch(lastSearchParamsRef.current, page)
+    }
+  }
 
   if (!channelId) return null
 
@@ -155,13 +212,11 @@ export default function ChannelPage() {
   // Voice channel view
   if (isVoice) {
     const isConnected = voiceChannelId === channelId
-    // Filter out the current user from peers since we render them separately
     const currentUserId = String(currentUser?.id ?? '')
     const peerEntries = Object.entries(voicePeers).filter(([userId]) => userId !== currentUserId)
 
     return (
       <div className="flex flex-col flex-1 min-h-0">
-        {/* Channel header */}
         <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
           <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
           <span className="font-semibold">{channel?.name ?? channelId}</span>
@@ -173,7 +228,6 @@ export default function ChannelPage() {
           )}
         </div>
 
-        {/* Voice participants */}
         <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 overflow-auto">
           {isConnected ? (
             <>
@@ -184,7 +238,6 @@ export default function ChannelPage() {
               </p>
 
               <div className="flex flex-wrap justify-center gap-4 w-full">
-                {/* Local user */}
                 <VoiceParticipant
                   label={`${currentUser?.name ?? t('channel.you')} (${t('channel.you')})`}
                   avatarUrl={currentUser?.avatar?.url}
@@ -194,7 +247,6 @@ export default function ChannelPage() {
                   videoStream={localCameraEnabled ? localVideoStream : null}
                   isLocal
                 />
-                {/* Remote peers */}
                 {peerEntries.map(([userId, peer]) => (
                   <VoiceParticipantRemote
                     key={userId}
@@ -229,97 +281,103 @@ export default function ChannelPage() {
 
   // Text channel view
   return (
-    <div className="flex flex-1 min-h-0">
-      {/* Main chat column */}
-      <div className="flex flex-col flex-1 min-w-0">
-        {/* Channel header */}
-        <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
-          <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
-          <span className="font-semibold">{channel?.name ?? channelId}</span>
-          {channel?.topic && (
-            <>
-              <Separator orientation="vertical" className="h-5 mx-1" />
-              <span className="text-sm text-muted-foreground truncate">{channel.topic}</span>
-            </>
-          )}
+    <div className="flex flex-col flex-1 min-h-0">
+      {/* Full-width header */}
+      <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
+        <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
+        <span className="font-semibold">{channel?.name ?? channelId}</span>
+        {channel?.topic && (
+          <>
+            <Separator orientation="vertical" className="h-5 mx-1" />
+            <span className="text-sm text-muted-foreground truncate">{channel.topic}</span>
+          </>
+        )}
 
-          {/* Toolbar */}
-          <div className="ml-auto flex items-center gap-1">
-            <button
-              onClick={() => setShowSearch((v) => !v)}
-              title={showSearch ? t('channel.closeSearch') : t('channel.searchMessages')}
-              className={cn(
-                'w-8 h-8 flex items-center justify-center rounded transition-colors',
-                showSearch
-                  ? 'text-foreground bg-accent'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-              )}
-            >
-              <Search className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setShowMembers((v) => !v)}
-              title={showMembers ? t('channel.hideMemberList') : t('channel.showMemberList')}
-              className={cn(
-                'w-8 h-8 flex items-center justify-center rounded transition-colors',
-                showMembers
-                  ? 'text-foreground bg-accent'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-              )}
-            >
-              <Users className="w-4 h-4" />
-            </button>
-          </div>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setShowMembers((v) => !v)}
+            title={showMembers ? t('channel.hideMemberList') : t('channel.showMemberList')}
+            className={cn(
+              'w-8 h-8 flex items-center justify-center rounded transition-colors',
+              showMembers
+                ? 'text-foreground bg-accent'
+                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+            )}
+          >
+            <Users className="w-4 h-4" />
+          </button>
+          <SearchBar
+            ref={searchBarRef}
+            className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
+            members={members}
+            channels={channels}
+            onSearch={(p) => void doSearch(p, 0)}
+            onClear={clearSearch}
+            hasResults={hasSearched}
+          />
         </div>
-
-        <MessageList
-          messages={messages}
-          isLoading={isLoading}
-          isLoadingOlder={isLoadingOlder}
-          isLoadingNewer={isLoadingNewer}
-          endReached={endReached}
-          latestReached={latestReached}
-          unreadSeparatorAfter={unreadSeparatorAfter}
-          highlightMessageId={jumpToMessageId}
-          channelName={channel?.name}
-          resolver={mentionResolver}
-          onLoadOlder={loadOlder}
-          onLoadNewer={loadNewer}
-          onAckLatest={ackLatest}
-        />
-        <TypingIndicator channelId={channelId} serverId={serverId ?? ''} />
-        <MessageInput
-          channelId={channelId}
-          channelName={
-            channel?.type === ChannelType.ChannelTypeGuildVoice
-              ? `🔊 ${channel?.name ?? channelId}`
-              : `#${channel?.name ?? channelId}`
-          }
-        />
       </div>
 
-      {/* Search panel */}
-      {showSearch && serverId && (
-        <SearchPanel
-          serverId={serverId}
-          channelId={channelId}
-          channels={channels}
-          members={members}
-          onClose={() => setShowSearch(false)}
-        />
-      )}
+      {/* Content row */}
+      <div className="flex flex-1 min-h-0">
+        <div className="flex flex-col flex-1 min-w-0">
+          <MessageList
+            messages={messages}
+            isLoading={isLoading}
+            isLoadingOlder={isLoadingOlder}
+            isLoadingNewer={isLoadingNewer}
+            endReached={endReached}
+            latestReached={latestReached}
+            unreadSeparatorAfter={unreadSeparatorAfter}
+            highlightMessageId={jumpToMessageId}
+            channelName={channel?.name}
+            resolver={mentionResolver}
+            onLoadOlder={loadOlder}
+            onLoadNewer={loadNewer}
+            onAckLatest={ackLatest}
+          />
+          <TypingIndicator channelId={channelId} serverId={serverId ?? ''} />
+          <MessageInput
+            channelId={channelId}
+            channelName={
+              channel?.type === ChannelType.ChannelTypeGuildVoice
+                ? `🔊 ${channel?.name ?? channelId}`
+                : `#${channel?.name ?? channelId}`
+            }
+          />
+        </div>
 
-      {/* Member list sidebar */}
-      {showMembers && serverId && <MemberList serverId={serverId} />}
+        {/* Right panel: results OR members */}
+        {(hasSearched || showMembers) && serverId && (
+          <div className={cn(
+            'flex flex-col border-l border-sidebar-border bg-sidebar shrink-0',
+            hasSearched ? 'w-80' : 'w-60',
+          )}>
+            {hasSearched ? (
+              <SearchPanel
+                serverId={serverId}
+                results={searchResults}
+                channels={channels}
+                isLoading={isSearching}
+                hasSearched={hasSearched}
+                page={searchPage}
+                totalPages={searchTotalPages}
+                onPageChange={goToPage}
+                resolver={mentionResolver}
+                className="flex-1 min-h-0"
+              />
+            ) : (
+              <MemberList serverId={serverId} />
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
 /**
  * Attaches a MediaStream to a <video> element.
- * For remote streams, calls onFrozen/onActive based on whether new frames
- * are being decoded — used to detect when the sender disables their camera
- * without a mute event from the SFU.
  */
 function VideoFeed({
   stream,
@@ -342,8 +400,6 @@ function VideoFeed({
     return () => { el.srcObject = null }
   }, [stream])
 
-  // Freeze detection: poll totalVideoFrames every second.
-  // If it stops advancing for 3 consecutive checks (~3 s), the track is frozen.
   useEffect(() => {
     if (!onFrozen && !onActive) return
     const el = videoRef.current
@@ -401,20 +457,13 @@ function VoiceParticipant({
 }) {
   const initials = label.charAt(0).toUpperCase()
 
-  // Local freeze-detection state for remote streams.
-  // When the sender silences their track, the SFU stops forwarding frames but
-  // doesn't immediately send a mute event — the video element freezes on the
-  // last frame. We detect this and hide the tile until frames resume.
   const [frozenLocally, setFrozenLocally] = useState(false)
 
-  // Reset frozen state whenever the stream identity changes (new camera session)
   useEffect(() => { setFrozenLocally(false) }, [videoStream])
 
   const handleFrozen = useCallback(() => setFrozenLocally(true), [])
   const handleActive = useCallback(() => setFrozenLocally(false), [])
 
-  // Local user's camera state is controlled directly via localCameraEnabled —
-  // no need for freeze detection.
   const hasVideo = !!videoStream && (isLocal || !frozenLocally)
 
   return (
@@ -437,7 +486,6 @@ function VoiceParticipant({
               onFrozen={isLocal ? undefined : handleFrozen}
               onActive={isLocal ? undefined : handleActive}
             />
-            {/* Overlay: name + status icons at bottom */}
             <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-black/50 flex items-center justify-between gap-1">
               <span className="text-xs text-white truncate">{label}</span>
               <div className="flex items-center gap-1 shrink-0">
@@ -448,7 +496,6 @@ function VoiceParticipant({
                 ) : null}
               </div>
             </div>
-            {/* Speaking ring on video */}
             {speaking && (
               <div className="absolute inset-0 ring-2 ring-green-500 rounded-lg pointer-events-none" />
             )}
@@ -464,7 +511,6 @@ function VoiceParticipant({
               {avatarUrl && <AvatarImage src={avatarUrl} alt={label} className="object-cover" />}
               <AvatarFallback className="text-lg">{initials}</AvatarFallback>
             </Avatar>
-            {/* Status indicator */}
             {deafened ? (
               <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
                 <HeadphoneOff className="w-3 h-3 text-white" />
@@ -477,7 +523,6 @@ function VoiceParticipant({
           </>
         )}
       </div>
-      {/* Label only shown for avatar mode (video mode has inline label) */}
       {!hasVideo && (
         <span className="text-xs text-muted-foreground truncate max-w-[80px]">{label}</span>
       )}
@@ -485,7 +530,6 @@ function VoiceParticipant({
   )
 }
 
-// Separate component for remote peers to handle member lookup with proper reactivity
 function VoiceParticipantRemote({
   userId,
   peer,
@@ -495,7 +539,6 @@ function VoiceParticipantRemote({
   peer: { speaking: boolean; muted: boolean; deafened?: boolean; videoStream: MediaStream | null }
   members: { user?: { id?: number; name?: string; avatar?: { url?: string } }; username?: string }[] | undefined
 }) {
-  // Find member - compare as strings since userId from voice is string, member.user.id is number
   const member = members?.find((m) => String(m.user?.id) === userId)
   const displayName = member?.username ?? member?.user?.name ?? `User ${userId.slice(0, 6)}`
   const avatarUrl = member?.user?.avatar?.url
@@ -511,4 +554,3 @@ function VoiceParticipantRemote({
     />
   )
 }
-
