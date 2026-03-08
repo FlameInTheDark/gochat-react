@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Hash, Volume2, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronDown, ChevronRight, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -28,9 +28,15 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Slider } from '@/components/ui/slider'
 import { useUiStore } from '@/stores/uiStore'
 import { useUnreadStore } from '@/stores/unreadStore'
-import { guildApi } from '@/api/client'
+import { useMentionStore } from '@/stores/mentionStore'
+import { useAuthStore } from '@/stores/authStore'
+import { useVoiceStore } from '@/stores/voiceStore'
+import { usePresenceStore } from '@/stores/presenceStore'
+import { guildApi, rolesApi, userApi } from '@/api/client'
+import { setPeerVolume } from '@/services/voiceService'
 import { ChannelType } from '@/types'
 import type { DtoChannel, DtoGuild } from '@/types'
 import { cn } from '@/lib/utils'
@@ -38,6 +44,8 @@ import { useTranslation } from 'react-i18next'
 import VoicePanel from '@/components/voice/VoicePanel'
 import { joinVoice } from '@/services/voiceService'
 import UserArea from './UserArea'
+import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
+import type { DtoRole, DtoMember } from '@/client'
 
 interface Props {
   channels: DtoChannel[]
@@ -66,6 +74,34 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   const [deletingChannel, setDeletingChannel] = useState<DtoChannel | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
 
+  // Current user and permissions
+  const currentUser = useAuthStore((s) => s.user)
+  const { data: members } = useQuery({
+    queryKey: ['members', serverId],
+    queryFn: () => guildApi.guildGuildIdMembersGet({ guildId: serverId }).then((r) => r.data ?? []),
+    enabled: !!serverId,
+    staleTime: 30_000,
+  })
+  const { data: roles } = useQuery({
+    queryKey: ['roles', serverId],
+    queryFn: () => rolesApi.guildGuildIdRolesGet({ guildId: serverId }).then((r) => r.data ?? []),
+    enabled: !!serverId,
+    staleTime: 60_000,
+  })
+
+  // Resolve guild data for owner check
+  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
+  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
+
+  const currentMember = members?.find((m) => m.user?.id === currentUser?.id)
+  const effectivePermissions = currentMember && roles
+    ? calculateEffectivePermissions(currentMember as DtoMember, roles as DtoRole[])
+    : 0
+  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
+  const canManageServer = isOwner || hasPermission(effectivePermissions, PermissionBits.MANAGE_SERVER) || isAdmin
+  const canManageChannels = isOwner || hasPermission(effectivePermissions, PermissionBits.MANAGE_CHANNELS) || isAdmin
+  const canCreateInvites = isOwner || hasPermission(effectivePermissions, PermissionBits.CREATE_INVITES) || isAdmin
+
   // Inline rename state
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
@@ -81,11 +117,33 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     ch.type === ChannelType.ChannelTypeGuild || ch.type === ChannelType.ChannelTypeGuildVoice
   const sorted = (arr: DtoChannel[]) => [...arr].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 
+  // Channel visibility: owners and admins see everything; for private channels,
+  // the user must have at least one role listed in channel.roles.
+  const memberRoleIds = new Set((currentMember?.roles ?? []).map(String))
+  function canViewChannel(ch: DtoChannel): boolean {
+    if (isOwner || isAdmin) return true
+    if (!ch.private) return true
+    return (ch.roles ?? []).some((r) => memberRoleIds.has(String(r)))
+  }
+
   const categoryIds = new Set(channels.filter(isCat).map((c) => String(c.id)))
-  const categories = sorted(channels.filter(isCat))
+  const allCategories = sorted(channels.filter(isCat))
+  // Visible categories: only those the user can see
+  const categories = allCategories.filter(canViewChannel)
+  const visibleCategoryIds = new Set(categories.map((c) => String(c.id)))
+
   const allRegular = channels.filter(isRegular)
+  // Visible regular channels: must pass own access check, and if inside a category,
+  // that category must also be visible (a private inaccessible category hides its children).
+  const visibleRegular = allRegular.filter((ch) => {
+    if (!canViewChannel(ch)) return false
+    const parentId = ch.parent_id ? String(ch.parent_id) : null
+    if (parentId && categoryIds.has(parentId) && !visibleCategoryIds.has(parentId)) return false
+    return true
+  })
+
   const uncategorized = sorted(
-    allRegular.filter((c) => !c.parent_id || !categoryIds.has(String(c.parent_id))),
+    visibleRegular.filter((c) => !c.parent_id || !categoryIds.has(String(c.parent_id))),
   )
 
   const isDeletingCategory = deletingChannel?.type === ChannelType.ChannelTypeGuildCategory
@@ -137,8 +195,18 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     setEditingId(null)
   }
 
+  // Check if already connected to a voice channel
+  const currentVoiceChannelId = useVoiceStore((s) => s.channelId)
+
   async function handleVoiceJoin(channel: DtoChannel) {
     const channelId = String(channel.id)
+
+    // If already connected to this channel, just navigate without rejoining
+    if (currentVoiceChannelId === channelId) {
+      navigate(`/app/${serverId}/${channelId}`)
+      return
+    }
+
     try {
       const res = await guildApi.guildGuildIdVoiceChannelIdJoinPost({
         guildId: serverId,
@@ -376,50 +444,78 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
             </ContextMenuTrigger>
 
             <DropdownMenuContent className="w-56">
-              <DropdownMenuItem onClick={() => openServerSettings(serverId)} className="gap-2">
-                <Settings className="w-4 h-4" />
-                {t('channelSidebar.serverSettings')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => openInviteModal(serverId)} className="gap-2">
-                <UserPlus className="w-4 h-4" />
-                {t('channelSidebar.invitePeople')}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
-                <Hash className="w-4 h-4" />
-                {t('channelSidebar.newChannel')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
-                <FolderPlus className="w-4 h-4" />
-                {t('channelSidebar.newCategory')}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => { void navigator.clipboard.writeText(serverId) }} className="gap-2">
-                <Copy className="w-4 h-4" />
-                {t('channelSidebar.copyServerId')}
-              </DropdownMenuItem>
+              {canManageServer && (
+                <DropdownMenuItem onClick={() => openServerSettings(serverId)} className="gap-2">
+                  <Settings className="w-4 h-4" />
+                  {t('channelSidebar.serverSettings')}
+                </DropdownMenuItem>
+              )}
+              {canCreateInvites && (
+                <DropdownMenuItem onClick={() => openInviteModal(serverId)} className="gap-2">
+                  <UserPlus className="w-4 h-4" />
+                  {t('channelSidebar.invitePeople')}
+                </DropdownMenuItem>
+              )}
+              {(canManageServer || canManageChannels || canCreateInvites) && <DropdownMenuSeparator />}
+              {canManageChannels && (
+                <>
+                  <DropdownMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
+                    <Hash className="w-4 h-4" />
+                    {t('channelSidebar.newChannel')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
+                    <FolderPlus className="w-4 h-4" />
+                    {t('channelSidebar.newCategory')}
+                  </DropdownMenuItem>
+                </>
+              )}
+              {!canManageServer && !canManageChannels && !canCreateInvites && (
+                <DropdownMenuItem onClick={() => { void navigator.clipboard.writeText(serverId) }} className="gap-2">
+                  <Copy className="w-4 h-4" />
+                  {t('channelSidebar.copyServerId')}
+                </DropdownMenuItem>
+              )}
+              {(canManageServer || canManageChannels || canCreateInvites) && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => { void navigator.clipboard.writeText(serverId) }} className="gap-2">
+                    <Copy className="w-4 h-4" />
+                    {t('channelSidebar.copyServerId')}
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
           <ContextMenuContent className="w-56">
-            <ContextMenuItem onClick={() => openServerSettings(serverId)} className="gap-2">
-              <Settings className="w-4 h-4" />
-              {t('channelSidebar.serverSettings')}
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => openInviteModal(serverId)} className="gap-2">
-              <UserPlus className="w-4 h-4" />
-              {t('channelSidebar.invitePeople')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
-              <Hash className="w-4 h-4" />
-              {t('channelSidebar.newChannel')}
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
-              <FolderPlus className="w-4 h-4" />
-              {t('channelSidebar.newCategory')}
-            </ContextMenuItem>
-            <ContextMenuSeparator />
+            {canManageServer && (
+              <>
+                <ContextMenuItem onClick={() => openServerSettings(serverId)} className="gap-2">
+                  <Settings className="w-4 h-4" />
+                  {t('channelSidebar.serverSettings')}
+                </ContextMenuItem>
+              </>
+            )}
+            {canCreateInvites && (
+              <ContextMenuItem onClick={() => openInviteModal(serverId)} className="gap-2">
+                <UserPlus className="w-4 h-4" />
+                {t('channelSidebar.invitePeople')}
+              </ContextMenuItem>
+            )}
+            {(canManageServer || canCreateInvites) && <ContextMenuSeparator />}
+            {canManageChannels && (
+              <>
+                <ContextMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
+                  <Hash className="w-4 h-4" />
+                  {t('channelSidebar.newChannel')}
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
+                  <FolderPlus className="w-4 h-4" />
+                  {t('channelSidebar.newCategory')}
+                </ContextMenuItem>
+              </>
+            )}
+            {(canManageServer || canManageChannels || canCreateInvites) && <ContextMenuSeparator />}
             <ContextMenuItem onClick={() => { void navigator.clipboard.writeText(serverId) }} className="gap-2">
               <Copy className="w-4 h-4" />
               {t('channelSidebar.copyServerId')}
@@ -461,6 +557,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                     onEditChange={setEditingName}
                     onEditSave={() => saveEdit(ch)}
                     onEditCancel={cancelEdit}
+                    canManageChannels={canManageChannels}
                   />
                 ))}
 
@@ -468,7 +565,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                 {categories.map((cat) => {
                   const catId = String(cat.id)
                   const isCollapsed = collapsed.has(catId)
-                  const children = sorted(allRegular.filter((c) => String(c.parent_id) === catId))
+                  const children = sorted(visibleRegular.filter((c) => String(c.parent_id) === catId))
                   const catIndicator =
                     dropIndicator?.id === catId
                       ? dropIndicator.before ? 'top' : 'bottom'
@@ -520,21 +617,25 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                           </button>
                         </ContextMenuTrigger>
                         <ContextMenuContent>
-                          <ContextMenuItem
-                            onClick={() => openChannelSettings(serverId, catId)}
-                            className="gap-2"
-                          >
-                            <Settings className="w-4 h-4" />
-                            {t('channelSidebar.editCategory')}
-                          </ContextMenuItem>
-                          <ContextMenuItem
-                            onClick={() => openCreateChannel(catId, serverId)}
-                            className="gap-2"
-                          >
-                            <Plus className="w-4 h-4" />
-                            {t('channelSidebar.addChannel')}
-                          </ContextMenuItem>
-                          <ContextMenuSeparator />
+                          {canManageChannels && (
+                            <>
+                              <ContextMenuItem
+                                onClick={() => openChannelSettings(serverId, catId)}
+                                className="gap-2"
+                              >
+                                <Settings className="w-4 h-4" />
+                                {t('channelSidebar.editCategory')}
+                              </ContextMenuItem>
+                              <ContextMenuItem
+                                onClick={() => openCreateChannel(catId, serverId)}
+                                className="gap-2"
+                              >
+                                <Plus className="w-4 h-4" />
+                                {t('channelSidebar.addChannel')}
+                              </ContextMenuItem>
+                              <ContextMenuSeparator />
+                            </>
+                          )}
                           <ContextMenuItem
                             onClick={() => { void navigator.clipboard.writeText(catId) }}
                             className="gap-2"
@@ -542,14 +643,18 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                             <Copy className="w-4 h-4" />
                             {t('channelSidebar.copyCategoryId')}
                           </ContextMenuItem>
-                          <ContextMenuSeparator />
-                          <ContextMenuItem
-                            onClick={() => setDeletingChannel(cat)}
-                            className="text-destructive focus:text-destructive gap-2"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            {t('channelSidebar.deleteCategory')}
-                          </ContextMenuItem>
+                          {canManageChannels && (
+                            <>
+                              <ContextMenuSeparator />
+                              <ContextMenuItem
+                                onClick={() => setDeletingChannel(cat)}
+                                className="text-destructive focus:text-destructive gap-2"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                {t('channelSidebar.deleteCategory')}
+                              </ContextMenuItem>
+                            </>
+                          )}
                         </ContextMenuContent>
                       </ContextMenu>
 
@@ -579,6 +684,8 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                           onEditChange={setEditingName}
                           onEditSave={() => saveEdit(ch)}
                           onEditCancel={cancelEdit}
+                          canManageChannels={canManageChannels}
+                          members={members}
                         />
                       ))}
                     </div>
@@ -588,14 +695,24 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
             </ScrollArea>
           </ContextMenuTrigger>
           <ContextMenuContent>
-            <ContextMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
-              <Hash className="w-4 h-4" />
-              {t('channelSidebar.newChannel')}
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
-              <FolderPlus className="w-4 h-4" />
-              {t('channelSidebar.newCategory')}
-            </ContextMenuItem>
+            {canManageChannels && (
+              <>
+                <ContextMenuItem onClick={() => openCreateChannel(undefined, serverId)} className="gap-2">
+                  <Hash className="w-4 h-4" />
+                  {t('channelSidebar.newChannel')}
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => openCreateCategory(serverId)} className="gap-2">
+                  <FolderPlus className="w-4 h-4" />
+                  {t('channelSidebar.newCategory')}
+                </ContextMenuItem>
+              </>
+            )}
+            {!canManageChannels && (
+              <ContextMenuItem onClick={() => { void navigator.clipboard.writeText(serverId) }} className="gap-2">
+                <Copy className="w-4 h-4" />
+                {t('channelSidebar.copyServerId')}
+              </ContextMenuItem>
+            )}
           </ContextMenuContent>
         </ContextMenu>
 
@@ -634,10 +751,17 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   )
 }
 
-// Thin wrapper that reads the unread state from Zustand so ChannelItem can be pure
-function ChannelItemWithUnread(props: Omit<ChannelItemProps, 'isUnread'>) {
+// Thin wrapper that reads the unread state, mention count, and voice channel users from Zustand
+function ChannelItemWithUnread(props: Omit<ChannelItemProps, 'isUnread' | 'mentionCount' | 'voiceUsers'>) {
   const isUnread = useUnreadStore((s) => s.channels.has(String(props.channel.id)))
-  return <ChannelItem {...props} isUnread={isUnread} />
+  const mentionCount = useMentionStore((s) => s.mentions[String(props.channel.id)]?.count ?? 0)
+  const isVoice = props.channel.type === ChannelType.ChannelTypeGuildVoice
+  const channelId = String(props.channel.id)
+  // Get the raw array reference from store
+  const voiceUsers = usePresenceStore((s) =>
+    isVoice ? s.voiceChannelUsers[channelId] : undefined,
+  )
+  return <ChannelItem {...props} isUnread={isUnread} mentionCount={mentionCount} voiceUsers={voiceUsers} />
 }
 
 interface ChannelItemProps {
@@ -645,6 +769,7 @@ interface ChannelItemProps {
   serverId: string
   isActive: boolean
   isUnread: boolean
+  mentionCount: number
   navigate: (path: string) => void
   onDelete: (ch: DtoChannel) => void
   onVoiceJoin: (ch: DtoChannel) => void
@@ -660,6 +785,9 @@ interface ChannelItemProps {
   onEditChange: (value: string) => void
   onEditSave: () => void
   onEditCancel: () => void
+  canManageChannels: boolean
+  voiceUsers?: { userId: string; username: string; avatarUrl?: string; muted?: boolean; deafened?: boolean }[]
+  members?: { user?: { id?: number; name?: string; avatar?: { url?: string } }; username?: string }[] | undefined
 }
 
 function ChannelItem({
@@ -667,6 +795,7 @@ function ChannelItem({
   serverId,
   isActive,
   isUnread,
+  mentionCount,
   navigate,
   onDelete,
   onVoiceJoin,
@@ -682,10 +811,32 @@ function ChannelItem({
   onEditChange,
   onEditSave,
   onEditCancel,
+  canManageChannels,
+  voiceUsers,
+  members,
 }: ChannelItemProps) {
   const { t } = useTranslation()
   const isVoice = channel.type === ChannelType.ChannelTypeGuildVoice
   const Icon = isVoice ? Volume2 : Hash
+  const hasVoiceUsers = isVoice && voiceUsers && voiceUsers.length > 0
+
+  // Resolve voice user display info from members data
+  const resolvedVoiceUsers: {
+    userId: string
+    username: string
+    avatarUrl?: string
+    muted?: boolean
+    deafened?: boolean
+  }[] | undefined = voiceUsers?.map((voiceUser) => {
+    const member = members?.find((m) => String(m.user?.id) === voiceUser.userId)
+    return {
+      userId: voiceUser.userId,
+      username: member?.username ?? member?.user?.name ?? voiceUser.username,
+      avatarUrl: member?.user?.avatar?.url ?? voiceUser.avatarUrl,
+      muted: voiceUser.muted,
+      deafened: voiceUser.deafened,
+    }
+  })
 
   function handleClick() {
     if (isEditing) return
@@ -697,75 +848,235 @@ function ChannelItem({
   }
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <button
-          draggable={!isEditing}
-          onDragStart={onDragStart}
-          onDragOver={onDragOver}
-          onDrop={onDrop}
-          onDragEnd={onDragEnd}
-          onClick={handleClick}
-          className={cn(
-            'w-full flex items-center gap-2 px-2 py-1 rounded text-sm transition-colors text-left cursor-pointer select-none group/item',
-            isActive
-              ? 'bg-accent text-foreground'
-              : isUnread
-                ? 'text-foreground font-medium hover:bg-accent/50'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-            isDragging && 'opacity-40',
-            dropIndicator === 'top' && 'border-t-2 border-primary',
-            dropIndicator === 'bottom' && 'border-b-2 border-primary',
-          )}
-        >
-          <span className="cursor-grab active:cursor-grabbing shrink-0">
-            <GripVertical className="w-3.5 h-3.5 opacity-0 group-hover/item:opacity-40 -ml-1" />
-          </span>
-          <Icon className="w-4 h-4 shrink-0 opacity-70" />
-          {isEditing ? (
-            <input
-              autoFocus
-              value={editName}
-              onChange={(e) => onEditChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') onEditSave()
-                if (e.key === 'Escape') onEditCancel()
-              }}
-              onBlur={onEditSave}
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-              className="flex-1 min-w-0 bg-background border border-primary rounded-sm px-1 outline-none text-sm cursor-text"
-            />
-          ) : (
+    <div className="w-full">
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <button
+            draggable={!isEditing}
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onDrop={onDrop}
+            onDragEnd={onDragEnd}
+            onClick={handleClick}
+            className={cn(
+              'w-full flex items-center gap-2 px-2 py-1 rounded text-sm transition-colors text-left cursor-pointer select-none group/item',
+              isActive
+                ? 'bg-accent text-foreground'
+                : isUnread
+                  ? 'text-foreground font-medium hover:bg-accent/50'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              isDragging && 'opacity-40',
+              dropIndicator === 'top' && 'border-t-2 border-primary',
+              dropIndicator === 'bottom' && 'border-b-2 border-primary',
+            )}
+          >
+            <span className="cursor-grab active:cursor-grabbing shrink-0">
+              <GripVertical className="w-3.5 h-3.5 opacity-0 group-hover/item:opacity-40 -ml-1" />
+            </span>
+            <Icon className={cn('w-4 h-4 shrink-0', hasVoiceUsers ? 'text-green-500 opacity-100' : 'opacity-70')} />
+            {isEditing ? (
+              <input
+                autoFocus
+                value={editName}
+                onChange={(e) => onEditChange(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') onEditSave()
+                  if (e.key === 'Escape') onEditCancel()
+                }}
+                onBlur={onEditSave}
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                className="flex-1 min-w-0 bg-background border border-primary rounded-sm px-1 outline-none text-sm cursor-text"
+              />
+            ) : (
+              <>
+                <span className="truncate flex-1">{channel.name}</span>
+                {/* Mention badge (red, with count) takes priority over unread dot */}
+                {mentionCount > 0 && !isActive && (
+                  <span className="ml-auto shrink-0 min-w-[1.125rem] h-[1.125rem] rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center px-1 leading-none">
+                    {mentionCount > 99 ? '99+' : mentionCount}
+                  </span>
+                )}
+                {/* Unread dot — only when unread and no pending mentions */}
+                {mentionCount === 0 && isUnread && !isActive && (
+                  <span className="ml-auto shrink-0 w-2 h-2 rounded-full bg-foreground" />
+                )}
+              </>
+            )}
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          {canManageChannels && (
             <>
-              <span className="truncate flex-1">{channel.name}</span>
-              {/* Unread dot — only visible when unread and not active */}
-              {isUnread && !isActive && (
-                <span className="ml-auto shrink-0 w-2 h-2 rounded-full bg-foreground" />
-              )}
+              <ContextMenuItem onClick={onOpenSettings} className="gap-2">
+                <Settings className="w-4 h-4" />
+                {t('channelSidebar.editChannel')}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
             </>
           )}
-        </button>
+          <ContextMenuItem
+            onClick={() => { void navigator.clipboard.writeText(String(channel.id)) }}
+            className="gap-2"
+          >
+            <Copy className="w-4 h-4" />
+            {t('channelSidebar.copyChannelId')}
+          </ContextMenuItem>
+          {canManageChannels && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onClick={() => onDelete(channel)}
+                className="text-destructive focus:text-destructive gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                {t('channelSidebar.deleteChannel')}
+              </ContextMenuItem>
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {/* Voice channel users */}
+      {hasVoiceUsers && resolvedVoiceUsers && (
+        <div className="ml-6 mt-0.5 space-y-0.5">
+          {resolvedVoiceUsers.map((user) => (
+            <VoiceChannelUserItem
+              key={user.userId}
+              user={user}
+              serverId={serverId}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Separate component for voice channel user with context menu
+function VoiceChannelUserItem({
+  user,
+  serverId,
+}: {
+  user: { userId: string; username: string; avatarUrl?: string; muted?: boolean; deafened?: boolean }
+  serverId: string
+}) {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const openUserProfile = useUiStore((s) => s.openUserProfile)
+  const currentUser = useAuthStore((s) => s.user)
+  const peerVolume = useVoiceStore((s) => s.peers[user.userId]?.volume ?? 100)
+  const peerSpeaking = useVoiceStore((s) => s.peers[user.userId]?.speaking ?? false)
+  const localSpeaking = useVoiceStore((s) => s.localSpeaking)
+  const lastPosRef = useRef({ x: 0, y: 0 })
+  const isCurrentUser = currentUser?.id !== undefined && String(currentUser.id) === user.userId
+  const isSpeaking = isCurrentUser ? localSpeaking : peerSpeaking
+
+  async function handleMessage() {
+    try {
+      const res = await userApi.userMeFriendsUserIdGet({ userId: user.userId })
+      await queryClient.invalidateQueries({ queryKey: ['dm-channels'] })
+      if (res.data.id !== undefined) navigate(`/app/@me/${String(res.data.id)}`)
+    } catch {
+      toast.error(t('memberList.dmFailed'))
+    }
+  }
+
+  function handleVolumeChange(value: number[]) {
+    const newVolume = value[0]
+    setPeerVolume(user.userId, newVolume)
+  }
+
+  function handleContextMenu(e: React.MouseEvent) {
+    lastPosRef.current = { x: e.clientX, y: e.clientY }
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          onContextMenu={handleContextMenu}
+          className="flex items-center gap-2 px-2 py-1 rounded text-sm text-muted-foreground hover:text-foreground hover:bg-accent/30 cursor-pointer"
+        >
+          {/* Avatar wrapper — ring is outside overflow-hidden */}
+          <div className={cn(
+            'relative shrink-0 rounded-full transition-colors',
+            isSpeaking && 'ring-2 ring-green-500 ring-offset-1 ring-offset-sidebar',
+          )}>
+            <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center overflow-hidden">
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-[10px] font-medium">{user.username.charAt(0).toUpperCase()}</span>
+              )}
+            </div>
+          </div>
+          <span className="truncate text-xs flex-1">
+            {user.username}
+          </span>
+          {/* Mute/Deafen icons on the right side */}
+          <div className="flex items-center gap-1 shrink-0">
+            {user.muted && <MicOff className="w-3 h-3 text-destructive" />}
+            {user.deafened && <HeadphoneOff className="w-3 h-3 text-destructive" />}
+          </div>
+        </div>
       </ContextMenuTrigger>
+
       <ContextMenuContent>
-        <ContextMenuItem onClick={onOpenSettings} className="gap-2">
-          <Settings className="w-4 h-4" />
-          {t('channelSidebar.editChannel')}
-        </ContextMenuItem>
+        {/* View Profile */}
         <ContextMenuItem
-          onClick={() => { void navigator.clipboard.writeText(String(channel.id)) }}
+          onClick={() => openUserProfile(
+            user.userId,
+            serverId,
+            lastPosRef.current.x,
+            lastPosRef.current.y,
+            user.username,
+          )}
+          className="gap-2"
+        >
+          <User className="w-4 h-4" />
+          {t('memberList.viewProfile')}
+        </ContextMenuItem>
+
+        {/* Message - only show for other users */}
+        {!isCurrentUser && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={() => void handleMessage()} className="gap-2">
+              <MessageSquare className="w-4 h-4" />
+              {t('memberList.message')}
+            </ContextMenuItem>
+          </>
+        )}
+
+        {/* Volume slider - only show for other users */}
+        {!isCurrentUser && (
+          <>
+            <ContextMenuSeparator />
+            <div className="px-2 py-1.5 min-w-[160px]">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs text-muted-foreground">{t('channelSidebar.volume')}</span>
+                <span className="text-xs font-medium">{peerVolume}%</span>
+              </div>
+              <Slider
+                value={[peerVolume]}
+                onValueChange={handleVolumeChange}
+                min={0}
+                max={200}
+                step={5}
+                className="w-full"
+              />
+            </div>
+          </>
+        )}
+
+        <ContextMenuItem
+          onClick={() => { void navigator.clipboard.writeText(user.userId) }}
           className="gap-2"
         >
           <Copy className="w-4 h-4" />
-          {t('channelSidebar.copyChannelId')}
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem
-          onClick={() => onDelete(channel)}
-          className="text-destructive focus:text-destructive gap-2"
-        >
-          <Trash2 className="w-4 h-4" />
-          {t('channelSidebar.deleteChannel')}
+          {t('memberList.copyUserId')}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

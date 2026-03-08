@@ -34,7 +34,8 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useTranslation } from 'react-i18next'
-import { userApi } from '@/api/client'
+import { userApi, guildApi, rolesApi } from '@/api/client'
+import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -61,8 +62,11 @@ import { Input } from '@/components/ui/input'
 import { useUiStore } from '@/stores/uiStore'
 import { useFolderStore, type GuildFolder } from '@/stores/folderStore'
 import { useUnreadStore } from '@/stores/unreadStore'
+import { useMentionStore } from '@/stores/mentionStore'
 import { cn } from '@/lib/utils'
 import type { DtoGuild } from '@/types'
+import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
+import type { DtoRole, DtoMember } from '@/client'
 
 // ── Detect if a dragged guild is overlapping an icon enough to "merge" ────────
 // Returns true when the dragged item's centre is within ±20% of the target's
@@ -204,20 +208,25 @@ function computeFolderTokens(color: number): React.CSSProperties {
 }
 
 // ── Left-edge unread pill (shared by guild icons and folder buttons) ──────────
-// Pill is centred on the left edge of its parent: left-0 -translate-x-1/2
+// Pill is centred on the left edge of its parent: left-0 -translate-x-1/2.
+// Pass leftClass to override 'left-0' when the parent is offset from the
+// sidebar wall (e.g. guild icons inside a folder panel).
 function UnreadPill({
   isActive,
   isUnread,
   groupClass = 'group/guild',
+  leftClass = 'left-0',
 }: {
   isActive: boolean
   isUnread: boolean
   groupClass?: string
+  leftClass?: string
 }) {
   return (
     <span
       className={cn(
-        'pointer-events-none absolute left-0 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2',
+        'pointer-events-none absolute top-1/2 z-10 -translate-x-1/2 -translate-y-1/2',
+        leftClass,
         'w-1 rounded-full bg-white shadow-[0_0_0_2px_var(--color-sidebar)]',
         'transition-all duration-150',
         isActive
@@ -236,7 +245,7 @@ function MiniGuildIcon({ guild, isUnread }: { guild: DtoGuild; isUnread?: boolea
     <div
       className={cn(
         'w-4 h-4 squircle overflow-hidden flex items-center justify-center text-[7px] font-bold text-white shrink-0 border',
-        isUnread ? 'border-primary bg-primary/10' : 'border-transparent bg-black/20',
+        'border-transparent bg-black/20',
       )}
     >
       {guild.icon?.url ? (
@@ -266,12 +275,8 @@ function FolderDragPreview({ folder, guilds }: { folder?: GuildFolder; guilds: D
   const tokens = computeFolderTokens(folder.color)
   return (
     <div
-      className="w-12 h-12 squircle border flex items-center justify-center opacity-90 shadow-2xl"
-      style={{
-        ...tokens,
-        backgroundColor: 'var(--fc-collapsed-bg)',
-        borderColor: 'var(--fc-collapsed-border)',
-      }}
+      className="w-12 h-12 squircle flex items-center justify-center opacity-90 shadow-2xl"
+      style={{ ...tokens, backgroundColor: 'var(--fc-collapsed-bg)' }}
     >
       <div className="grid grid-cols-2 gap-[3px]">
         {guilds.slice(0, 4).map((g) => (
@@ -399,6 +404,8 @@ interface SortableGuildIconProps {
   onNewFolder: () => void
   onAddToFolder: (folderId: string) => void
   folders: GuildFolder[]
+  canManageServer: boolean
+  isOwner: boolean
 }
 
 function SortableGuildIcon({
@@ -414,6 +421,8 @@ function SortableGuildIcon({
   onNewFolder,
   onAddToFolder,
   folders,
+  canManageServer,
+  isOwner,
 }: SortableGuildIconProps) {
   const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -421,6 +430,7 @@ function SortableGuildIcon({
   })
   const guildId = String(guild.id)
   const isUnread = useUnreadStore((s) => s.isGuildUnread(guildId))
+  const mentionCount = useMentionStore((s) => s.getGuildMentionCount(guildId))
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -429,7 +439,7 @@ function SortableGuildIcon({
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="relative flex items-center justify-center group/guild">
+    <div ref={setNodeRef} style={style} className="relative flex items-center justify-center group/guild w-full">
       {dropBefore && <DropBar position="before" />}
       {dropAfter && <DropBar position="after" />}
       <UnreadPill isActive={isActive} isUnread={isUnread} groupClass="group/guild" />
@@ -437,37 +447,45 @@ function SortableGuildIcon({
         <Tooltip>
           <ContextMenuTrigger asChild>
             <TooltipTrigger asChild>
-              <button
-                {...attributes}
-                {...listeners}
-                onClick={onNavigate}
-                className={cn(
-                  'w-12 h-12 transition-all overflow-hidden shrink-0 squircle',
-                  isMergeTarget && 'ring-2 ring-primary scale-110',
-                )}
-              >
-                <Avatar
+              <div className="relative w-12 h-12 shrink-0">
+                <button
+                  {...attributes}
+                  {...listeners}
+                  onClick={onNavigate}
                   className={cn(
-                    'w-12 h-12 squircle rounded-none',
-                    isActive && 'ring-2 ring-primary ring-offset-2 ring-offset-sidebar',
+                    'w-12 h-12 transition-all squircle overflow-hidden',
+                    isMergeTarget && 'scale-110 shadow-[inset_0_0_0_3px_hsl(var(--primary))]',
                   )}
                 >
-                  <AvatarImage src={guild.icon?.url} alt={guild.name ?? ''} className="object-cover" />
-                  <AvatarFallback className={cn('rounded-none', isActive && 'bg-primary text-primary-foreground')}>
-                    {(guild.name ?? '?').charAt(0).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-              </button>
+                  {guild.icon?.url ? (
+                    <img src={guild.icon.url} alt={guild.name ?? ''} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="w-full h-full flex items-center justify-center font-bold text-muted-foreground bg-muted">
+                      {(guild.name ?? '?').charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </button>
+                {/* Badge — outside the squircle mask so it isn't clipped */}
+                {mentionCount > 0 ? (
+                  <span className="absolute -bottom-1 -right-1 z-10 min-w-[1.125rem] h-[1.125rem] rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center px-1 leading-none ring-2 ring-sidebar pointer-events-none">
+                    {mentionCount > 99 ? '99+' : mentionCount}
+                  </span>
+                ) : isUnread ? (
+                  <span className="absolute -bottom-0.5 -right-0.5 z-10 w-3 h-3 rounded-full bg-white ring-2 ring-sidebar pointer-events-none" />
+                ) : null}
+              </div>
             </TooltipTrigger>
           </ContextMenuTrigger>
           <TooltipContent side="right">{guild.name}</TooltipContent>
         </Tooltip>
 
         <ContextMenuContent>
-          <ContextMenuItem onClick={onOpenSettings} className="gap-2">
-            <Settings className="w-4 h-4" />
-            {t('serverSidebar.serverSettings')}
-          </ContextMenuItem>
+          {canManageServer && (
+            <ContextMenuItem onClick={onOpenSettings} className="gap-2">
+              <Settings className="w-4 h-4" />
+              {t('serverSidebar.serverSettings')}
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(guild.id)) }}
             className="gap-2"
@@ -475,34 +493,42 @@ function SortableGuildIcon({
             <Copy className="w-4 h-4" />
             {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onNewFolder} className="gap-2">
-            <FolderPlus className="w-4 h-4" />
-            {t('serverSidebar.newFolder')}
-          </ContextMenuItem>
-          {folders.length > 0 && (
-            <ContextMenuSub>
-              <ContextMenuSubTrigger className="gap-2">
+          {canManageServer && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onNewFolder} className="gap-2">
                 <FolderPlus className="w-4 h-4" />
-                {t('serverSidebar.addToFolder')}
-              </ContextMenuSubTrigger>
-              <ContextMenuSubContent>
-                {folders.map((f) => (
-                  <ContextMenuItem key={f.id} onClick={() => onAddToFolder(f.id)}>
-                    {f.name || t('serverSidebar.folderNameDefault')}
-                  </ContextMenuItem>
-                ))}
-              </ContextMenuSubContent>
-            </ContextMenuSub>
+                {t('serverSidebar.newFolder')}
+              </ContextMenuItem>
+              {folders.length > 0 && (
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger className="gap-2">
+                    <FolderPlus className="w-4 h-4" />
+                    {t('serverSidebar.addToFolder')}
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent>
+                    {folders.map((f) => (
+                      <ContextMenuItem key={f.id} onClick={() => onAddToFolder(f.id)}>
+                        {f.name || t('serverSidebar.folderNameDefault')}
+                      </ContextMenuItem>
+                    ))}
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+              )}
+            </>
           )}
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={onLeave}
-            className="text-destructive focus:text-destructive gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            {t('serverSidebar.leaveServer')}
-          </ContextMenuItem>
+          {!isOwner && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onClick={onLeave}
+                className="text-destructive focus:text-destructive gap-2"
+              >
+                <LogOut className="w-4 h-4" />
+                {t('serverSidebar.leaveServer')}
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
     </div>
@@ -520,6 +546,8 @@ interface SortableGuildInPanelProps {
   onServerSettings: () => void
   onLeave: () => void
   onRemoveFromFolder: () => void
+  canManageServer: boolean
+  isOwner: boolean
 }
 
 function SortableGuildInPanel({
@@ -532,12 +560,15 @@ function SortableGuildInPanel({
   onServerSettings,
   onLeave,
   onRemoveFromFolder,
+  canManageServer,
+  isOwner,
 }: SortableGuildInPanelProps) {
   const { t } = useTranslation()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: itemId,
   })
   const isUnread = useUnreadStore((s) => s.isGuildUnread(String(guild.id)))
+  const mentionCount = useMentionStore((s) => s.getGuildMentionCount(String(guild.id)))
 
   const dndStyle: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -549,49 +580,51 @@ function SortableGuildInPanel({
     <div
       ref={setNodeRef}
       style={dndStyle}
-      className="relative flex items-center justify-center group/guild"
+      className="relative flex items-center justify-center group/guild w-full"
     >
       {dropBefore && <DropBar position="before" />}
       {dropAfter && <DropBar position="after" />}
-      <UnreadPill isActive={isActive} isUnread={isUnread} groupClass="group/guild" />
+      <UnreadPill isActive={isActive} isUnread={isUnread} groupClass="group/guild" leftClass="left-[-14px]" />
       <ContextMenu>
         <Tooltip>
           <ContextMenuTrigger asChild>
             <TooltipTrigger asChild>
-              <button
-                {...attributes}
-                {...listeners}
-                onClick={onNavigate}
-                className={cn(
-                  'w-10 h-10 transition-all overflow-hidden shrink-0 squircle',
-                )}
-              >
-                <Avatar
-                  className={cn(
-                    'w-10 h-10 squircle rounded-none',
-                    isActive && 'ring-2 ring-primary ring-offset-2 ring-offset-sidebar',
-                  )}
+              <div className="relative w-10 h-10 shrink-0">
+                <button
+                  {...attributes}
+                  {...listeners}
+                  onClick={onNavigate}
+                  className="w-10 h-10 transition-all squircle overflow-hidden"
                 >
-                  <AvatarImage
-                    src={guild.icon?.url}
-                    alt={guild.name ?? ''}
-                    className="object-cover"
-                  />
-                  <AvatarFallback className={cn('rounded-none', isActive && 'bg-primary text-primary-foreground')}>
-                    {(guild.name ?? '?').charAt(0).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-              </button>
+                  {guild.icon?.url ? (
+                    <img src={guild.icon.url} alt={guild.name ?? ''} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="w-full h-full flex items-center justify-center font-bold text-muted-foreground bg-muted text-sm">
+                      {(guild.name ?? '?').charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </button>
+                {/* Badge — outside the squircle mask so it isn't clipped */}
+                {mentionCount > 0 ? (
+                  <span className="absolute -bottom-1 -right-1 z-10 min-w-[1.125rem] h-[1.125rem] rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center px-1 leading-none ring-2 ring-sidebar pointer-events-none">
+                    {mentionCount > 99 ? '99+' : mentionCount}
+                  </span>
+                ) : isUnread ? (
+                  <span className="absolute -bottom-0.5 -right-0.5 z-10 w-3 h-3 rounded-full bg-white ring-2 ring-sidebar pointer-events-none" />
+                ) : null}
+              </div>
             </TooltipTrigger>
           </ContextMenuTrigger>
           <TooltipContent side="right">{guild.name}</TooltipContent>
         </Tooltip>
 
         <ContextMenuContent>
-          <ContextMenuItem onClick={onServerSettings} className="gap-2">
-            <Settings className="w-4 h-4" />
-            {t('serverSidebar.serverSettings')}
-          </ContextMenuItem>
+          {canManageServer && (
+            <ContextMenuItem onClick={onServerSettings} className="gap-2">
+              <Settings className="w-4 h-4" />
+              {t('serverSidebar.serverSettings')}
+            </ContextMenuItem>
+          )}
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(guild.id)) }}
             className="gap-2"
@@ -599,19 +632,27 @@ function SortableGuildInPanel({
             <Copy className="w-4 h-4" />
             {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onRemoveFromFolder} className="gap-2">
-            <FolderMinus className="w-4 h-4" />
-            {t('serverSidebar.removeFromFolder')}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem
-            onClick={onLeave}
-            className="text-destructive focus:text-destructive gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            {t('serverSidebar.leaveServer')}
-          </ContextMenuItem>
+          {canManageServer && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onRemoveFromFolder} className="gap-2">
+                <FolderMinus className="w-4 h-4" />
+                {t('serverSidebar.removeFromFolder')}
+              </ContextMenuItem>
+            </>
+          )}
+          {!isOwner && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onClick={onLeave}
+                className="text-destructive focus:text-destructive gap-2"
+              >
+                <LogOut className="w-4 h-4" />
+                {t('serverSidebar.leaveServer')}
+              </ContextMenuItem>
+            </>
+          )}
         </ContextMenuContent>
       </ContextMenu>
     </div>
@@ -634,6 +675,8 @@ interface SortableFolderItemProps {
   onGuildSettings: (guildId: string) => void
   onLeaveGuild: (guild: DtoGuild) => void
   onRemoveGuildFromFolder: (guildId: string) => void
+  canManageServerMap: Map<string, boolean>
+  isOwnerMap: Map<string, boolean>
 }
 
 function SortableFolderItem({
@@ -651,6 +694,8 @@ function SortableFolderItem({
   onGuildSettings,
   onLeaveGuild,
   onRemoveGuildFromFolder,
+  canManageServerMap,
+  isOwnerMap,
 }: SortableFolderItemProps) {
   const { t } = useTranslation()
   const { toggleCollapse } = useFolderStore()
@@ -684,7 +729,7 @@ function SortableFolderItem({
       <div
         ref={setNodeRef}
         style={{ ...dndStyle, ...tokens }}
-        className="relative flex items-center justify-center group/folder"
+        className="relative flex items-center justify-center group/folder w-full"
       >
         {dropBefore && <DropBar position="before" />}
         {dropAfter && <DropBar position="after" />}
@@ -698,16 +743,11 @@ function SortableFolderItem({
                   {...listeners}
                   onClick={() => toggleCollapse(folder.id)}
                   className={cn(
-                    'w-12 h-12 squircle border flex items-center justify-center',
+                    'w-12 h-12 squircle flex items-center justify-center',
                     'transition-all shrink-0 hover:brightness-110 active:scale-95',
-                    isDragTarget && 'ring-2 ring-primary scale-110',
+                    isDragTarget && 'scale-110 shadow-[inset_0_0_0_3px_hsl(var(--primary))]',
                   )}
-                  style={{
-                    backgroundColor: 'var(--fc-collapsed-bg)',
-                    borderColor: (isUnread || isActiveInFolder)
-                      ? 'var(--color-primary)'
-                      : 'var(--fc-collapsed-border)',
-                  }}
+                  style={{ backgroundColor: 'var(--fc-collapsed-bg)' }}
                 >
                   {/* 2×2 mini icon grid */}
                   <div className="grid grid-cols-2 gap-[3px]">
@@ -736,52 +776,46 @@ function SortableFolderItem({
     <div
       ref={setNodeRef}
       style={{ ...dndStyle, ...tokens }}
-      className="relative flex flex-col items-center gap-1.5 group/folder"
+      className="relative flex flex-col items-center gap-1.5 group/folder w-full"
     >
       {dropBefore && <DropBar position="before" />}
       {dropAfter && <DropBar position="after" />}
       {/* Folder header button — draggable even when expanded */}
-      <div className="relative flex items-center justify-center">
-        <UnreadPill isActive={isActiveInFolder} isUnread={isUnread} groupClass="group/folder" />
-        <ContextMenu>
-          <Tooltip>
-            <ContextMenuTrigger asChild>
-              <TooltipTrigger asChild>
-                <button
-                  {...attributes}
-                  {...listeners}
-                  onClick={() => toggleCollapse(folder.id)}
-                  aria-label={`Collapse ${folder.name || 'folder'}`}
-                  className={cn(
-                    'w-12 h-12 squircle border flex items-center justify-center',
-                    'transition-all shrink-0 hover:brightness-110 active:scale-95',
-                    isDragTarget && 'ring-2 ring-primary',
-                  )}
-                  style={{
-                    backgroundColor: 'var(--fc-collapsed-bg)',
-                    borderColor: 'var(--fc-collapsed-border)',
-                  }}
-                >
-                  <Folder className="w-5 h-5 opacity-70 text-white" />
-                </button>
-              </TooltipTrigger>
-            </ContextMenuTrigger>
-            <TooltipContent side="right">{folder.name || t('serverSidebar.folderNameDefault')}</TooltipContent>
-          </Tooltip>
-          <ContextMenuContent>
-            <FolderContextItems onEdit={onEditFolder} onDissolve={onDissolveFolder} />
-          </ContextMenuContent>
-        </ContextMenu>
-      </div>
-
-      {/* Expanded panel — rounded container with guild icons inside */}
+      {/* Single background card: folder icon + guild icons */}
       <div
-        className="flex flex-col items-center gap-2 rounded-2xl border p-2"
-        style={{
-          borderColor: 'var(--fc-expanded-border)',
-          backgroundColor: 'var(--fc-expanded-bg)',
-        }}
+        className="flex flex-col items-center gap-2 rounded-2xl p-2"
+        style={{ backgroundColor: 'var(--fc-expanded-bg)' }}
       >
+        {/* Folder header — drag handle + collapse toggle */}
+        <div className="relative">
+          <UnreadPill isActive={isActiveInFolder} isUnread={isUnread} groupClass="group/folder" leftClass="left-[-14px]" />
+          <ContextMenu>
+            <Tooltip>
+              <ContextMenuTrigger asChild>
+                <TooltipTrigger asChild>
+                  <button
+                    {...attributes}
+                    {...listeners}
+                    onClick={() => toggleCollapse(folder.id)}
+                    aria-label={`Collapse ${folder.name || 'folder'}`}
+                    className={cn(
+                      'w-10 h-10 squircle flex items-center justify-center',
+                      'transition-all shrink-0 hover:brightness-110 active:scale-95',
+                      isDragTarget && 'shadow-[inset_0_0_0_3px_hsl(var(--primary))]',
+                    )}
+                  >
+                    <Folder className="w-5 h-5 opacity-70 text-white" />
+                  </button>
+                </TooltipTrigger>
+              </ContextMenuTrigger>
+              <TooltipContent side="right">{folder.name || t('serverSidebar.folderNameDefault')}</TooltipContent>
+            </Tooltip>
+            <ContextMenuContent>
+              <FolderContextItems onEdit={onEditFolder} onDissolve={onDissolveFolder} />
+            </ContextMenuContent>
+          </ContextMenu>
+        </div>
+
         <SortableContext items={folderGuildItemIds} strategy={verticalListSortingStrategy}>
           {guildsInFolder.map((guild) => {
             const guildId = String(guild.id)
@@ -798,6 +832,8 @@ function SortableFolderItem({
                 onServerSettings={() => onGuildSettings(guildId)}
                 onLeave={() => onLeaveGuild(guild)}
                 onRemoveFromFolder={() => onRemoveGuildFromFolder(guildId)}
+                canManageServer={canManageServerMap.get(guildId) ?? false}
+                isOwner={isOwnerMap.get(guildId) ?? false}
               />
             )
           })}
@@ -861,6 +897,94 @@ export default function ServerSidebar() {
     queryKey: ['guilds'],
     queryFn: () => userApi.userMeGuildsGet().then((r) => r.data ?? []),
   })
+
+  // Current user for permission checks
+  const currentUser = useAuthStore((s) => s.user)
+
+  // Fetch members and roles for each guild to check permissions
+  const { data: membersMap } = useQuery({
+    queryKey: ['members', 'all'],
+    queryFn: async () => {
+      if (!guilds) return new Map<string, DtoMember[]>()
+      const results = new Map<string, DtoMember[]>()
+      await Promise.all(
+        guilds.map(async (g) => {
+          try {
+            const members = await guildApi.guildGuildIdMembersGet({ guildId: String(g.id) })
+            results.set(String(g.id), members.data ?? [])
+          } catch {
+            results.set(String(g.id), [])
+          }
+        }),
+      )
+      return results
+    },
+    enabled: !!guilds && guilds.length > 0,
+    staleTime: 30_000,
+  })
+
+  const { data: rolesMap } = useQuery({
+    queryKey: ['roles', 'all'],
+    queryFn: async () => {
+      if (!guilds) return new Map<string, DtoRole[]>()
+      const results = new Map<string, DtoRole[]>()
+      await Promise.all(
+        guilds.map(async (g) => {
+          try {
+            const roles = await rolesApi.guildGuildIdRolesGet({ guildId: String(g.id) })
+            results.set(String(g.id), roles.data ?? [])
+          } catch {
+            results.set(String(g.id), [])
+          }
+        }),
+      )
+      return results
+    },
+    enabled: !!guilds && guilds.length > 0,
+    staleTime: 60_000,
+  })
+
+  // Compute canManageServer for each guild
+  const canManageServerMap = useMemo(() => {
+    const map = new Map<string, boolean>()
+    if (!guilds || !membersMap || !rolesMap || !currentUser) return map
+
+    for (const guild of guilds) {
+      const guildId = String(guild.id)
+      const members = membersMap.get(guildId) ?? []
+      const roles = rolesMap.get(guildId) ?? []
+      const member = members.find((m) => m.user?.id === currentUser.id)
+      
+      // Check if user is the owner
+      const isOwner = guild.owner != null && String(guild.owner) === String(currentUser.id)
+      
+      if (member && roles.length > 0) {
+        const effectivePermissions = calculateEffectivePermissions(member as DtoMember, roles as DtoRole[])
+        const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
+        map.set(
+          guildId,
+          isOwner || hasPermission(effectivePermissions, PermissionBits.MANAGE_SERVER) || isAdmin,
+        )
+      } else {
+        // Owner always has permission even if not a member
+        map.set(guildId, isOwner)
+      }
+    }
+    return map
+  }, [guilds, membersMap, rolesMap, currentUser])
+
+  // Compute isOwner for each guild
+  const isOwnerMap = useMemo(() => {
+    const map = new Map<string, boolean>()
+    if (!guilds || !currentUser) return map
+
+    for (const guild of guilds) {
+      const guildId = String(guild.id)
+      const isOwner = guild.owner != null && String(guild.owner) === String(currentUser.id)
+      map.set(guildId, isOwner)
+    }
+    return map
+  }, [guilds, currentUser])
 
   // Sync itemOrder when guild list changes OR when settings have just been loaded.
   // The settingsVersion dep ensures syncGuilds re-fires after loadFromSettings
@@ -979,7 +1103,7 @@ export default function ServerSidebar() {
     const overStr = String(over.id)
 
     // ── Merge highlight ──────────────────────────────────────────────────────
-    // Only top-level guilds and folders can be merge targets (Discord behaviour).
+    // Only top-level guilds and folders can be merge targets.
     // Guilds inside folders (ifguild:) are NOT merge targets — they only
     // support reorder within the folder or extraction by dragging outside.
     const isGuildDrag = activeStr.startsWith('guild:') || activeStr.startsWith('ifguild:')
@@ -1203,6 +1327,8 @@ export default function ServerSidebar() {
                     onNewFolder={() => openCreateFolder(guildId)}
                     onAddToFolder={(fid) => addGuildToFolder(fid, guildId)}
                     folders={folders}
+                    canManageServer={canManageServerMap.get(guildId) ?? false}
+                    isOwner={isOwnerMap.get(guildId) ?? false}
                   />
                 )
               }
@@ -1232,6 +1358,8 @@ export default function ServerSidebar() {
                     onGuildSettings={(gid) => openServerSettings(gid)}
                     onLeaveGuild={(g) => setLeavingGuild(g)}
                     onRemoveGuildFromFolder={(gid) => removeGuildFromFolder(gid)}
+                    canManageServerMap={canManageServerMap}
+                    isOwnerMap={isOwnerMap}
                   />
                 )
               }

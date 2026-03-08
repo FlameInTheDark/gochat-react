@@ -3,7 +3,13 @@ import { useMessageStore } from '@/stores/messageStore'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { useUnreadStore } from '@/stores/unreadStore'
 import { useTypingStore } from '@/stores/typingStore'
+import { useMentionStore } from '@/stores/mentionStore'
 import { useReadStateStore } from '@/stores/readStateStore'
+import { useVoiceStore } from '@/stores/voiceStore'
+import { useAuthStore } from '@/stores/authStore'
+import { useEmojiStore } from '@/stores/emojiStore'
+import { playMentionSound } from '@/lib/sounds'
+import { axiosInstance } from '@/api/client'
 import type { DtoMessage } from '@/types'
 
 // Resolve the WebSocket URL lazily at connection time.
@@ -27,7 +33,12 @@ const _bigJsonStringify = JSONBig({ useNativeBigInt: true })
 const _bigJsonParse = JSONBig({ storeAsString: true })
 
 let socket: WebSocket | null = null
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+// Heartbeat is driven by a Web Worker so timer callbacks are NOT subject to the
+// ≥1 second throttle browsers apply to setInterval/setTimeout in background tabs.
+// Falls back to plain setInterval if workers are unavailable (e.g. strict CSP).
+let heartbeatWorker: Worker | null = null
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null  // fallback only
 
 // Reconnect state
 let currentToken: string | null = null
@@ -54,6 +65,25 @@ let lastEventId = 0
 // existing presence session, avoiding spurious offline→online transitions.
 let currentSessionId: string | null = null
 
+// True once the server has confirmed auth for the current socket (op:1 received).
+// Reset to false each time createSocket() opens a new socket. Used in onClose()
+// to distinguish auth failures (never got op:1) from normal network drops.
+let authSucceeded = false
+
+// Timestamp when the current socket's 'open' event fired.
+// A close before AUTH_QUICK_CLOSE_MS ms after open strongly indicates the
+// server rejected the token — trigger a proactive token refresh.
+let socketOpenTime: number | null = null
+const AUTH_QUICK_CLOSE_MS = 5_000
+
+// Set true by the browser 'offline' event; cleared by 'online'.
+// Suppresses reconnect attempts while there is no network path.
+let isNetworkOffline = false
+
+// Prevents concurrent refreshTokenAndReconnect calls (e.g. both visibilitychange
+// and onClose firing at the same time after a long background suspension).
+let isRefreshingToken = false
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // All outgoing messages that contain Snowflake IDs must go through sendJson so
@@ -65,13 +95,6 @@ function sendJson(data: unknown) {
   }
 }
 
-function clearHeartbeat() {
-  if (heartbeatTimer !== null) {
-    clearInterval(heartbeatTimer)
-    heartbeatTimer = null
-  }
-}
-
 function sendHeartbeat() {
   if (socket?.readyState === WebSocket.OPEN) {
     // op=2: Heartbeat — echo the last event ID we've processed.
@@ -80,9 +103,43 @@ function sendHeartbeat() {
   }
 }
 
+function getOrCreateHeartbeatWorker(): Worker | null {
+  if (heartbeatWorker) return heartbeatWorker
+  try {
+    heartbeatWorker = new Worker(
+      new URL('./heartbeatWorker', import.meta.url),
+      { type: 'module' },
+    )
+    heartbeatWorker.onmessage = () => sendHeartbeat()
+    heartbeatWorker.onerror = () => {
+      // Worker failed (e.g. strict CSP) — null out so fallback is used
+      heartbeatWorker = null
+    }
+    return heartbeatWorker
+  } catch {
+    return null
+  }
+}
+
+function clearHeartbeat() {
+  if (heartbeatWorker) {
+    heartbeatWorker.postMessage({ type: 'stop' })
+  }
+  if (heartbeatTimer !== null) {
+    clearInterval(heartbeatTimer)
+    heartbeatTimer = null
+  }
+}
+
 function startHeartbeat(intervalMs: number) {
   clearHeartbeat()
-  heartbeatTimer = setInterval(sendHeartbeat, intervalMs)
+  const worker = getOrCreateHeartbeatWorker()
+  if (worker) {
+    worker.postMessage({ type: 'start', intervalMs })
+  } else {
+    // Fallback: plain setInterval (may be throttled in background tabs)
+    heartbeatTimer = setInterval(sendHeartbeat, intervalMs)
+  }
 }
 
 function clearReconnectTimer() {
@@ -107,6 +164,43 @@ function scheduleReconnect() {
 
 function resetReconnectDelay() {
   reconnectDelay = 1_000
+}
+
+/**
+ * Validate (and silently refresh if expired) the access token via a lightweight
+ * HTTP probe, then reconnect the WebSocket with the fresh token.
+ *
+ * Called when:
+ *   • The server closed the socket before op:1 arrived (likely expired token)
+ *   • The tab becomes visible again after a background suspension
+ *   • The network comes back online
+ *
+ * The 401 interceptor on axiosInstance already handles the full
+ * access→refresh→retry cycle and updates authStore, so a single
+ * GET /user/me call is sufficient to ensure the token is live.
+ */
+async function refreshTokenAndReconnect() {
+  if (intentionalClose || !currentToken || isRefreshingToken) return
+  isRefreshingToken = true
+  try {
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    // The 401 interceptor will refresh the token if needed and retry.
+    // On success the store always holds the most recent valid token.
+    await axiosInstance.get(`${baseUrl}/user/me`)
+    const freshToken = useAuthStore.getState().token
+    if (!freshToken) return
+    currentToken = freshToken
+  } catch {
+    // Both access and refresh tokens are invalid.
+    // Logout clears authStore → useWebSocket observes token=null → calls disconnect().
+    useAuthStore.getState().logout()
+    return
+  } finally {
+    isRefreshingToken = false
+  }
+  if (!intentionalClose && currentToken) {
+    createSocket(currentToken)
+  }
 }
 
 // Re-apply all active subscriptions after a reconnect (called from hello handler)
@@ -179,6 +273,16 @@ interface WsTypingEvent {
   name?: string
 }
 
+// t=302: mention event — current user was @mentioned.
+//   d = { guild_id, channel_id, message_id, author_id, type }
+interface WsMentionEvent {
+  guild_id?: string | number
+  channel_id?: string | number
+  message_id?: string | number
+  author_id?: string | number
+  type?: number
+}
+
 // Presence dispatch payload — server sends as op:3 (not op:0)
 interface WsPresenceEvent {
   user_id?: string | number
@@ -186,6 +290,10 @@ interface WsPresenceEvent {
   custom_status_text?: string
   since?: number
   voice_channel_id?: string | number
+  mute?: boolean
+  deafen?: boolean
+  username?: string
+  avatar_url?: string
   client_status?: Record<string, string>
 }
 
@@ -223,6 +331,7 @@ function handleMessage(event: MessageEvent) {
   // Server sends {op:1, d:{heartbeat_interval, session_id}} after validating
   // the client's auth token.  Save the session_id for reconnect use.
   if (op === 1) {
+    authSucceeded = true   // auth confirmed — onClose will use normal backoff if it fires
     resetReconnectDelay()
     lastEventId = 0
     const hello = d as WsHelloData | undefined
@@ -246,6 +355,40 @@ function handleMessage(event: MessageEvent) {
       store.setPresence(uid, normalizeStatus(presence.status))
       // Always sync custom_status_text — empty string clears a previously set status
       store.setCustomStatus(uid, presence.custom_status_text ?? '')
+
+      // Sync mute/deafen state for users in voice channels
+      if (presence.voice_channel_id !== undefined) {
+        const voiceStore = useVoiceStore.getState()
+        const presenceStore = usePresenceStore.getState()
+        const currentUserId = useAuthStore.getState().user?.id
+        const channelId = String(presence.voice_channel_id)
+
+        // Track user in voice channel for sidebar display (including current user)
+        // Add/update user in voice channel with mute/deafen state
+        presenceStore.addUserToVoiceChannel(channelId, {
+          userId: uid,
+          username: presence.username ?? `User ${uid.slice(0, 6)}`,
+          avatarUrl: presence.avatar_url,
+          muted: presence.mute ?? false,
+          deafened: presence.deafen ?? false,
+        })
+
+        // Sync mute/deafen state for other users (not ourselves)
+        if (uid !== String(currentUserId ?? '')) {
+          voiceStore.setPeerMuted(uid, presence.mute ?? false)
+          voiceStore.setPeerDeafened(uid, presence.deafen ?? false)
+        }
+      } else {
+        // User left voice channel - remove from tracking only if they were in one
+        const presenceStore = usePresenceStore.getState()
+        const voiceUsers = presenceStore.voiceChannelUsers
+        const wasInAnyChannel = Object.values(voiceUsers).some((users) =>
+          users.some((u) => u.userId === uid)
+        )
+        if (wasInAnyChannel) {
+          presenceStore.removeUserFromAllVoiceChannels(uid)
+        }
+      }
     }
     return
   }
@@ -312,15 +455,31 @@ function handleMessage(event: MessageEvent) {
       if (te?.channel_id != null && te?.user_id != null) {
         const channelId = String(te.channel_id)
         const userId = String(te.user_id)
-        const name = te.username ?? te.user_name ?? te.name ?? userId
-        useTypingStore.getState().startTyping(channelId, userId, name)
+        // Skip own typing events — we don't want to show ourselves as "typing"
+        const me = useAuthStore.getState().user
+        if (me == null || String(me.id) !== userId) {
+          const name = te.username ?? te.user_name ?? te.name ?? userId
+          useTypingStore.getState().startTyping(channelId, userId, name)
+        }
       }
       window.dispatchEvent(new CustomEvent('ws:channel_typing', { detail: d }))
       return
     }
 
     // t=302: Mention — the current user was @mentioned
+    //   d = { guild_id, channel_id, message_id, author_id, type }
+    //   Delivered on user.{userId} topic so only the mentioned user receives it.
     if (t === 302) {
+      const mention = d as WsMentionEvent | undefined
+      if (mention?.guild_id != null && mention?.channel_id != null) {
+        const guildId = String(mention.guild_id)
+        const channelId = String(mention.channel_id)
+        // Only track & notify if user is NOT currently viewing that channel
+        if (!window.location.pathname.endsWith(`/${channelId}`)) {
+          useMentionStore.getState().addMention(guildId, channelId)
+          playMentionSound()
+        }
+      }
       window.dispatchEvent(new CustomEvent('ws:mention', { detail: d }))
       return
     }
@@ -389,6 +548,51 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
+    // ── Guild emoji events ───────────────────────────────────────────────────
+
+    // t=116: Guild Emoji Create — emoji upload finalized and ready
+    //   d = { emoji: { id, guild_id, name, animated } }
+    if (t === 116) {
+      const data = d as { emoji?: { id?: string; guild_id?: string; name?: string; animated?: boolean } } | undefined
+      if (data?.emoji?.id && data.emoji.guild_id && data.emoji.name) {
+        useEmojiStore.getState().addEmoji({
+          id: String(data.emoji.id),
+          guild_id: String(data.emoji.guild_id),
+          name: data.emoji.name,
+          animated: data.emoji.animated,
+        })
+      }
+      window.dispatchEvent(new CustomEvent('ws:emoji_create', { detail: d }))
+      return
+    }
+
+    // t=117: Guild Emoji Update — emoji renamed
+    //   d = { emoji: { id, guild_id, name, animated } }
+    if (t === 117) {
+      const data = d as { emoji?: { id?: string; guild_id?: string; name?: string; animated?: boolean } } | undefined
+      if (data?.emoji?.id && data.emoji.guild_id && data.emoji.name) {
+        useEmojiStore.getState().updateEmoji({
+          id: String(data.emoji.id),
+          guild_id: String(data.emoji.guild_id),
+          name: data.emoji.name,
+          animated: data.emoji.animated,
+        })
+      }
+      window.dispatchEvent(new CustomEvent('ws:emoji_update', { detail: d }))
+      return
+    }
+
+    // t=118: Guild Emoji Delete — emoji removed
+    //   d = { guild_id, emoji_id }
+    if (t === 118) {
+      const data = d as { guild_id?: string | number; emoji_id?: string | number } | undefined
+      if (data?.guild_id != null && data?.emoji_id != null) {
+        useEmojiStore.getState().removeEmoji(String(data.guild_id), String(data.emoji_id))
+      }
+      window.dispatchEvent(new CustomEvent('ws:emoji_delete', { detail: d }))
+      return
+    }
+
     // ── Guild member events ──────────────────────────────────────────────────
     // NOTE: t=200/201 are Guild Member events, NOT presence updates.
     //       Presence changes have no t field and are handled above.
@@ -427,12 +631,30 @@ function handleMessage(event: MessageEvent) {
 
     // t=205: Guild Member Join Voice
     if (t === 205) {
+      const eventData = d as { user_id?: string | number; channel_id?: string | number; username?: string; avatar_url?: string; mute?: boolean; deafen?: boolean } | undefined
+      if (eventData?.user_id !== undefined && eventData?.channel_id !== undefined) {
+        const userId = String(eventData.user_id)
+        const channelId = String(eventData.channel_id)
+        usePresenceStore.getState().addUserToVoiceChannel(channelId, {
+          userId,
+          username: eventData.username ?? `User ${userId.slice(0, 6)}`,
+          avatarUrl: eventData.avatar_url,
+          muted: eventData.mute ?? false,
+          deafened: eventData.deafen ?? false,
+        })
+      }
       window.dispatchEvent(new CustomEvent('ws:member_join_voice', { detail: d }))
       return
     }
 
     // t=206: Guild Member Leave Voice
     if (t === 206) {
+      const eventData = d as { user_id?: string | number; channel_id?: string | number } | undefined
+      if (eventData?.user_id !== undefined && eventData?.channel_id !== undefined) {
+        const userId = String(eventData.user_id)
+        const channelId = String(eventData.channel_id)
+        usePresenceStore.getState().removeUserFromVoiceChannel(channelId, userId)
+      }
       window.dispatchEvent(new CustomEvent('ws:member_leave_voice', { detail: d }))
       return
     }
@@ -440,6 +662,28 @@ function handleMessage(event: MessageEvent) {
     // t=208: Voice Region Changing (pre-rebind notification)
     if (t === 208) {
       window.dispatchEvent(new CustomEvent('ws:voice_region_changing', { detail: d }))
+      return
+    }
+
+    // t=209: Voice State Update — mute/deafen state changed for a user
+    if (t === 209) {
+      const voiceState = d as { user_id?: string | number; channel_id?: string | number; mute?: boolean; deafen?: boolean; username?: string; avatar_url?: string } | undefined
+      if (voiceState?.user_id !== undefined && voiceState?.channel_id !== undefined) {
+        const userId = String(voiceState.user_id)
+        const channelId = String(voiceState.channel_id)
+        // Update voice store for peer state
+        useVoiceStore.getState().setPeerMuted(userId, voiceState.mute ?? false)
+        useVoiceStore.getState().setPeerDeafened(userId, voiceState.deafen ?? false)
+        // Update presence store for sidebar display
+        usePresenceStore.getState().addUserToVoiceChannel(channelId, {
+          userId,
+          username: voiceState.username ?? `User ${userId.slice(0, 6)}`,
+          avatarUrl: voiceState.avatar_url,
+          muted: voiceState.mute ?? false,
+          deafened: voiceState.deafen ?? false,
+        })
+      }
+      window.dispatchEvent(new CustomEvent('ws:voice_state_update', { detail: d }))
       return
     }
 
@@ -514,6 +758,10 @@ function handleMessage(event: MessageEvent) {
 // ── Socket lifecycle ──────────────────────────────────────────────────────────
 
 function createSocket(token: string) {
+  // Reset auth-tracking state for the new socket
+  authSucceeded = false
+  socketOpenTime = null
+
   // Close any existing socket without triggering the reconnect path
   if (socket) {
     socket.removeEventListener('close', onClose)
@@ -526,6 +774,7 @@ function createSocket(token: string) {
   socket.addEventListener('message', handleMessage)
   socket.addEventListener('close', onClose)
   socket.addEventListener('open', () => {
+    socketOpenTime = Date.now()
     // Op 1: authenticate.  Include the previous session_id (if any) so the
     // server can reuse the presence session instead of publishing offline→online.
     const helloData: Record<string, unknown> = { token }
@@ -537,7 +786,70 @@ function createSocket(token: string) {
 function onClose() {
   clearHeartbeat()
   socket = null
+
+  const openTime = socketOpenTime
+  socketOpenTime = null
+
+  if (intentionalClose) return
+  if (isNetworkOffline) return  // 'online' event will trigger reconnect
+
+  if (!authSucceeded) {
+    // Socket closed before op:1 was received.
+    // A close within AUTH_QUICK_CLOSE_MS of the TCP open strongly indicates
+    // the server rejected the token (expired access token).
+    // For a slow close (server restart mid-handshake) fall through to normal backoff.
+    const wasQuickClose = openTime !== null && (Date.now() - openTime) < AUTH_QUICK_CLOSE_MS
+    if (wasQuickClose || openTime === null) {
+      // Likely auth failure — refresh the token then reconnect
+      void refreshTokenAndReconnect()
+      return
+    }
+  }
+
+  // Normal network-level disconnect — reconnect with exponential backoff
   scheduleReconnect()
+}
+
+// ── Browser connectivity & visibility recovery ────────────────────────────────
+//
+// These listeners are attached once at module-load time and remain active for
+// the lifetime of the page.  The intentionalClose / currentToken guards ensure
+// they are no-ops when the user is logged out.
+
+if (typeof window !== 'undefined') {
+  // Network went away — stop burning the reconnect backoff budget
+  window.addEventListener('offline', () => {
+    isNetworkOffline = true
+    clearReconnectTimer()
+    clearHeartbeat()
+    // Leave a live socket alone; it will close on its own and onClose will bail
+    // out because isNetworkOffline is true.
+  })
+
+  // Network restored — reconnect immediately with a validated token
+  window.addEventListener('online', () => {
+    isNetworkOffline = false
+    if (!intentionalClose && currentToken && socket?.readyState !== WebSocket.OPEN) {
+      clearReconnectTimer()
+      reconnectDelay = 1_000
+      void refreshTokenAndReconnect()
+    }
+  })
+
+  // Tab became visible — if the socket died while in the background, reconnect
+  // right away and validate the token (it may have expired during suspension)
+  document.addEventListener('visibilitychange', () => {
+    if (
+      !document.hidden &&
+      !intentionalClose &&
+      currentToken &&
+      socket?.readyState !== WebSocket.OPEN
+    ) {
+      clearReconnectTimer()
+      reconnectDelay = 1_000
+      void refreshTokenAndReconnect()
+    }
+  })
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -619,12 +931,6 @@ export function sendRaw(data: unknown) {
   }
 }
 
-// Notify the server that the current user is typing in a channel (op=4).
-// The caller is responsible for rate-limiting (e.g., once per 3 s).
-export function sendTyping(channelId: string) {
-  sendJson({ op: 4, d: { channel: BigInt(channelId) } })
-}
-
 // Legacy helper kept for backward compatibility (voice service etc.)
 export function subscribe(guildIds: string[], channelIds: string[]) {
   for (const id of guildIds) activeGuildSubs.add(id)
@@ -652,5 +958,11 @@ export function disconnect() {
     socket.removeEventListener('close', onClose)
     socket.close()
     socket = null
+  }
+  // Dispose the worker on logout so it doesn't linger after the user signs out.
+  // A new worker is created lazily on the next connect().
+  if (heartbeatWorker) {
+    heartbeatWorker.postMessage({ type: 'dispose' })
+    heartbeatWorker = null
   }
 }

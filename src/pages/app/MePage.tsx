@@ -88,11 +88,12 @@ function FriendList() {
   async function unfriend(user: DtoUser) {
     try {
       await userApi.userMeFriendsDelete({
-        request: { user_id: BigInt(String(user.id)) as unknown as number },
+        request: { user_id: user.id as number },
       })
       await queryClient.invalidateQueries({ queryKey: ['friends'] })
       toast.success(t('friends.unfriended', { name: user.name ?? 'user' }))
-    } catch {
+    } catch (e) {
+      console.error('Failed to unfriend:', e)
       toast.error(t('friends.unfriendFailed'))
     }
   }
@@ -147,11 +148,13 @@ function PendingRequests() {
   async function accept(user: DtoUser) {
     try {
       await userApi.userMeFriendsRequestsPost({
-        request: { user_id: BigInt(String(user.id)) as unknown as number },
+        request: { user_id: user.id as number },
       })
-      await queryClient.invalidateQueries({ queryKey: ['friend-requests', 'friends'] })
+      await queryClient.invalidateQueries({ queryKey: ['friend-requests'] })
+      await queryClient.invalidateQueries({ queryKey: ['friends'] })
       toast.success(t('friends.accepted', { name: user.name ?? 'user' }))
-    } catch {
+    } catch (e) {
+      console.error('Failed to accept friend request:', e)
       toast.error(t('friends.acceptFailed'))
     }
   }
@@ -159,11 +162,12 @@ function PendingRequests() {
   async function decline(user: DtoUser) {
     try {
       await userApi.userMeFriendsRequestsDelete({
-        request: { user_id: BigInt(String(user.id)) as unknown as number },
+        request: { user_id: user.id as number },
       })
       await queryClient.invalidateQueries({ queryKey: ['friend-requests'] })
       toast.success(t('friends.declined'))
-    } catch {
+    } catch (e) {
+      console.error('Failed to decline friend request:', e)
       toast.error(t('friends.declineFailed'))
     }
   }

@@ -57,7 +57,7 @@ src/
 ├── components/
 │   ├── ui/                # shadcn auto-generated — do not edit manually
 │   ├── layout/
-│   │   ├── AppShell.tsx   # Three-column Discord shell
+│   │   ├── AppShell.tsx   # Three-column chat shell
 │   │   ├── ServerSidebar.tsx
 │   │   ├── ChannelSidebar.tsx
 │   │   └── UserArea.tsx

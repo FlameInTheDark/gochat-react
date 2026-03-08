@@ -13,6 +13,9 @@ export interface Translation {
         creatingAccount: string
         alreadyHaveAccount: string
         registrationFailed: string
+        welcomeBack: string
+        openApp: string
+        switchAccount: string
     }
     app: {
         loading: string
@@ -53,6 +56,7 @@ export interface Translation {
         connected: string
         connected_plural: string
         clickToJoin: string
+        joinVoice: string
         you: string
     }
     settings: {
@@ -92,6 +96,10 @@ export interface Translation {
         echoCancellationDesc: string
         noiseSuppression: string
         noiseSuppressionDesc: string
+        noiseSuppressionEnabled: string
+        denoiserDefault: string
+        denoiserRnnoise: string
+        denoiserSpeex: string
         autoGainControl: string
         autoGainControlDesc: string
         inputMode: string
@@ -103,6 +111,10 @@ export interface Translation {
         shortcut: string
         pressAnyKey: string
         clickToSetKey: string
+        videoDevice: string
+        cameraPreview: string
+        testCamera: string
+        stopPreview: string
         resetToDefaults: string
         voiceSaved: string
         voiceFailed: string
@@ -197,6 +209,9 @@ export interface Translation {
         channels: string
         membersAndRoles: string
         role: string
+        typingOne: string
+        typingTwo: string
+        typingSeveral: string
     }
     search: {
         link: string
@@ -250,11 +265,15 @@ export interface Translation {
         deleteDesc: string
         editFailed: string
         deleteFailed: string
+        suppressEmbedsTitle: string
+        suppressEmbedsDesc: string
+        suppressEmbedsConfirm: string
         enterTo: string
         save: string
         escTo: string
         cancel: string
     }
+    joinMessages: string[]
     serverSidebar: {
         editFolder: string
         dissolveFolder: string
@@ -291,6 +310,21 @@ export interface Translation {
         deleteChannelTitle: string
         deleteCategoryDesc: string
         deleteChannelDesc: string
+        volume: string
+    }
+    voicePanel: {
+        connecting: string
+        routing: string
+        connected: string
+        disconnected: string
+        ping: string
+        mute: string
+        unmute: string
+        deafen: string
+        undeafen: string
+        disconnect: string
+        cameraOn: string
+        cameraOff: string
     }
     userProfile: {
         memberSince: string
@@ -299,6 +333,7 @@ export interface Translation {
         noRoles: string
         noServerRoles: string
         sendMessage: string
+        addFriend: string
     }
     common: {
         save: string

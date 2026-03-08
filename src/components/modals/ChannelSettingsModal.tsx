@@ -7,8 +7,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { useUiStore } from '@/stores/uiStore'
-import { guildApi, rolesApi } from '@/api/client'
-import type { DtoRole, GuildChannelRolePermission } from '@/client'
+import { guildApi, rolesApi, voiceApi } from '@/api/client'
+import type { DtoRole, GuildChannelRolePermission, VoiceRegion } from '@/client'
 import { ChannelType } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -166,9 +166,10 @@ export default function ChannelSettingsModal() {
   const [section, setSection] = useState<Section>('overview')
 
   // Overview
-  const [chanName,  setChanName]  = useState('')
-  const [chanTopic, setChanTopic] = useState('')
-  const [isPrivate, setIsPrivate] = useState(false)
+  const [chanName,     setChanName]     = useState('')
+  const [chanTopic,    setChanTopic]    = useState('')
+  const [isPrivate,    setIsPrivate]    = useState(false)
+  const [voiceRegion,  setVoiceRegion]  = useState('auto')
   const [savingOverview, setSavingOverview] = useState(false)
 
   // Permissions — left panel: selected role; right panel: per-permission states
@@ -177,6 +178,9 @@ export default function ChannelSettingsModal() {
   const [editAccept, setEditAccept] = useState(0)
   const [editDeny,   setEditDeny]   = useState(0)
   const [savingPerms, setSavingPerms] = useState(false)
+  // Add role control
+  const [addRoleSelectId, setAddRoleSelectId] = useState<string>('')
+  const [addingRole, setAddingRole] = useState(false)
 
   // ── Queries ───────────────────────────────────────────────────────────────
 
@@ -205,6 +209,15 @@ export default function ChannelSettingsModal() {
     staleTime: 30_000,
   })
 
+  const isVoice = channel?.type === ChannelType.ChannelTypeGuildVoice
+
+  const { data: voiceRegions = [] } = useQuery<VoiceRegion[]>({
+    queryKey: ['voice-regions'],
+    queryFn: () => voiceApi.voiceRegionsGet().then((r) => r.data?.regions ?? []),
+    enabled: open && isVoice,
+    staleTime: 5 * 60_000,
+  })
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -212,6 +225,7 @@ export default function ChannelSettingsModal() {
       setChanName(channel.name ?? '')
       setChanTopic(channel.topic ?? '')
       setIsPrivate(channel.private ?? false)
+      setVoiceRegion(channel.voice_region?.trim() || 'auto')
     }
   }, [open, channel])
 
@@ -220,20 +234,20 @@ export default function ChannelSettingsModal() {
     if (open) {
       setSection('overview')
       setSelectedRoleId(null)
+      setAddRoleSelectId('')
     }
   }, [channelId, open])
 
-  // Auto-select first role when entering permissions section
+  // Auto-select first role with an override when entering permissions section
   useEffect(() => {
-    if (section === 'permissions' && roles.length > 0 && selectedRoleId === null) {
-      const first = roles[0]
-      const rid = String(first.id)
+    if (section === 'permissions' && overrides.length > 0 && selectedRoleId === null) {
+      const firstOv = overrides[0]
+      const rid = String(firstOv.role_id)
       setSelectedRoleId(rid)
-      const ov = overrides.find((o) => String(o.role_id) === rid)
-      setEditAccept(Number(ov?.accept ?? 0))
-      setEditDeny(Number(ov?.deny ?? 0))
+      setEditAccept(Number(firstOv.accept ?? 0))
+      setEditDeny(Number(firstOv.deny ?? 0))
     }
-  }, [section, roles, selectedRoleId, overrides])
+  }, [section, overrides, selectedRoleId])
 
   // When overrides reload, refresh the editor for the selected role
   useEffect(() => {
@@ -246,7 +260,10 @@ export default function ChannelSettingsModal() {
 
   // Reset roles selection when leaving permissions section
   useEffect(() => {
-    if (section !== 'permissions') setSelectedRoleId(null)
+    if (section !== 'permissions') {
+      setSelectedRoleId(null)
+      setAddRoleSelectId('')
+    }
   }, [section])
 
   // Escape to close
@@ -284,20 +301,40 @@ export default function ChannelSettingsModal() {
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
+  const initialVoiceRegion = channel?.voice_region?.trim() || 'auto'
+  const voiceRegionChanged = isVoice && voiceRegion !== initialVoiceRegion
+
   const overviewChanged =
     (chanName.trim() !== '' && chanName.trim() !== channel?.name) ||
     chanTopic !== (channel?.topic ?? '') ||
-    isPrivate !== (channel?.private ?? false)
+    isPrivate !== (channel?.private ?? false) ||
+    voiceRegionChanged
 
   async function handleSaveOverview() {
     if (!guildId || !channelId || !chanName.trim()) return
     setSavingOverview(true)
     try {
-      await guildApi.guildGuildIdChannelChannelIdPatch({
-        guildId,
-        channelId,
-        req: { name: chanName.trim(), topic: chanTopic, private: isPrivate },
-      })
+      const channelFieldsChanged =
+        chanName.trim() !== channel?.name ||
+        chanTopic !== (channel?.topic ?? '') ||
+        isPrivate !== (channel?.private ?? false)
+
+      if (channelFieldsChanged) {
+        await guildApi.guildGuildIdChannelChannelIdPatch({
+          guildId,
+          channelId,
+          req: { name: chanName.trim(), topic: chanTopic, private: isPrivate },
+        })
+      }
+
+      if (voiceRegionChanged) {
+        await guildApi.guildGuildIdVoiceChannelIdRegionPatch({
+          guildId,
+          channelId,
+          request: { region: voiceRegion === 'auto' ? '' : voiceRegion },
+        })
+      }
+
       await queryClient.invalidateQueries({ queryKey: ['channels', guildId] })
       await queryClient.invalidateQueries({ queryKey: ['channel', guildId, channelId] })
       toast.success('Channel updated')
@@ -312,17 +349,12 @@ export default function ChannelSettingsModal() {
     if (!guildId || !channelId || !selectedRoleId) return
     setSavingPerms(true)
     try {
-      if (editAccept === 0 && editDeny === 0) {
-        // All inherit → remove the override entirely
-        await rolesApi.guildGuildIdChannelChannelIdRolesRoleIdDelete({
-          guildId, channelId, roleId: selectedRoleId,
-        })
-      } else {
-        await rolesApi.guildGuildIdChannelChannelIdRolesRoleIdPut({
-          guildId, channelId, roleId: selectedRoleId,
-          req: { accept: editAccept, deny: editDeny },
-        })
-      }
+      // Always PUT — keeping {accept:0,deny:0} keeps the role in the channel's override list
+      // (important for private channels). Use "Remove Role" to fully remove a role.
+      await rolesApi.guildGuildIdChannelChannelIdRolesRoleIdPut({
+        guildId, channelId, roleId: selectedRoleId,
+        req: { accept: editAccept, deny: editDeny },
+      })
       await queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] })
       toast.success('Permissions saved')
     } catch {
@@ -332,7 +364,7 @@ export default function ChannelSettingsModal() {
     }
   }
 
-  async function handleResetPermissions(roleId: string) {
+  async function handleRemoveRole(roleId: string) {
     if (!guildId || !channelId) return
     try {
       await rolesApi.guildGuildIdChannelChannelIdRolesRoleIdDelete({
@@ -340,20 +372,34 @@ export default function ChannelSettingsModal() {
       })
       await queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] })
       if (selectedRoleId === roleId) {
+        setSelectedRoleId(null)
         setEditAccept(0)
         setEditDeny(0)
       }
-      toast.success('Override reset')
+      toast.success('Role removed')
     } catch {
-      toast.error('Failed to reset')
+      toast.error('Failed to remove role')
     }
   }
 
-  // Check whether a role has any active override
-  function hasOverride(roleId: string) {
-    const ov = overrides.find((o) => String(o.role_id) === roleId)
-    if (!ov) return false
-    return (Number(ov.accept ?? 0) | Number(ov.deny ?? 0)) !== 0
+  async function handleAddRole() {
+    if (!guildId || !channelId || !addRoleSelectId || addingRole) return
+    setAddingRole(true)
+    try {
+      await rolesApi.guildGuildIdChannelChannelIdRolesRoleIdPut({
+        guildId, channelId, roleId: addRoleSelectId,
+        req: { accept: 0, deny: 0 },
+      })
+      await queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] })
+      setSelectedRoleId(addRoleSelectId)
+      setEditAccept(0)
+      setEditDeny(0)
+      setAddRoleSelectId('')
+    } catch {
+      toast.error('Failed to add role')
+    } finally {
+      setAddingRole(false)
+    }
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -430,7 +476,7 @@ export default function ChannelSettingsModal() {
                   />
                 </div>
 
-                {!isCategory && (
+                {!isCategory && !isVoice && (
                   <div className="space-y-2">
                     <Label htmlFor="chan-topic">Topic</Label>
                     <Input
@@ -439,6 +485,30 @@ export default function ChannelSettingsModal() {
                       onChange={(e) => setChanTopic(e.target.value)}
                       placeholder="Optional channel topic…"
                     />
+                  </div>
+                )}
+
+                {isVoice && (
+                  <div className="space-y-2">
+                    <Label htmlFor="chan-voice-region">Voice Region</Label>
+                    <select
+                      id="chan-voice-region"
+                      value={voiceRegion}
+                      onChange={(e) => setVoiceRegion(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    >
+                      <option value="auto">Automatic</option>
+                      {voiceRegions
+                        .filter((r) => r.id && r.id !== 'auto')
+                        .map((r) => (
+                          <option key={r.id} value={r.id!}>
+                            {r.name || r.id}
+                          </option>
+                        ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      Select a preferred SFU region for this voice channel, or use Automatic.
+                    </p>
                   </div>
                 )}
 
@@ -488,50 +558,84 @@ export default function ChannelSettingsModal() {
             {section === 'permissions' && (
               <div className="flex gap-0 h-full">
 
-                {/* Left: Role list */}
-                <div className="w-48 shrink-0 border-r border-border flex flex-col pr-2 mr-6">
-                  <div className="mb-3">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Roles — {roles.length}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground mt-1 leading-tight">
-                      Select a role to manage its permissions in this channel.
-                    </p>
-                  </div>
+                {/* Left: Role list — only roles explicitly added to this channel */}
+                {(() => {
+                  const overrideRoleIds = new Set(overrides.map((o) => String(o.role_id)))
+                  const rolesWithOverrides = overrides
+                    .map((ov) => ({ ov, role: roles.find((r) => String(r.id) === String(ov.role_id)) }))
+                    .filter((item): item is { ov: typeof overrides[0]; role: NonNullable<typeof roles[0]> } => item.role !== undefined)
+                  const availableRolesToAdd = roles.filter((r) => !overrideRoleIds.has(String(r.id)))
+                  return (
+                    <div className="w-48 shrink-0 border-r border-border flex flex-col pr-2 mr-6">
+                      <div className="mb-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Roles — {overrides.length}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-1 leading-tight">
+                          Add roles to configure their permissions in this channel.
+                        </p>
+                      </div>
 
-                  <div className="space-y-0.5 flex-1 overflow-y-auto">
-                    {roles.map((role) => {
-                      const rid = String(role.id)
-                      const hasOv = hasOverride(rid)
-                      return (
-                        <button
-                          key={rid}
-                          onClick={() => selectRole(role)}
-                          className={cn(
-                            'w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left transition-colors',
-                            selectedRoleId === rid
-                              ? 'bg-accent text-foreground'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                          )}
-                        >
-                          <span
-                            className="w-2.5 h-2.5 rounded-full shrink-0"
-                            style={{ backgroundColor: colorToHex(role.color ?? 0) }}
-                          />
-                          <span className="truncate flex-1">{role.name}</span>
-                          {hasOv && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-primary shrink-0" title="Has overrides" />
-                          )}
-                        </button>
-                      )
-                    })}
-                    {roles.length === 0 && (
-                      <p className="text-xs text-muted-foreground text-center py-6">
-                        No roles in this server
-                      </p>
-                    )}
-                  </div>
-                </div>
+                      {/* Add Role control */}
+                      {availableRolesToAdd.length > 0 && (
+                        <div className="mb-3 flex flex-col gap-1.5">
+                          <select
+                            value={addRoleSelectId}
+                            onChange={(e) => setAddRoleSelectId(e.target.value)}
+                            disabled={addingRole}
+                            className="w-full rounded border border-border bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            <option value="">Add a role…</option>
+                            {availableRolesToAdd.map((role) => (
+                              <option key={String(role.id)} value={String(role.id)}>
+                                {role.name}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full text-xs h-7"
+                            onClick={() => void handleAddRole()}
+                            disabled={!addRoleSelectId || addingRole}
+                          >
+                            {addingRole ? 'Adding…' : 'Add Role'}
+                          </Button>
+                        </div>
+                      )}
+
+                      <div className="space-y-0.5 flex-1 overflow-y-auto">
+                        {rolesWithOverrides.length === 0 ? (
+                          <p className="text-xs text-muted-foreground text-center py-6">
+                            No roles added yet. Use the dropdown above to add roles.
+                          </p>
+                        ) : (
+                          rolesWithOverrides.map(({ role }) => {
+                            const rid = String(role.id)
+                            return (
+                              <button
+                                key={rid}
+                                onClick={() => selectRole(role)}
+                                className={cn(
+                                  'w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left transition-colors',
+                                  selectedRoleId === rid
+                                    ? 'bg-accent text-foreground'
+                                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                                )}
+                              >
+                                <span
+                                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: colorToHex(role.color ?? 0) }}
+                                />
+                                <span className="truncate flex-1">{role.name}</span>
+                              </button>
+                            )
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
 
                 {/* Right: Permission editor */}
                 <div className="flex-1 min-w-0 overflow-y-auto">
@@ -548,14 +652,13 @@ export default function ChannelSettingsModal() {
                               Override server-level permissions for this channel only.
                             </p>
                           </div>
-                          {hasOverride(selectedRoleId) && (
-                            <button
-                              onClick={() => void handleResetPermissions(selectedRoleId)}
-                              className="text-xs text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-1"
-                            >
-                              Reset Overrides
-                            </button>
-                          )}
+                          <button
+                            onClick={() => void handleRemoveRole(selectedRoleId)}
+                            disabled={savingPerms}
+                            className="text-xs text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-1 disabled:opacity-40"
+                          >
+                            Remove Role
+                          </button>
                         </div>
 
                         {/* Legend */}
@@ -630,7 +733,7 @@ export default function ChannelSettingsModal() {
                         <div className="flex items-center justify-between pt-2 border-t border-border">
                           <p className="text-xs text-muted-foreground">
                             {editAccept === 0 && editDeny === 0
-                              ? 'All permissions inherited — saving will remove any override.'
+                              ? 'All permissions inherited — role is still added to this channel.'
                               : 'Unsaved changes will take effect when saved.'}
                           </p>
                           <Button
@@ -645,7 +748,7 @@ export default function ChannelSettingsModal() {
                   })() : (
                     <div className="flex flex-col items-center justify-center h-64 text-center">
                       <p className="text-muted-foreground text-sm">
-                        Select a role from the list to manage its permissions in this channel.
+                        Add a role using the dropdown on the left, then select it to configure permissions.
                       </p>
                     </div>
                   )}

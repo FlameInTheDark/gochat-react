@@ -1,19 +1,42 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle } from 'lucide-react'
+import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil, Shield, UserMinus, Ban } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useUiStore } from '@/stores/uiStore'
-import { guildApi, inviteApi, rolesApi, uploadApi } from '@/api/client'
+import { useAuthStore } from '@/stores/authStore'
+import { guildApi, inviteApi, rolesApi, uploadApi, axiosInstance } from '@/api/client'
 import type { DtoGuildInvite, DtoMember } from '@/types'
-import type { DtoRole } from '@/client'
+import type { DtoGuildBan, DtoGuildEmoji, DtoRole, GuildBanMemberRequest } from '@/client'
+import { PermissionBits, hasPermission as hasPerm, calculateEffectivePermissions } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
+import { useEmojiStore } from '@/stores/emojiStore'
+import { emojiUrl } from '@/lib/emoji'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -23,13 +46,15 @@ function getInviteUrl(code: string) {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Section = 'overview' | 'members' | 'roles' | 'invites' | 'danger'
+type Section = 'overview' | 'members' | 'roles' | 'invites' | 'emojis' | 'bans' | 'danger'
 
 const NAV: { key: Section; label: string; danger?: boolean }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'members', label: 'Members' },
   { key: 'roles', label: 'Roles' },
   { key: 'invites', label: 'Invites' },
+  { key: 'emojis', label: 'Emoji' },
+  { key: 'bans', label: 'Bans' },
   { key: 'danger', label: 'Danger Zone', danger: true },
 ]
 
@@ -159,6 +184,91 @@ export default function ServerSettingsModal() {
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleColor, setNewRoleColor] = useState('#5865f2')
 
+  // Member role assignment
+  const [savingMemberRole, setSavingMemberRole] = useState<string | null>(null) // `${userId}:${roleId}`
+  const [memberFilter, setMemberFilter] = useState('')
+
+  async function toggleMemberRole(userId: string, roleId: string, currentlyHas: boolean) {
+    if (!guildId) return
+    setSavingMemberRole(`${userId}:${roleId}`)
+    try {
+      if (currentlyHas) {
+        await rolesApi.guildGuildIdMemberUserIdRolesRoleIdDelete({ guildId, userId, roleId })
+      } else {
+        await rolesApi.guildGuildIdMemberUserIdRolesRoleIdPut({ guildId, userId, roleId })
+      }
+      queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
+        old.map((m) => {
+          if (String(m.user?.id) !== userId) return m
+          const prev = (m.roles ?? []).map(String)
+          const next = currentlyHas ? prev.filter((id) => id !== roleId) : [...prev, roleId]
+          return { ...m, roles: next.map(Number) }
+        }),
+      )
+      toast.success(currentlyHas ? 'Role removed' : 'Role assigned')
+    } catch {
+      toast.error(currentlyHas ? 'Failed to remove role' : 'Failed to assign role')
+    } finally {
+      setSavingMemberRole(null)
+    }
+  }
+
+  // Kick / Ban
+  const [kickingUserId, setKickingUserId] = useState<string | null>(null)
+  const [banningUserId, setBanningUserId] = useState<string | null>(null)
+  const [banReason, setBanReason] = useState('')
+  const [banDialogUserId, setBanDialogUserId] = useState<string | null>(null)
+  const [unbanningUserId, setUnbanningUserId] = useState<string | null>(null)
+
+  async function handleKick(userId: string) {
+    if (!guildId) return
+    setKickingUserId(userId)
+    try {
+      await guildApi.guildGuildIdMemberUserIdKickPost({ guildId, userId })
+      queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
+        old.filter((m) => String(m.user?.id) !== userId),
+      )
+      toast.success('Member kicked')
+    } catch {
+      toast.error('Failed to kick member')
+    } finally {
+      setKickingUserId(null)
+    }
+  }
+
+  async function handleBan(userId: string, reason?: string) {
+    if (!guildId) return
+    setBanningUserId(userId)
+    try {
+      const request: GuildBanMemberRequest | undefined = reason?.trim() ? { reason: reason.trim() } : undefined
+      await guildApi.guildGuildIdMemberUserIdBanPost({ guildId, userId, request })
+      queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
+        old.filter((m) => String(m.user?.id) !== userId),
+      )
+      toast.success('Member banned')
+    } catch {
+      toast.error('Failed to ban member')
+    } finally {
+      setBanningUserId(null)
+      setBanDialogUserId(null)
+      setBanReason('')
+    }
+  }
+
+  async function handleUnban(userId: string) {
+    if (!guildId) return
+    setUnbanningUserId(userId)
+    try {
+      await guildApi.guildGuildIdMemberUserIdBanDelete({ guildId, userId })
+      await refetchBans()
+      toast.success('Member unbanned')
+    } catch {
+      toast.error('Failed to unban member')
+    } finally {
+      setUnbanningUserId(null)
+    }
+  }
+
   // Icon upload
   const iconInputRef = useRef<HTMLInputElement>(null)
   const [uploadingIcon, setUploadingIcon] = useState(false)
@@ -169,6 +279,16 @@ export default function ServerSettingsModal() {
   const [inviteExpiry, setInviteExpiry] = useState('86400')
   const [creatingInvite, setCreatingInvite] = useState(false)
 
+  // Emojis
+  const emojiFileRef = useRef<HTMLInputElement>(null)
+  const [emojiName, setEmojiName] = useState('')
+  const [emojiFile, setEmojiFile] = useState<File | null>(null)
+  const [uploadingEmoji, setUploadingEmoji] = useState(false)
+  const [editingEmojiId, setEditingEmojiId] = useState<string | null>(null)
+  const [editingEmojiName, setEditingEmojiName] = useState('')
+  const [savingEmojiId, setSavingEmojiId] = useState<string | null>(null)
+  const [deletingEmojiId, setDeletingEmojiId] = useState<string | null>(null)
+
   // ── Queries ─────────────────────────────────────────────────────────────────
 
   const { data: guild } = useQuery({
@@ -178,24 +298,58 @@ export default function ServerSettingsModal() {
     staleTime: 30_000,
   })
 
+  // Current user and owner check
+  const currentUser = useAuthStore((s) => s.user)
+  const ownerIdStr = guild?.owner != null ? String(guild.owner) : null
+  const isOwner = ownerIdStr !== null && currentUser?.id !== undefined && ownerIdStr === String(currentUser.id)
+
+  // Redirect away from danger section if not owner
+  useEffect(() => {
+    if (section === 'danger' && !isOwner) {
+      setSection('overview')
+    }
+  }, [section, isOwner])
+
   const { data: members = [] } = useQuery<DtoMember[]>({
     queryKey: ['members', guildId],
     queryFn: () => guildApi.guildGuildIdMembersGet({ guildId: guildId! }).then((r) => r.data ?? []),
-    enabled: open && !!guildId && section === 'members',
+    enabled: open && !!guildId && (section === 'members' || section === 'bans'),
     staleTime: 30_000,
   })
 
   const { data: roles = [] } = useQuery<DtoRole[]>({
     queryKey: ['roles', guildId],
     queryFn: () => rolesApi.guildGuildIdRolesGet({ guildId: guildId! }).then((r) => r.data ?? []),
-    enabled: open && !!guildId && (section === 'roles' || section === 'members'),
+    enabled: open && !!guildId && (section === 'roles' || section === 'members' || section === 'bans'),
     staleTime: 30_000,
   })
+
+  const { data: bans = [], refetch: refetchBans } = useQuery<DtoGuildBan[]>({
+    queryKey: ['bans', guildId],
+    queryFn: () => guildApi.guildGuildIdBansGet({ guildId: guildId! }).then((r) => r.data ?? []),
+    enabled: open && !!guildId && section === 'bans',
+    staleTime: 30_000,
+  })
+
+  // Current user's effective moderation permissions
+  const currentMember = members.find((m) => String(m.user?.id) === String(currentUser?.id))
+  const effectivePerms = currentMember && roles.length > 0
+    ? calculateEffectivePermissions(currentMember as DtoMember, roles as DtoRole[])
+    : 0
+  const canKick = isOwner || hasPerm(effectivePerms, PermissionBits.ADMINISTRATOR) || hasPerm(effectivePerms, PermissionBits.KICK_MEMBERS)
+  const canBan = isOwner || hasPerm(effectivePerms, PermissionBits.ADMINISTRATOR) || hasPerm(effectivePerms, PermissionBits.BAN_MEMBERS)
 
   const { data: invites = [] } = useQuery<DtoGuildInvite[]>({
     queryKey: ['invites', guildId],
     queryFn: () => inviteApi.guildInvitesGuildIdGet({ guildId: guildId! }).then((r) => r.data ?? []),
     enabled: open && !!guildId && section === 'invites',
+    staleTime: 30_000,
+  })
+
+  const { data: guildEmojis = [], refetch: refetchEmojis } = useQuery<DtoGuildEmoji[]>({
+    queryKey: ['guild-emojis', guildId],
+    queryFn: () => guildApi.guildGuildIdEmojisGet({ guildId: guildId! }).then((r) => r.data ?? []),
+    enabled: open && !!guildId && section === 'emojis',
     staleTime: 30_000,
   })
 
@@ -437,6 +591,93 @@ export default function ServerSettingsModal() {
     }
   }
 
+  // ── Emoji handlers ────────────────────────────────────────────────────────
+
+  async function handleUploadEmoji() {
+    if (!guildId || !emojiFile || !emojiName.trim()) return
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    setUploadingEmoji(true)
+    try {
+      // Step 1: create placeholder
+      const placeholderRes = await guildApi.guildGuildIdEmojisPost({
+        guildId,
+        request: {
+          name: emojiName.trim(),
+          file_size: emojiFile.size,
+          content_type: emojiFile.type || 'image/png',
+        },
+      })
+      const { id: emojiId, guild_id } = placeholderRes.data
+      if (!emojiId || !guild_id) throw new Error('Invalid placeholder response')
+
+      // Step 2: upload binary — send raw bytes, not JSON
+      await axiosInstance.post(
+        `${baseUrl}/upload/emojis/${guild_id}/${emojiId}`,
+        emojiFile,
+        {
+          headers: { 'Content-Type': emojiFile.type || 'image/png' },
+          transformRequest: [(data) => data],
+        },
+      )
+
+      // Update local store and refetch
+      useEmojiStore.getState().addEmoji({
+        id: String(emojiId),
+        name: emojiName.trim(),
+        guild_id: String(guild_id),
+      })
+      await refetchEmojis()
+      toast.success(`Emoji :${emojiName.trim()}: uploaded`)
+      setEmojiName('')
+      setEmojiFile(null)
+      if (emojiFileRef.current) emojiFileRef.current.value = ''
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      toast.error(msg ?? 'Failed to upload emoji')
+    } finally {
+      setUploadingEmoji(false)
+    }
+  }
+
+  async function handleRenameEmoji(emojiId: string) {
+    if (!guildId || !editingEmojiName.trim()) return
+    setSavingEmojiId(emojiId)
+    try {
+      await guildApi.guildGuildIdEmojisEmojiIdPatch({
+        guildId,
+        emojiId,
+        request: { name: editingEmojiName.trim() },
+      })
+      useEmojiStore.getState().updateEmoji({
+        id: emojiId,
+        name: editingEmojiName.trim(),
+        guild_id: guildId,
+      })
+      await refetchEmojis()
+      setEditingEmojiId(null)
+      toast.success('Emoji renamed')
+    } catch {
+      toast.error('Failed to rename emoji')
+    } finally {
+      setSavingEmojiId(null)
+    }
+  }
+
+  async function handleDeleteEmoji(emojiId: string) {
+    if (!guildId) return
+    setDeletingEmojiId(emojiId)
+    try {
+      await guildApi.guildGuildIdEmojisEmojiIdDelete({ guildId, emojiId })
+      useEmojiStore.getState().removeEmoji(guildId, emojiId)
+      await refetchEmojis()
+      toast.success('Emoji deleted')
+    } catch {
+      toast.error('Failed to delete emoji')
+    } finally {
+      setDeletingEmojiId(null)
+    }
+  }
+
   async function handleDeleteServer() {
     if (!guildId) return
     setDeletingServer(true)
@@ -471,29 +712,36 @@ export default function ServerSettingsModal() {
               {guild?.name ?? 'Server Settings'}
             </p>
             <div className="space-y-0.5">
-              {NAV.map((s, i) => (
-                <>
-                  {s.danger && i > 0 && (
-                    <div key={`sep-${s.key}`} className="my-2 h-px bg-border mx-3" />
-                  )}
-                  <button
-                    key={s.key}
-                    onClick={() => setSection(s.key)}
-                    className={cn(
-                      'w-full text-left px-3 py-1.5 rounded text-sm transition-colors',
-                      s.danger
-                        ? section === s.key
-                          ? 'bg-destructive/20 text-destructive'
-                          : 'text-destructive/70 hover:text-destructive hover:bg-destructive/10'
-                        : section === s.key
-                          ? 'bg-accent text-foreground'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              {NAV.map((s, i) => {
+                // Hide danger section for non-owners
+                if (s.danger && !isOwner) return null
+                // Hide bans section for users without ban permission
+                if (s.key === 'bans' && !canBan) return null
+                
+                return (
+                  <>
+                    {s.danger && i > 0 && (
+                      <div key={`sep-${s.key}`} className="my-2 h-px bg-border mx-3" />
                     )}
-                  >
-                    {s.label}
-                  </button>
-                </>
-              ))}
+                    <button
+                      key={s.key}
+                      onClick={() => setSection(s.key)}
+                      className={cn(
+                        'w-full text-left px-3 py-1.5 rounded text-sm transition-colors',
+                        s.danger
+                          ? section === s.key
+                            ? 'bg-destructive/20 text-destructive'
+                            : 'text-destructive/70 hover:text-destructive hover:bg-destructive/10'
+                          : section === s.key
+                            ? 'bg-accent text-foreground'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                      )}
+                    >
+                      {s.label}
+                    </button>
+                  </>
+                )
+              })}
             </div>
           </div>
         </div>
@@ -601,53 +849,179 @@ export default function ServerSettingsModal() {
             )}
 
             {/* ── Members ── */}
-            {section === 'members' && (
+            {section === 'members' && (() => {
+              const q = memberFilter.trim().toLowerCase()
+              const filteredMembers = q
+                ? members.filter((m) => {
+                    const userId = String(m.user?.id ?? '')
+                    const username = (m.username ?? '').toLowerCase()
+                    const name = (m.user?.name ?? '').toLowerCase()
+                    const discriminator = (m.user?.discriminator ?? '').toLowerCase()
+                    return userId.includes(q) || username.includes(q) || name.includes(q) || discriminator.includes(q)
+                  })
+                : members
+              return (
               <div className="space-y-4">
                 <h2 className="text-xl font-bold">
-                  Members{members.length > 0 ? ` — ${members.length}` : ''}
+                  Members — {filteredMembers.length}{q && members.length !== filteredMembers.length ? ` of ${members.length}` : ''}
                 </h2>
+                <Input
+                  placeholder="Filter by name or ID…"
+                  value={memberFilter}
+                  onChange={(e) => setMemberFilter(e.target.value)}
+                />
                 <div className="space-y-0.5">
-                  {members.map((member) => {
+                  {filteredMembers.map((member) => {
                     const userId = String(member.user?.id ?? '')
                     const displayName = member.username || member.user?.name || 'Unknown'
                     const memberRoles = (member.roles ?? [])
                       .map((rid) => roleMap.get(String(rid)))
                       .filter((r): r is DtoRole => r !== undefined)
                     const joinDate = member.join_at ? new Date(member.join_at).toLocaleDateString() : null
+                    const memberRoleIds = new Set((member.roles ?? []).map(String))
+                    const isTargetOwner = ownerIdStr !== null && userId === ownerIdStr
+                    const targetPerms = calculateEffectivePermissions(member as DtoMember, roles as DtoRole[])
+                    const isTargetAdmin = hasPerm(targetPerms, PermissionBits.ADMINISTRATOR)
+                    // Admins can only be moderated by the server owner
+                    const canModerate = !isTargetOwner && (!isTargetAdmin || isOwner)
+                    const canKickTarget = canKick && canModerate
+                    const canBanTarget = canBan && canModerate
+                    return (
+                      <ContextMenu key={userId}>
+                        <ContextMenuTrigger asChild>
+                          <div className="flex items-center gap-3 px-3 py-2.5 rounded hover:bg-accent/30 transition-colors cursor-pointer">
+                            <Avatar className="w-9 h-9 shrink-0">
+                              <AvatarImage src={member.user?.avatar?.url} alt={displayName} className="object-cover" />
+                              <AvatarFallback className="text-xs">{displayName.charAt(0).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-medium">{displayName}</p>
+                                {member.user?.discriminator && (
+                                  <span className="text-xs text-muted-foreground">#{member.user.discriminator}</span>
+                                )}
+                                {memberRoles.map((role) => (
+                                  <span
+                                    key={String(role.id)}
+                                    className="text-[10px] px-1.5 py-0.5 rounded font-medium leading-none"
+                                    style={{
+                                      backgroundColor: `${colorToHex(role.color ?? 0)}22`,
+                                      color: colorToHex(role.color ?? 0),
+                                      border: `1px solid ${colorToHex(role.color ?? 0)}55`,
+                                    }}
+                                  >
+                                    {role.name}
+                                  </span>
+                                ))}
+                              </div>
+                              {joinDate && <p className="text-xs text-muted-foreground mt-0.5">Joined {joinDate}</p>}
+                            </div>
+                            <p className="text-xs text-muted-foreground font-mono shrink-0 hidden sm:block">{userId}</p>
+                          </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          {roles.length > 0 && (
+                            <ContextMenuSub>
+                              <ContextMenuSubTrigger className="gap-2">
+                                <Shield className="w-4 h-4" />
+                                Roles
+                              </ContextMenuSubTrigger>
+                              <ContextMenuSubContent className="min-w-[180px] max-h-72 overflow-y-auto">
+                                {roles.map((role) => {
+                                  const rid = String(role.id)
+                                  const currentlyHas = memberRoleIds.has(rid)
+                                  const isSaving = savingMemberRole === `${userId}:${rid}`
+                                  const colorHex = role.color
+                                    ? `#${Math.max(0, role.color).toString(16).padStart(6, '0')}`
+                                    : undefined
+                                  return (
+                                    <ContextMenuCheckboxItem
+                                      key={rid}
+                                      checked={currentlyHas}
+                                      disabled={isSaving}
+                                      onSelect={(e) => {
+                                        e.preventDefault()
+                                        void toggleMemberRole(userId, rid, currentlyHas)
+                                      }}
+                                    >
+                                      <span
+                                        className="w-2 h-2 rounded-full shrink-0 bg-muted-foreground/50"
+                                        style={colorHex ? { backgroundColor: colorHex } : undefined}
+                                      />
+                                      {role.name}
+                                    </ContextMenuCheckboxItem>
+                                  )
+                                })}
+                              </ContextMenuSubContent>
+                            </ContextMenuSub>
+                          )}
+                          {(canKickTarget || canBanTarget) && <ContextMenuSeparator />}
+                          {canKickTarget && (
+                            <ContextMenuItem
+                              disabled={kickingUserId === userId}
+                              onSelect={() => void handleKick(userId)}
+                              className="gap-2 text-destructive focus:text-destructive"
+                            >
+                              <UserMinus className="w-4 h-4" />
+                              {kickingUserId === userId ? 'Kicking…' : 'Kick Member'}
+                            </ContextMenuItem>
+                          )}
+                          {canBanTarget && (
+                            <ContextMenuItem
+                              onSelect={() => { setBanDialogUserId(userId); setBanReason('') }}
+                              className="gap-2 text-destructive focus:text-destructive"
+                            >
+                              <Ban className="w-4 h-4" />
+                              Ban Member
+                            </ContextMenuItem>
+                          )}
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    )
+                  })}
+                  {filteredMembers.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-12">
+                      {q ? `No members match "${memberFilter}"` : 'No members found'}
+                    </p>
+                  )}
+                </div>
+              </div>
+              )
+            })()}
+
+            {/* ── Bans ── */}
+            {section === 'bans' && (
+              <div className="space-y-4">
+                <h2 className="text-xl font-bold">Bans{bans.length > 0 ? ` — ${bans.length}` : ''}</h2>
+                <div className="space-y-0.5">
+                  {bans.map((ban) => {
+                    const userId = String(ban.user?.id ?? '')
+                    const displayName = ban.user?.name ?? 'Unknown'
                     return (
                       <div key={userId} className="flex items-center gap-3 px-3 py-2.5 rounded hover:bg-accent/30 transition-colors">
                         <Avatar className="w-9 h-9 shrink-0">
-                          <AvatarImage src={member.user?.avatar?.url} alt={displayName} className="object-cover" />
+                          <AvatarImage src={ban.user?.avatar?.url} alt={displayName} className="object-cover" />
                           <AvatarFallback className="text-xs">{displayName.charAt(0).toUpperCase()}</AvatarFallback>
                         </Avatar>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-sm font-medium">{displayName}</p>
-                            {member.user?.discriminator && (
-                              <span className="text-xs text-muted-foreground">#{member.user.discriminator}</span>
-                            )}
-                            {memberRoles.map((role) => (
-                              <span
-                                key={String(role.id)}
-                                className="text-[10px] px-1.5 py-0.5 rounded font-medium leading-none"
-                                style={{
-                                  backgroundColor: `${colorToHex(role.color ?? 0)}22`,
-                                  color: colorToHex(role.color ?? 0),
-                                  border: `1px solid ${colorToHex(role.color ?? 0)}55`,
-                                }}
-                              >
-                                {role.name}
-                              </span>
-                            ))}
-                          </div>
-                          {joinDate && <p className="text-xs text-muted-foreground mt-0.5">Joined {joinDate}</p>}
+                          <p className="text-sm font-medium">{displayName}</p>
+                          {ban.reason && <p className="text-xs text-muted-foreground mt-0.5">Reason: {ban.reason}</p>}
                         </div>
-                        <p className="text-xs text-muted-foreground font-mono shrink-0 hidden sm:block">{userId}</p>
+                        {canBan && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={unbanningUserId === userId}
+                            onClick={() => void handleUnban(userId)}
+                          >
+                            {unbanningUserId === userId ? 'Unbanning…' : 'Unban'}
+                          </Button>
+                        )}
                       </div>
                     )
                   })}
-                  {members.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-12">No members found</p>
+                  {bans.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-12">No bans found</p>
                   )}
                 </div>
               </div>
@@ -995,6 +1369,166 @@ export default function ServerSettingsModal() {
               </div>
             )}
 
+            {/* ── Emojis ── */}
+            {section === 'emojis' && (
+              <div className="space-y-6">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Smile className="w-5 h-5" />
+                  Emoji
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Upload custom emoji for your server. Members can use them in messages with{' '}
+                  <code className="bg-muted px-1 py-0.5 rounded text-xs">:name:</code> completion.
+                </p>
+
+                {/* Upload form */}
+                {isOwner && (
+                  <div className="rounded-lg border border-border p-4 space-y-3">
+                    <p className="text-sm font-semibold">Upload New Emoji</p>
+                    <p className="text-xs text-muted-foreground">
+                      Max 256 KB · Max 128×128 px · Animated GIF/WebP supported
+                    </p>
+                    <div className="flex gap-3 flex-wrap items-end">
+                      <div className="space-y-1 flex-1 min-w-[140px]">
+                        <Label className="text-xs">Name</Label>
+                        <Input
+                          value={emojiName}
+                          onChange={(e) => setEmojiName(e.target.value.replace(/[^A-Za-z0-9-]/g, ''))}
+                          placeholder="party-cat"
+                          className="h-8 text-sm"
+                          maxLength={32}
+                        />
+                        <p className="text-[10px] text-muted-foreground">Letters, numbers, hyphens only</p>
+                      </div>
+                      <div className="space-y-1 flex-1 min-w-[140px]">
+                        <Label className="text-xs">Image file</Label>
+                        <input
+                          ref={emojiFileRef}
+                          type="file"
+                          accept="image/png,image/gif,image/webp,image/jpeg"
+                          className="block w-full text-xs text-muted-foreground file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-muted file:text-foreground hover:file:bg-accent cursor-pointer"
+                          onChange={(e) => setEmojiFile(e.target.files?.[0] ?? null)}
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        className="gap-2 shrink-0"
+                        onClick={() => void handleUploadEmoji()}
+                        disabled={uploadingEmoji || !emojiName.trim() || !emojiFile}
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        {uploadingEmoji ? 'Uploading…' : 'Upload'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Emoji list — Static & Animated */}
+                {(() => {
+                  const staticEmojis = guildEmojis.filter((e) => !e.animated)
+                  const animatedEmojis = guildEmojis.filter((e) => e.animated)
+
+                  const renderEmojiRow = (emoji: DtoGuildEmoji) => {
+                    const eid = String(emoji.id)
+                    const isEditing = editingEmojiId === eid
+                    const isDeleting = deletingEmojiId === eid
+                    const isSaving = savingEmojiId === eid
+                    return (
+                      <div
+                        key={eid}
+                        className={cn(
+                          'flex items-center gap-3 px-3 py-2 rounded-md hover:bg-accent/50 group',
+                          isDeleting && 'opacity-40',
+                        )}
+                      >
+                        <img
+                          src={emojiUrl(eid, 44)}
+                          alt={emoji.name}
+                          className="w-8 h-8 object-contain shrink-0"
+                        />
+                        {isEditing ? (
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <Input
+                              value={editingEmojiName}
+                              onChange={(e) => setEditingEmojiName(e.target.value.replace(/[^A-Za-z0-9-]/g, ''))}
+                              className="h-7 text-sm flex-1"
+                              maxLength={32}
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') void handleRenameEmoji(eid)
+                                if (e.key === 'Escape') setEditingEmojiId(null)
+                              }}
+                            />
+                            <Button size="sm" className="h-7 text-xs" onClick={() => void handleRenameEmoji(eid)} disabled={isSaving || !editingEmojiName.trim()}>
+                              Save
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingEmojiId(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : (
+                          <>
+                            <span className="font-mono text-sm flex-1 min-w-0 truncate">:{emoji.name}:</span>
+                            {isOwner && (
+                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                <button
+                                  onClick={() => { setEditingEmojiId(eid); setEditingEmojiName(emoji.name ?? '') }}
+                                  className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                                  title="Rename"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => void handleDeleteEmoji(eid)}
+                                  disabled={isDeleting}
+                                  className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                  title="Delete"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div className="space-y-6">
+                      {/* Static */}
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Static Emoji — {staticEmojis.length} / 50</p>
+                        {staticEmojis.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground rounded-md border border-dashed border-border">
+                            <Smile className="w-8 h-8 mb-2 opacity-20" />
+                            <p className="text-sm">No static emoji yet</p>
+                            {isOwner && <p className="text-xs mt-1 opacity-70">Upload a PNG, WEBP or JPG above</p>}
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">{staticEmojis.map(renderEmojiRow)}</div>
+                        )}
+                      </div>
+
+                      {/* Animated */}
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">Animated Emoji — {animatedEmojis.length} / 50</p>
+                        {animatedEmojis.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground rounded-md border border-dashed border-border">
+                            <Smile className="w-8 h-8 mb-2 opacity-20" />
+                            <p className="text-sm">No animated emoji yet</p>
+                            {isOwner && <p className="text-xs mt-1 opacity-70">Upload a GIF above</p>}
+                          </div>
+                        ) : (
+                          <div className="space-y-0.5">{animatedEmojis.map(renderEmojiRow)}</div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+
             {/* ── Danger Zone ── */}
             {section === 'danger' && (
               <div className="space-y-6">
@@ -1055,6 +1589,37 @@ export default function ServerSettingsModal() {
 
       </div>
     </div>
+
+    {/* Ban confirm dialog */}
+    <Dialog open={banDialogUserId !== null} onOpenChange={(o) => { if (!o) { setBanDialogUserId(null); setBanReason('') } }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Ban Member</DialogTitle>
+          <DialogDescription>
+            This member will be banned and unable to rejoin unless unbanned.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-2 py-2">
+          <label className="text-sm font-medium">Reason (optional)</label>
+          <Input
+            placeholder="Enter ban reason…"
+            value={banReason}
+            onChange={(e) => setBanReason(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && banDialogUserId) void handleBan(banDialogUserId, banReason) }}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { setBanDialogUserId(null); setBanReason('') }}>Cancel</Button>
+          <Button
+            variant="destructive"
+            disabled={banningUserId !== null}
+            onClick={() => { if (banDialogUserId) void handleBan(banDialogUserId, banReason) }}
+          >
+            {banningUserId !== null ? 'Banning…' : 'Ban Member'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     {/* Icon crop dialog — rendered above the settings modal */}
     <ImageCropDialog

@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
-import { FileText, Download, X, Play, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import type { DtoAttachment } from '@/types'
 
 // ── Attachment kind ───────────────────────────────────────────────────────────
@@ -68,13 +69,13 @@ function getMeta(a: DtoAttachment): AttachmentMeta {
   return { url, previewUrl, kind, sizeLabel: formatSize(a.size), name, contentType, width, height, isGif }
 }
 
-function computeBounds(meta: AttachmentMeta): { width: number; height: number } {
-  const w = meta.width ?? MAX_DIM
-  const h = meta.height ?? MAX_DIM
-  if (!w && !h) return { width: MAX_DIM, height: MAX_DIM }
-  if (!w) return { width: Math.min(MAX_DIM, h), height: h }
-  if (!h) return { width: w, height: Math.min(MAX_DIM, w) }
-  const scale = Math.min(MAX_DIM / w, MAX_DIM / h, 1)
+function computeBounds(meta: AttachmentMeta, maxDim: number): { width: number; height: number } {
+  const w = meta.width ?? maxDim
+  const h = meta.height ?? maxDim
+  if (!w && !h) return { width: maxDim, height: maxDim }
+  if (!w) return { width: Math.min(maxDim, h), height: h }
+  if (!h) return { width: w, height: Math.min(maxDim, w) }
+  const scale = Math.min(maxDim / w, maxDim / h, 1)
   return { width: Math.round(w * scale), height: Math.round(h * scale) }
 }
 
@@ -239,11 +240,11 @@ function ImageTile({
 }
 
 // ── Single image with lightbox ────────────────────────────────────────────────
-function AttachmentImage({ item }: { item: RenderItem }) {
+function AttachmentImage({ item, maxDim }: { item: RenderItem; maxDim: number }) {
   const [open, setOpen] = useState(false)
   const { meta } = item
   if (!meta.previewUrl) return null
-  const bounds = computeBounds(meta)
+  const bounds = computeBounds(meta, maxDim)
 
   return (
     <>
@@ -260,7 +261,7 @@ function AttachmentImage({ item }: { item: RenderItem }) {
 }
 
 // ── Image gallery grid with shared navigable lightbox ────────────────────────
-function GalleryGroup({ items }: { items: RenderItem[] }) {
+function GalleryGroup({ items, maxDim }: { items: RenderItem[]; maxDim: number }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null)
   const cols = items.length === 1 ? 1 : 2
 
@@ -270,7 +271,7 @@ function GalleryGroup({ items }: { items: RenderItem[] }) {
         className="grid gap-1 rounded overflow-hidden"
         style={{
           gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-          maxWidth: MAX_DIM,
+          maxWidth: maxDim,
         }}
       >
         {items.map((item, i) => (
@@ -293,46 +294,261 @@ function GalleryGroup({ items }: { items: RenderItem[] }) {
   )
 }
 
-// ── Video: thumbnail → click to play ─────────────────────────────────────────
-function AttachmentVideo({ item }: { item: RenderItem }) {
+// ── Video: custom player ───────────────────────────────────────────────────────
+function AttachmentVideo({ item, maxDim }: { item: RenderItem; maxDim: number }) {
   const { meta } = item
-  const [playing, setPlaying] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // All hooks must be unconditional — declared before any early returns
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [muted, setMuted] = useState(false)
+  const [volume, setVolume] = useState(1)
+  const [controlsVisible, setControlsVisible] = useState(true)
+  const [hasStarted, setHasStarted] = useState(false)
+  const [bufferedEnd, setBufferedEnd] = useState(0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  useEffect(() => () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+  }, [])
+
   if (!meta.url) return null
 
-  // Show thumbnail preview with a play-button overlay when not yet playing
-  if (!playing && meta.previewUrl) {
-    const bounds = computeBounds(meta)
+  const bounds = computeBounds(meta, maxDim)
+  const containerStyle: React.CSSProperties =
+    meta.width && meta.height
+      ? { width: bounds.width, height: bounds.height, maxWidth: '100%' }
+      : { width: '100%', maxWidth: maxDim, aspectRatio: '16/9' }
+
+  // ── Pre-play: thumbnail + play button, no <video> in DOM ─────────────────────
+  if (!hasStarted) {
     return (
       <div
-        className="relative rounded overflow-hidden cursor-pointer inline-block group"
-        style={{ width: bounds.width, height: bounds.height, maxWidth: '100%' }}
-        onClick={() => setPlaying(true)}
+        className="relative rounded overflow-hidden bg-zinc-900 inline-block cursor-pointer group"
+        style={containerStyle}
+        onClick={() => setHasStarted(true)}
       >
-        <img
-          src={meta.previewUrl}
-          alt={meta.name}
-          className="w-full h-full object-cover"
-          draggable={false}
-        />
-        {/* Translucent play-button overlay */}
-        <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
-          <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm transition-transform group-hover:scale-110">
-            <Play className="w-6 h-6 text-white fill-white ml-1" />
+        {meta.previewUrl && (
+          <img
+            src={meta.previewUrl}
+            alt={meta.name}
+            className="w-full h-full object-cover"
+            draggable={false}
+          />
+        )}
+        <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/35 transition-colors">
+          <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm group-hover:scale-110 transition-transform">
+            <Play className="w-7 h-7 fill-white stroke-none ml-0.5" />
           </div>
         </div>
       </div>
     )
   }
 
-  // Inline player (autoplay since the user explicitly clicked "play")
+  // ── Active player: <video> mounted, autoPlay since user clicked ───────────────
+  function formatTime(s: number): string {
+    if (!isFinite(s) || s < 0) return '0:00'
+    const m = Math.floor(s / 60)
+    const sec = Math.floor(s % 60)
+    return `${m}:${sec.toString().padStart(2, '0')}`
+  }
+
+  function scheduleHide() {
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+    hideTimer.current = setTimeout(() => setControlsVisible(false), 2500)
+  }
+
+  function revealControls() {
+    setControlsVisible(true)
+    if (isPlaying) scheduleHide()
+  }
+
+  function togglePlay() {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) void v.play()
+    else v.pause()
+  }
+
+  function handleSeek(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = videoRef.current
+    if (!v || !duration) return
+    const t = Number(e.target.value)
+    v.currentTime = t
+    setCurrentTime(t)
+  }
+
+  function handleVolumeChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = videoRef.current
+    if (!v) return
+    const vol = Number(e.target.value)
+    v.volume = vol
+    v.muted = vol === 0
+    setVolume(vol)
+    setMuted(vol === 0)
+  }
+
+  function toggleMute() {
+    const v = videoRef.current
+    if (!v) return
+    const nm = !muted
+    v.muted = nm
+    setMuted(nm)
+    if (!nm && volume === 0) { v.volume = 0.5; setVolume(0.5) }
+  }
+
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) void containerRef.current?.requestFullscreen()
+    else void document.exitFullscreen()
+  }
+
+  const pct = duration > 0 ? (currentTime / duration) * 100 : 0
+  const bufPct = duration > 0 ? (bufferedEnd / duration) * 100 : 0
+
   return (
-    <video
-      src={meta.url}
-      controls
-      autoPlay
-      className="rounded"
-      style={{ maxWidth: MAX_DIM, maxHeight: MAX_DIM, display: 'block' }}
-    />
+    <div
+      ref={containerRef}
+      className="relative rounded overflow-hidden bg-black select-none inline-block"
+      style={containerStyle}
+      onMouseMove={revealControls}
+      onMouseLeave={() => { if (isPlaying) setControlsVisible(false) }}
+    >
+      {/* Video — mounted only after first click, autoPlay since it was a user gesture */}
+      <video
+        ref={videoRef}
+        src={meta.url}
+        className="w-full h-full object-contain cursor-pointer"
+        autoPlay
+        onClick={togglePlay}
+        onPlay={() => { setIsPlaying(true); scheduleHide() }}
+        onPause={() => {
+          setIsPlaying(false)
+          setControlsVisible(true)
+          if (hideTimer.current) clearTimeout(hideTimer.current)
+        }}
+        onEnded={() => { setIsPlaying(false); setControlsVisible(true) }}
+        onTimeUpdate={() => {
+          const v = videoRef.current
+          if (!v) return
+          setCurrentTime(v.currentTime)
+          if (v.buffered.length > 0) setBufferedEnd(v.buffered.end(v.buffered.length - 1))
+        }}
+        onLoadedMetadata={() => {
+          const v = videoRef.current
+          if (v) setDuration(v.duration)
+        }}
+        muted={muted}
+      />
+
+      {/* Controls overlay — fades out 2.5 s after last mouse move while playing */}
+      <div
+        className={cn(
+          'absolute inset-x-0 bottom-0 z-30 transition-opacity duration-200',
+          controlsVisible || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none',
+        )}
+      >
+        {/* Gradient backdrop */}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent pointer-events-none" />
+
+        <div className="relative px-3 pb-2.5 pt-8">
+          {/* Seek bar */}
+          <div className="relative py-1 mb-1 group/seek cursor-pointer">
+            <div className="relative h-[3px]">
+              <div className="absolute inset-0 rounded-full bg-white/25" />
+              <div className="absolute inset-y-0 left-0 rounded-full bg-white/45" style={{ width: `${bufPct}%` }} />
+              <div className="absolute inset-y-0 left-0 rounded-full bg-primary" style={{ width: `${pct}%` }} />
+              {/* Thumb dot — appears on hover */}
+              <div
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-white shadow opacity-0 group-hover/seek:opacity-100 transition-opacity pointer-events-none"
+                style={{ left: `${pct}%` }}
+              />
+            </div>
+            {/* Transparent range input covers the seek bar for interaction */}
+            <input
+              type="range"
+              min={0}
+              max={duration || 100}
+              step={0.1}
+              value={currentTime}
+              onChange={handleSeek}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+          </div>
+
+          {/* Controls row */}
+          <div className="flex items-center gap-1">
+            {/* Play / Pause */}
+            <button
+              onClick={togglePlay}
+              className="flex items-center justify-center w-7 h-7 rounded text-white hover:text-white/70 transition-colors shrink-0"
+            >
+              {isPlaying
+                ? <Pause className="w-4 h-4 fill-white stroke-none" />
+                : <Play className="w-4 h-4 fill-white stroke-none" />}
+            </button>
+
+            {/* Mute toggle */}
+            <button
+              onClick={toggleMute}
+              className="flex items-center justify-center w-7 h-7 rounded text-white hover:text-white/70 transition-colors shrink-0"
+            >
+              {(muted || volume === 0)
+                ? <VolumeX className="w-4 h-4" />
+                : volume < 0.5
+                  ? <Volume1 className="w-4 h-4" />
+                  : <Volume2 className="w-4 h-4" />}
+            </button>
+
+            {/* Volume slider */}
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={muted ? 0 : volume}
+              onChange={handleVolumeChange}
+              className="w-16 shrink-0 cursor-pointer"
+              style={{ accentColor: 'white' }}
+            />
+
+            {/* Time */}
+            <span className="text-[11px] text-white/80 tabular-nums ml-1.5 flex-1 whitespace-nowrap">
+              {formatTime(currentTime)} / {formatTime(duration)}
+            </span>
+
+            {/* Download */}
+            <a
+              href={meta.url}
+              download={meta.name}
+              className="flex items-center justify-center w-7 h-7 rounded text-white/60 hover:text-white transition-colors shrink-0"
+              onClick={(e) => e.stopPropagation()}
+              title={`Download ${meta.name}`}
+            >
+              <Download className="w-4 h-4" />
+            </a>
+
+            {/* Fullscreen */}
+            <button
+              onClick={toggleFullscreen}
+              className="flex items-center justify-center w-7 h-7 rounded text-white/60 hover:text-white transition-colors shrink-0"
+              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            >
+              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -378,9 +594,10 @@ function AttachmentFile({ item }: { item: RenderItem }) {
 // ── Main component ────────────────────────────────────────────────────────────
 interface Props {
   attachments: DtoAttachment[] | null | undefined
+  maxWidth?: number
 }
 
-export default function MessageAttachments({ attachments }: Props) {
+export default function MessageAttachments({ attachments, maxWidth = MAX_DIM }: Props) {
   if (!attachments?.length) return null
 
   const groups = groupForRender(attachments)
@@ -389,12 +606,12 @@ export default function MessageAttachments({ attachments }: Props) {
     <div className="mt-1 flex flex-col gap-1">
       {groups.map((group, gi) => {
         if (group.type === 'gallery') {
-          return <GalleryGroup key={gi} items={group.items} />
+          return <GalleryGroup key={gi} items={group.items} maxDim={maxWidth} />
         }
         const { item } = group
         switch (item.meta.kind) {
-          case 'image': return <AttachmentImage key={gi} item={item} />
-          case 'video': return <AttachmentVideo key={gi} item={item} />
+          case 'image': return <AttachmentImage key={gi} item={item} maxDim={maxWidth} />
+          case 'video': return <AttachmentVideo key={gi} item={item} maxDim={maxWidth} />
           case 'audio': return <AttachmentAudio key={gi} item={item} />
           default:      return <AttachmentFile  key={gi} item={item} />
         }

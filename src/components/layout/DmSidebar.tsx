@@ -5,7 +5,7 @@ import { Users, MessageSquare, X, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
@@ -131,13 +131,35 @@ function DmItem({
 }) {
   const { t } = useTranslation()
   const isGroup = channel.type === ChannelType.ChannelTypeGroupDM
-  const displayName = channel.name ?? (isGroup ? t('dm.groupDm') : `User ${String(channel.participant_id ?? '')}`)
-  const initials = displayName.charAt(0).toUpperCase()
 
-  // For 1-on-1 DMs, show participant presence + custom status
+  // For 1-on-1 DMs, fetch participant user data
   const participantId = !isGroup && channel.participant_id !== undefined
     ? String(channel.participant_id)
     : null
+
+  const { data: participantUser } = useQuery({
+    queryKey: ['user', participantId],
+    queryFn: async () => {
+      if (!participantId) return null
+      try {
+        const res = await userApi.userUserIdGet({ userId: participantId })
+        return res.data ?? null
+      } catch (err) {
+        console.error('Failed to fetch user:', err)
+        return null
+      }
+    },
+    enabled: !!participantId,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // For 1-on-1 DMs, always prefer participant's name; for group DMs use channel name or fallback
+  const displayName = isGroup 
+    ? (channel.name ?? t('dm.groupDm'))
+    : (participantUser?.name ?? channel.name ?? `User ${String(channel.participant_id ?? '')}`)
+  const initials = (participantUser?.name ?? displayName).charAt(0).toUpperCase()
+
+  // For 1-on-1 DMs, show participant presence + custom status
   const status = usePresenceStore((s) =>
     participantId ? (s.statuses[participantId] ?? 'offline') : null,
   )
@@ -161,7 +183,10 @@ function DmItem({
             >
               {/* Avatar with optional status dot */}
               <div className="relative shrink-0">
-                <Avatar className="w-8 h-8">
+              <Avatar className="w-8 h-8">
+                  {!isGroup && participantUser?.avatar?.url ? (
+                    <AvatarImage src={participantUser.avatar.url} alt={displayName} className="object-cover" />
+                  ) : null}
                   <AvatarFallback className="text-xs">
                     {isGroup ? <MessageSquare className="w-4 h-4" /> : initials}
                   </AvatarFallback>
@@ -171,7 +196,14 @@ function DmItem({
                 )}
               </div>
 
-              <span className="flex-1 truncate">{displayName}</span>
+              <div className="flex-1 min-w-0">
+                <span className="block truncate">{displayName}</span>
+                {customStatus && (
+                  <span className="block text-xs text-muted-foreground italic truncate">
+                    {customStatus}
+                  </span>
+                )}
+              </div>
               <span
                 role="button"
                 tabIndex={-1}

@@ -6,6 +6,7 @@ import type { MentionResolver } from '@/lib/messageParser'
 import MessageItem from './MessageItem'
 import { snowflakeToDate, snowflakeToDayLabel } from '@/lib/snowflake'
 import { useTranslation } from 'react-i18next'
+import { useAppearanceStore, DEFAULT_CHAT_SPACING } from '@/stores/appearanceStore'
 
 interface Props {
   messages: DtoMessage[]
@@ -106,7 +107,7 @@ function PaginationSkeleton() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 //
-// Discord-style layout: bottom-anchored with:
+// Chat layout: bottom-anchored with:
 //   • "beginning of history" shown only when confirmed (endReached)
 //   • "NEW MESSAGES" separator at the unread boundary
 //   • Scroll-to-separator on initial open with unread messages
@@ -131,6 +132,7 @@ export default function MessageList({
 }: Props) {
   const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const chatSpacing = useAppearanceStore((s) => s.chatSpacing) ?? DEFAULT_CHAT_SPACING
   const isAtBottomRef = useRef(true)
   const prevLengthRef = useRef(0)
   const [showJumpButton, setShowJumpButton] = useState(false)
@@ -138,6 +140,7 @@ export default function MessageList({
   // Scroll-position preservation refs (no extra renders needed)
   const prevIsLoadingOlderRef = useRef(false)
   const savedScrollHeightRef = useRef(0)
+  const savedScrollTopRef = useRef(0)
 
   // Unread separator ref + "which separator have we scrolled to" guard
   const separatorRef = useRef<HTMLDivElement | null>(null)
@@ -193,14 +196,14 @@ export default function MessageList({
     const nowLoading = isLoadingOlder ?? false
     prevIsLoadingOlderRef.current = nowLoading
 
-    if (nowLoading && !wasLoading) {
-      // Loading just started — save height BEFORE new rows are inserted
-      savedScrollHeightRef.current = el.scrollHeight
-    } else if (!nowLoading && wasLoading && savedScrollHeightRef.current > 0) {
-      // Loading finished — push scrollTop down by the height of the inserted rows
+    if (!nowLoading && wasLoading && savedScrollHeightRef.current > 0) {
+      // Loading finished — restore scroll position using absolute value to avoid
+      // double-adjustment from browser scroll anchoring that may have fired
+      // when the skeleton appeared (false→true transition).
       const diff = el.scrollHeight - savedScrollHeightRef.current
-      if (diff > 0) el.scrollTop += diff
+      if (diff > 0) el.scrollTop = savedScrollTopRef.current + diff
       savedScrollHeightRef.current = 0
+      savedScrollTopRef.current = 0
     }
 
     // ── One-time scroll to unread separator ──────────────────────────────────
@@ -238,7 +241,7 @@ export default function MessageList({
     if (!hadMessages || isAtBottomRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [messages.length, isLoading])
+  }, [messages, isLoading])
 
   // ── Scroll handler ────────────────────────────────────────────────────────
   function handleScroll() {
@@ -252,6 +255,11 @@ export default function MessageList({
 
     // Load older when near the top
     if (!isLoadingOlder && !endReached && el.scrollTop <= LOAD_OLDER_THRESHOLD && onLoadOlder) {
+      // Save both scrollHeight AND scrollTop before the skeleton renders.
+      // The layout effect uses savedScrollTop as the base for absolute restoration,
+      // so browser scroll anchoring adjustments during the skeleton phase don't skew the result.
+      savedScrollHeightRef.current = el.scrollHeight
+      savedScrollTopRef.current = el.scrollTop
       onLoadOlder()
     }
 
@@ -313,6 +321,7 @@ export default function MessageList({
         ref={scrollRef}
         onScroll={handleScroll}
         className="h-full overflow-y-auto"
+        style={{ overflowAnchor: 'none' }}
       >
         {/* min-h-full lets the flex column always fill the viewport */}
         <div className="flex flex-col min-h-full px-4">
@@ -355,7 +364,7 @@ export default function MessageList({
                       <div className="flex-1 h-px bg-red-500/60" />
                     </div>
                   )}
-                  <div data-message-id={String(msg.id)}>
+                  <div data-message-id={String(msg.id)} style={{ paddingTop: chatSpacing }}>
                     <MessageItem message={msg} isGrouped={grouped} resolver={resolver} />
                   </div>
                 </Fragment>

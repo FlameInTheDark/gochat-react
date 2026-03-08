@@ -48,7 +48,7 @@ const router = createBrowserRouter([
       },
     ],
   },
-])
+], { basename: import.meta.env.VITE_BASE_PATH || '/' })
 
 export default function App() {
   return (

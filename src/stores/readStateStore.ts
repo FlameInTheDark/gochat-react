@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { messageApi } from '@/api/client'
 import { useUnreadStore } from './unreadStore'
+import { useMentionStore } from './mentionStore'
 import type { UserUserSettingsResponse } from '@/client'
 
 interface ReadStateStore {
@@ -72,6 +73,7 @@ export const useReadStateStore = create<ReadStateStore>((set, get) => ({
   setReadState: (channelId, messageId) => {
     set((s) => ({ readStates: { ...s.readStates, [channelId]: messageId } }))
     useUnreadStore.getState().markRead(channelId)
+    useMentionStore.getState().clearMentions(channelId)
   },
 
   ackChannel: (channelId, messageId) => {
@@ -87,6 +89,7 @@ export const useReadStateStore = create<ReadStateStore>((set, get) => ({
         // Optimistic local update
         set((s) => ({ readStates: { ...s.readStates, [channelId]: messageId } }))
         useUnreadStore.getState().markRead(channelId)
+        useMentionStore.getState().clearMentions(channelId)
 
         // Fire-and-forget server ACK
         void messageApi

@@ -80,7 +80,6 @@ export default function UserArea() {
           },
         },
       })
-      // Update local state and WS
       setCustomStatusText(text)
       sendPresenceStatus(ownStatus, text)
       await queryClient.invalidateQueries({ queryKey: ['user-settings'] })
@@ -100,7 +99,6 @@ export default function UserArea() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button className="flex items-center gap-2 w-full px-1 py-1.5 rounded hover:bg-accent transition-colors focus:outline-none">
-            {/* Avatar with status dot */}
             <div className="relative shrink-0">
               <Avatar className="w-8 h-8">
                 <AvatarImage src={user?.avatar?.url} alt={user?.name ?? ''} className="object-cover" />
@@ -115,7 +113,6 @@ export default function UserArea() {
             <div className="flex-1 min-w-0 text-left">
               <p className="text-xs font-semibold truncate leading-tight">{user?.name ?? '…'}</p>
               {customStatusText ? (
-                /* Custom status replaces discriminator when set */
                 <p className="text-[10px] text-muted-foreground truncate leading-tight italic">
                   {customStatusText}
                 </p>
@@ -134,14 +131,12 @@ export default function UserArea() {
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
 
-          {/* Custom status row */}
           <DropdownMenuItem onClick={openDialog} className="gap-2">
             <Pencil className="w-4 h-4 shrink-0" />
             <span className={cn('flex-1 truncate', !customStatusText && 'text-muted-foreground')}>
               {customStatusText || t('userArea.setCustomStatus')}
             </span>
             {customStatusText && (
-              /* X clears status without opening the dialog */
               <span
                 role="button"
                 aria-label={t('userArea.clearCustomStatus')}
@@ -158,7 +153,6 @@ export default function UserArea() {
 
           <DropdownMenuSeparator />
 
-          {/* Status selector */}
           <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground pb-0.5">
             {t('userArea.setStatus')}
           </DropdownMenuLabel>
@@ -184,7 +178,6 @@ export default function UserArea() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* ── Custom Status Dialog ────────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={(open) => !open && setDialogOpen(false)}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
@@ -218,7 +211,6 @@ export default function UserArea() {
           </div>
 
           <DialogFooter className="gap-2 sm:justify-between">
-            {/* "Clear Status" shown only when a status is currently set */}
             {customStatusText && (
               <Button
                 type="button"

@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useQueryClient } from '@tanstack/react-query'
-import { Trash2, Pencil, Copy, MessageSquare, Hash } from 'lucide-react'
+import { useQueryClient, useQuery } from '@tanstack/react-query'
+import { Trash2, Pencil, Copy, MessageSquare, Hash, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -22,17 +22,20 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { messageApi, userApi } from '@/api/client'
+import { messageApi, userApi, rolesApi, guildApi } from '@/api/client'
 import { useMessageStore } from '@/stores/messageStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useUiStore } from '@/stores/uiStore'
+import { useAppearanceStore, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore'
 import { snowflakeToTime, snowflakeToDate } from '@/lib/snowflake'
+import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
-import { parseMessageContent, extractYouTubeEmbeds, type MentionResolver } from '@/lib/messageParser'
+import { parseMessageContent, isEmojiOnlyMessage, type MentionResolver } from '@/lib/messageParser'
 import MessageAttachments from '@/components/chat/MessageAttachments'
 import InviteEmbed from '@/components/chat/InviteEmbed'
-import YoutubeEmbed from '@/components/chat/YoutubeEmbed'
-import type { DtoMessage } from '@/types'
+import MessageEmbed from '@/components/chat/MessageEmbed'
+import type { DtoMessage, DtoMember, DtoGuild } from '@/types'
+import type { DtoRole } from '@/client'
 
 /** Extract unique invite codes from a message string.
  *  Matches URLs of the form: http(s)://host/invite/CODE
@@ -55,31 +58,104 @@ interface Props {
   message: DtoMessage
   isGrouped?: boolean
   resolver?: MentionResolver
+  attachmentMaxWidth?: number
 }
 
-export default function MessageItem({ message, isGrouped = false, resolver }: Props) {
+// Join message type constant
+const JOIN_MESSAGE_TYPE = 2
+
+// Default English join messages (fallback)
+const DEFAULT_JOIN_MESSAGES = [
+  'has joined the party!',
+  'just landed in the server!',
+  'has arrived! Welcome aboard!',
+  'joined the conversation. Say hi!',
+  'has entered the building!',
+  'is here! Time to celebrate!',
+]
+
+/**
+ * Get a join message for a user based on their ID.
+ * The same user will always get the same message.
+ */
+function getJoinMessage(userId: string | number | undefined, messages: string[]): string {
+  if (!userId || messages.length === 0) return messages[0] ?? DEFAULT_JOIN_MESSAGES[0]
+  // Use user ID to deterministically select a message
+  const hash = String(userId).split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+  return messages[hash % messages.length]
+}
+
+export default function MessageItem({ message, isGrouped = false, resolver, attachmentMaxWidth }: Props) {
   const { serverId } = useParams<{ serverId?: string }>()
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const openUserProfile = useUiStore((s) => s.openUserProfile)
+  const fontScale = useAppearanceStore((s) => s.fontScale) || DEFAULT_FONT_SCALE
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [suppressEmbedsOpen, setSuppressEmbedsOpen] = useState(false)
+  const [suppressEmbedsLoading, setSuppressEmbedsLoading] = useState(false)
   const [editContent, setEditContent] = useState('')
   const [editLoading, setEditLoading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Fetch roles and current user's member data for permission checking
+  const { data: roles = [] } = useQuery<DtoRole[]>({
+    queryKey: ['roles', serverId],
+    queryFn: () => rolesApi.guildGuildIdRolesGet({ guildId: serverId! }).then((r) => r.data ?? []),
+    enabled: !!serverId,
+  })
+
+  const { data: currentMember } = useQuery<DtoMember>({
+    queryKey: ['member', serverId, 'me'],
+    queryFn: () => userApi.userMeGuildsGuildIdMemberGet({ guildId: serverId! }).then((r) => r.data),
+    enabled: !!serverId,
+  })
+
+  // Fetch guild to check if current user is owner
+  const { data: guild } = useQuery<DtoGuild>({
+    queryKey: ['guild', serverId],
+    queryFn: () => guildApi.guildGuildIdGet({ guildId: serverId! }).then((r) => r.data!),
+    enabled: !!serverId,
+  })
+
+  // Calculate effective permissions
+  const userPermissions = currentMember && roles.length > 0
+    ? calculateEffectivePermissions(currentMember, roles)
+    : 0
+
   const removeMessage = useMessageStore((s) => s.removeMessage)
   const updateMessage = useMessageStore((s) => s.updateMessage)
   const currentUser = useAuthStore((s) => s.user)
+
+  // Check if current user is the server owner
+  const isOwner = currentUser && guild?.owner !== undefined && String(guild.owner) === String(currentUser.id)
+
+  const canManageMessages = isOwner || hasPermission(userPermissions, PermissionBits.MANAGE_MESSAGES)
 
   const authorName = message.author?.name ?? 'Unknown'
   const initials = authorName.charAt(0).toUpperCase()
   const channelId = String(message.channel_id)
   const messageId = String(message.id)
   const isOwn = currentUser?.id !== undefined && String(message.author?.id) === String(currentUser.id)
+
+  // Highlight messages that mention the current user (@id), @everyone, or @here
+  const isMentioned = useMemo(() => {
+    const content = message.content ?? ''
+    const userId = currentUser?.id !== undefined ? String(currentUser.id) : ''
+    if (!userId) return false
+    return (
+      content.includes(`<@${userId}>`) ||
+      content.includes('@everyone') ||
+      content.includes('@here')
+    )
+  }, [message.content, currentUser?.id])
+
+  // Detect emoji-only messages for big rendering (max 9 emoji, no other text)
+  const emojiOnly = isEmojiOnlyMessage(message.content ?? '')
 
   // Use Snowflake ID to derive creation time (more reliable than updated_at for display)
   const timestamp = snowflakeToTime(message.id)
@@ -176,6 +252,55 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
     }
   }
 
+  async function handleSuppressEmbeds() {
+    setSuppressEmbedsLoading(true)
+    try {
+      const res = await messageApi.messageChannelChannelIdMessageIdPatch({
+        channelId,
+        messageId,
+        request: { embeds: [], flags: 4 },
+      })
+      updateMessage(channelId, res.data)
+      setSuppressEmbedsOpen(false)
+    } catch {
+      toast.error(t('messageItem.editFailed'))
+    } finally {
+      setSuppressEmbedsLoading(false)
+    }
+  }
+
+  // Check if this is a join message
+  const isJoinMessage = message.type === JOIN_MESSAGE_TYPE
+
+  // Render join message differently
+  if (isJoinMessage) {
+    // Get translated join messages - ensure it's a valid array
+    let joinMessages: string[]
+    try {
+      const translationResult = t('joinMessages', { returnObjects: true })
+      joinMessages = Array.isArray(translationResult) ? translationResult : DEFAULT_JOIN_MESSAGES
+    } catch {
+      joinMessages = DEFAULT_JOIN_MESSAGES
+    }
+
+    return (
+      <div className="flex items-center justify-center py-2 px-4">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <button
+            onClick={handleAuthorClick}
+            className="font-medium text-foreground hover:underline cursor-pointer"
+          >
+            {authorName}
+          </button>
+          <span>{getJoinMessage(message.author?.id, joinMessages)}</span>
+          <span className="text-xs" title={fullTimestamp}>
+            {timestamp}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <ContextMenu>
@@ -183,6 +308,7 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
           <div className={cn(
             'flex items-start gap-3 px-2 rounded hover:bg-accent/40 group',
             isGrouped ? 'py-0.5' : 'py-1',
+            isMentioned && 'bg-yellow-500/10 hover:bg-yellow-500/15 border-l-2 border-yellow-500/60 pl-[6px]',
           )}>
             {isGrouped ? (
               /* Compact grouped row: no avatar — hover reveals timestamp in left gutter */
@@ -260,16 +386,36 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
                 <>
                   {/* Parsed message content with inline markdown */}
                   {message.content && (
-                    <div className="text-sm break-words whitespace-pre-wrap leading-relaxed">
+                    <div
+                      className={cn(
+                        'break-words whitespace-pre-wrap',
+                        emojiOnly ? 'leading-none py-1' : 'text-sm leading-relaxed',
+                      )}
+                      style={{ fontSize: emojiOnly ? '2.5rem' : `${fontScale}rem` }}
+                    >
                       {parseMessageContent(message.content, resolver)}
                     </div>
                   )}
                   {/* Attachments */}
-                  <MessageAttachments attachments={message.attachments} />
-                  {/* YouTube embeds — one per unique video ID found in the message */}
-                  {message.content && extractYouTubeEmbeds(message.content).map(({ videoId, url }) => (
-                    <YoutubeEmbed key={videoId} videoId={videoId} url={url} />
-                  ))}
+                  <MessageAttachments attachments={message.attachments} maxWidth={attachmentMaxWidth} />
+                  {/* Message embeds (rich, video, image, link, article, gifv) */}
+                  {message.embeds && message.embeds.length > 0 && (
+                    <div className="relative group/embeds w-fit">
+                      {message.embeds.map((embed, i) => (
+                        <MessageEmbed key={i} embed={embed} />
+                      ))}
+                      {isOwn && (
+                        <button
+                          type="button"
+                          onClick={() => setSuppressEmbedsOpen(true)}
+                          className="absolute -top-2 -right-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-muted border border-border text-muted-foreground opacity-0 group-hover/embeds:opacity-100 transition-opacity hover:bg-destructive hover:text-destructive-foreground hover:border-destructive"
+                          aria-label="Remove embeds"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {/* Invite embeds */}
                   {message.content && extractInviteCodes(message.content).map((code) => (
                     <InviteEmbed key={code} code={code} />
@@ -315,10 +461,41 @@ export default function MessageItem({ message, isGrouped = false, resolver }: Pr
                 <MessageSquare className="w-4 h-4" />
                 {t('messageItem.messageUser')}
               </ContextMenuItem>
+              {canManageMessages && (
+                <>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem
+                    onClick={() => setDeleteOpen(true)}
+                    className="text-destructive focus:text-destructive gap-2"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {t('messageItem.deleteMessage')}
+                  </ContextMenuItem>
+                </>
+              )}
             </>
           )}
         </ContextMenuContent>
       </ContextMenu>
+
+      <Dialog open={suppressEmbedsOpen} onOpenChange={(o) => !o && setSuppressEmbedsOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('messageItem.suppressEmbedsTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('messageItem.suppressEmbedsDesc')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSuppressEmbedsOpen(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="destructive" onClick={() => void handleSuppressEmbeds()} disabled={suppressEmbedsLoading}>
+              {t('messageItem.suppressEmbedsConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={deleteOpen} onOpenChange={(o) => !o && setDeleteOpen(false)}>
         <DialogContent>

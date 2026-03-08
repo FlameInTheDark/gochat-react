@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
-import { MessageSquare } from 'lucide-react'
+import { MessageSquare, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/stores/uiStore'
+import { useAuthStore } from '@/stores/authStore'
 import { rolesApi, userApi } from '@/api/client'
-import type { DtoMember } from '@/types'
+import type { DtoMember, DtoGuild } from '@/types'
 import type { DtoRole } from '@/client'
 import { cn } from '@/lib/utils'
+import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -72,7 +74,10 @@ export default function UserProfilePanel() {
     return () => document.removeEventListener('keydown', h)
   }, [profile, close])
 
-  // ── Data queries — MUST be before any early return (Rules of Hooks) ────────
+  // ── Hooks — MUST be before any early return (Rules of Hooks) ───────────────
+
+  // Get current user for permission check
+  const currentUser = useAuthStore((s) => s.user)
 
   const { data: allRoles = [] } = useQuery<DtoRole[]>({
     queryKey: ['roles', guildId],
@@ -90,6 +95,13 @@ export default function UserProfilePanel() {
     staleTime: 15_000,
   })
 
+  // Get friends list to check if user is already a friend
+  const { data: friends = [] } = useQuery({
+    queryKey: ['friends'],
+    queryFn: () => userApi.userMeFriendsGet().then((r) => r.data ?? []),
+    staleTime: 30_000,
+  })
+
   // ── Early return — after ALL hooks ────────────────────────────────────────
 
   if (!profile) return null
@@ -99,12 +111,24 @@ export default function UserProfilePanel() {
   // ── Positioning ───────────────────────────────────────────────────────────
 
   const panelX = x > window.innerWidth / 2 ? x - PANEL_W - 12 : x + 12
-  const panelY = Math.max(8, Math.min(y - 60, window.innerHeight - 540))
+  const panelY = Math.max(8, Math.min(y, window.innerHeight - 540))
 
   // ── Data from query cache ─────────────────────────────────────────────────
 
   const members = queryClient.getQueryData<DtoMember[]>(['members', guildId]) ?? []
   const member = members.find((m) => String(m.user?.id) === userId)
+
+  // ── Permission check for role editing ─────────────────────────────────────
+  // Resolve guild data for owner check
+  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === guildId)
+  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
+
+  const currentMember = members.find((m) => m.user?.id === currentUser?.id)
+  const effectivePermissions = currentMember && allRoles.length > 0
+    ? calculateEffectivePermissions(currentMember as DtoMember, allRoles)
+    : 0
+  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
+  const canManageRoles = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_ROLES)
 
   const displayName = member?.username ?? member?.user?.name ?? fallbackName ?? t('common.unknown')
   const globalName = member?.user?.name
@@ -135,6 +159,21 @@ export default function UserProfilePanel() {
       }
     } catch {
       toast.error(t('memberList.dmFailed'))
+    }
+  }
+
+  const isSelf = currentUser?.id !== undefined && String(currentUser.id) === userId
+  const isFriend = friends.some((f) => String(f.id) === userId)
+  const memberDiscriminator = member?.user?.discriminator
+
+  async function handleSendFriendRequest() {
+    if (!memberDiscriminator) return
+    try {
+      await userApi.userMeFriendsPost({ request: { discriminator: memberDiscriminator } })
+      await queryClient.invalidateQueries({ queryKey: ['friends'] })
+      toast.success(t('friends.requestSent'))
+    } catch {
+      toast.error(t('friends.requestFailed'))
     }
   }
 
@@ -227,7 +266,7 @@ export default function UserProfilePanel() {
             <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               {assignedRoles.length > 0 ? t('userProfile.rolesWithCount', { count: assignedRoles.length }) : t('userProfile.roles')}
             </p>
-            {guildId && (
+            {canManageRoles && guildId && (
               <button
                 onClick={() => setEditingRoles((v) => !v)}
                 className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
@@ -320,7 +359,18 @@ export default function UserProfilePanel() {
         </div>
 
         {/* Actions */}
-        <div className="border-t border-border pt-3">
+        <div className="border-t border-border pt-3 space-y-2">
+          {!isSelf && !isFriend && memberDiscriminator && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="w-full gap-2"
+              onClick={() => void handleSendFriendRequest()}
+            >
+              <UserPlus className="w-4 h-4" />
+              {t('userProfile.addFriend')}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="secondary"

@@ -10,7 +10,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useAuthStore } from '@/stores/authStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useVoiceStore } from '@/stores/voiceStore'
+import { useAppearanceStore, DEFAULT_CHAT_SPACING, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore'
 import { applyVoiceSettings } from '@/services/voiceService'
+import { buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression, type DenoiserNode } from '@/services/denoiserService'
 import { useNavigate } from 'react-router-dom'
 import { userApi, uploadApi, axiosInstance } from '@/api/client'
 import type { ModelUserSettingsData, DtoUser } from '@/client'
@@ -18,6 +20,7 @@ import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
 import MicTest from '@/components/voice/MicTest'
 import OutputTest from '@/components/voice/OutputTest'
+import VadSlider from '@/components/voice/VadSlider'
 import { useTranslation } from 'react-i18next'
 import i18n, { SUPPORTED_LANGUAGES } from '@/i18n'
 
@@ -84,8 +87,8 @@ export default function AppSettingsModal() {
   const [savingAccount, setSavingAccount] = useState(false)
 
   // Appearance
-  const [fontScale, setFontScale] = useState(1.0)
-  const [chatSpacing, setChatSpacing] = useState(16)
+  const [fontScale, setFontScale] = useState(DEFAULT_FONT_SCALE)
+  const [chatSpacing, setChatSpacing] = useState(DEFAULT_CHAT_SPACING)
   const [savingAppearance, setSavingAppearance] = useState(false)
 
   // Voice & Video
@@ -96,14 +99,26 @@ export default function AppSettingsModal() {
   const [autoGainControl, setAutoGainControl] = useState(true)
   const [echoCancellation, setEchoCancellation] = useState(true)
   const [noiseSuppression, setNoiseSuppression] = useState(true)
+  const [denoiserType, setDenoiserType] = useState<'default' | 'rnnoise' | 'speex'>('default')
   const [inputMode, setInputMode] = useState<'voice_activity' | 'push_to_talk'>('voice_activity')
-  const [voiceActivityThreshold, setVoiceActivityThreshold] = useState(50)
+  const [voiceActivityThreshold, setVoiceActivityThreshold] = useState(-60)
   const [pushToTalkKey, setPushToTalkKey] = useState('')
   const [isRecordingPTTKey, setIsRecordingPTTKey] = useState(false)
   const [savingVoice, setSavingVoice] = useState(false)
   const [voiceDirty, setVoiceDirty] = useState(false)
   const [audioInputDevices, setAudioInputDevices] = useState<MediaDeviceInfo[]>([])
   const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([])
+  const [videoInputDevice, setVideoInputDevice] = useState('')
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([])
+  const [cameraPreviewStream, setCameraPreviewStream] = useState<MediaStream | null>(null)
+  const cameraPreviewRef = useRef<HTMLVideoElement>(null)
+
+  // VAD sensitivity live meter
+  const [vadMicVolume, setVadMicVolume] = useState(0)     // 0–1 normalised RMS
+  const vadMicStreamRef    = useRef<MediaStream | null>(null)
+  const vadMicCtxRef       = useRef<AudioContext | null>(null)
+  const vadMicRafRef       = useRef<number | null>(null)
+  const vadDenoiserRef     = useRef<DenoiserNode | null>(null)
 
   // Language
   const [selectedLanguage, setSelectedLanguage] = useState(i18n.language ?? 'en')
@@ -125,13 +140,19 @@ export default function AppSettingsModal() {
     }
   }, [open, user?.name])
 
+  const { setFontScale: setAppearenceFontScale, setChatSpacing: setAppearanceChatSpacing } = useAppearanceStore()
+
   // Init appearance from loaded settings
   useEffect(() => {
     if (settingsData?.appearance) {
-      setFontScale(settingsData.appearance.chat_font_scale ?? 1.0)
-      setChatSpacing(settingsData.appearance.chat_spacing ?? 16)
+      const fontScale = settingsData.appearance.chat_font_scale || DEFAULT_FONT_SCALE
+      const chatSpacing = settingsData.appearance.chat_spacing ?? DEFAULT_CHAT_SPACING
+      setFontScale(fontScale)
+      setChatSpacing(chatSpacing)
+      setAppearenceFontScale(fontScale)
+      setAppearanceChatSpacing(chatSpacing)
     }
-  }, [settingsData])
+  }, [settingsData, setAppearenceFontScale, setAppearanceChatSpacing])
 
   // Init language from loaded settings
   useEffect(() => {
@@ -155,16 +176,22 @@ export default function AppSettingsModal() {
       setNoiseSuppression(d.noise_suppression ?? true)
     }
     if (settingsData?.devices) {
-      const d = settingsData.devices as Record<string, unknown>
-      if (d.input_mode === 'push_to_talk') setInputMode('push_to_talk')
+      const d = settingsData.devices
+      if (d.video_device) setVideoInputDevice(d.video_device)
+      const dt = d.denoiser_type
+      if (dt === 'rnnoise' || dt === 'speex') setDenoiserType(dt)
+      else setDenoiserType('default')
+      // Fields not yet in ModelDevices schema — cast needed
+      const dx = d as Record<string, unknown>
+      if (dx.input_mode === 'push_to_talk') setInputMode('push_to_talk')
       else setInputMode('voice_activity')
-      if (typeof d.voice_activity_threshold === 'number') setVoiceActivityThreshold(d.voice_activity_threshold)
-      if (typeof d.push_to_talk_key === 'string') setPushToTalkKey(d.push_to_talk_key)
+      if (typeof dx.audio_input_threshold === 'number') setVoiceActivityThreshold(dx.audio_input_threshold)
+      if (typeof dx.push_to_talk_key === 'string') setPushToTalkKey(dx.push_to_talk_key)
     }
     setVoiceDirty(false)
   }, [settingsData])
 
-  // Enumerate audio devices when switching to Voice section
+  // Enumerate audio/video devices when switching to Voice section
   useEffect(() => {
     if (section !== 'voice') return
     navigator.mediaDevices
@@ -172,9 +199,100 @@ export default function AppSettingsModal() {
       .then((devices) => {
         setAudioInputDevices(devices.filter((d) => d.kind === 'audioinput'))
         setAudioOutputDevices(devices.filter((d) => d.kind === 'audiooutput'))
+        setVideoDevices(devices.filter((d) => d.kind === 'videoinput'))
       })
       .catch(() => { })
   }, [section])
+
+  // Stop camera preview when leaving voice section or closing modal
+  useEffect(() => {
+    if (!open || section !== 'voice') {
+      setCameraPreviewStream((prev) => {
+        if (prev) { prev.getTracks().forEach(t => t.stop()) }
+        return null
+      })
+    }
+  }, [open, section])
+
+  // Attach camera preview stream to video element
+  useEffect(() => {
+    if (cameraPreviewRef.current && cameraPreviewStream) {
+      cameraPreviewRef.current.srcObject = cameraPreviewStream
+    }
+  }, [cameraPreviewStream])
+
+  // Live VAD sensitivity meter — runs a mic stream while the voice activity section is visible
+  useEffect(() => {
+    const shouldRun = open && section === 'voice' && inputMode === 'voice_activity'
+
+    function stopMeter() {
+      if (vadMicRafRef.current !== null) {
+        cancelAnimationFrame(vadMicRafRef.current)
+        vadMicRafRef.current = null
+      }
+      destroyDenoiserNode(vadDenoiserRef.current)
+      vadDenoiserRef.current = null
+      if (vadMicStreamRef.current) {
+        for (const t of vadMicStreamRef.current.getTracks()) t.stop()
+        vadMicStreamRef.current = null
+      }
+      if (vadMicCtxRef.current && vadMicCtxRef.current.state !== 'closed') {
+        void vadMicCtxRef.current.close()
+        vadMicCtxRef.current = null
+      }
+      setVadMicVolume(0)
+    }
+
+    if (!shouldRun) { stopMeter(); return }
+
+    let cancelled = false
+    const setup = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            deviceId: audioInputDevice ? { exact: audioInputDevice } : undefined,
+            autoGainControl,
+            echoCancellation,
+            noiseSuppression: effectiveNoiseSuppression(denoiserType, noiseSuppression),
+          },
+          video: false,
+        })
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        vadMicStreamRef.current = stream
+        const ctx = new AudioContext()
+        vadMicCtxRef.current = ctx
+        const source = ctx.createMediaStreamSource(stream)
+
+        // Apply denoiser so the meter shows the same level that the VAD engine sees during a call
+        destroyDenoiserNode(vadDenoiserRef.current)
+        vadDenoiserRef.current = await buildDenoiserNode(effectiveDenoiserType(denoiserType, noiseSuppression), ctx, source)
+        const postDenoise: AudioNode = vadDenoiserRef.current ?? source
+
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 2048
+        postDenoise.connect(analyser)
+        const floatData = new Float32Array(analyser.fftSize)
+        const loop = () => {
+          if (!vadMicCtxRef.current) return
+          analyser.getFloatTimeDomainData(floatData)
+          let sum = 0
+          for (let i = 0; i < floatData.length; i++) sum += floatData[i] * floatData[i]
+          const rms = Math.sqrt(sum / floatData.length)
+          // Linear dBFS → 0–1 fill: same scale as the VAD engine and marker
+          const db = Math.max(20 * Math.log10(Math.max(rms, 1e-8)), -100)
+          setVadMicVolume(Math.max(0, (db + 100) / 100))
+          vadMicRafRef.current = requestAnimationFrame(loop)
+        }
+        loop()
+      } catch { /* permission denied or device unavailable — no meter */ }
+    }
+    void setup()
+
+    return () => {
+      cancelled = true
+      stopMeter()
+    }
+  }, [open, section, inputMode, audioInputDevice, autoGainControl, echoCancellation, noiseSuppression, denoiserType])
 
   // Close on Escape
   useEffect(() => {
@@ -278,6 +396,8 @@ export default function AppSettingsModal() {
     setSavingAppearance(true)
     try {
       await patchSettings({ appearance: { chat_font_scale: fontScale, chat_spacing: chatSpacing } })
+      setAppearenceFontScale(fontScale)
+      setAppearanceChatSpacing(chatSpacing)
       toast.success(t('settings.appearanceSaved'))
     } catch {
       toast.error(t('settings.appearanceFailed'))
@@ -290,6 +410,25 @@ export default function AppSettingsModal() {
     close()
     logout()
     navigate('/')
+  }
+
+  async function startCameraPreview() {
+    try {
+      const videoConstraint: MediaTrackConstraints | boolean = videoInputDevice
+        ? { deviceId: { exact: videoInputDevice } }
+        : true
+      const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: false })
+      setCameraPreviewStream(stream)
+    } catch {
+      toast.error(t('settings.voiceFailed'))
+    }
+  }
+
+  function stopCameraPreview() {
+    setCameraPreviewStream((prev) => {
+      if (prev) { prev.getTracks().forEach(t => t.stop()) }
+      return null
+    })
   }
 
   async function handleSaveVoice() {
@@ -305,9 +444,11 @@ export default function AppSettingsModal() {
           echo_cancellation: echoCancellation,
           noise_suppression: noiseSuppression,
           input_mode: inputMode,
-          voice_activity_threshold: voiceActivityThreshold,
+          audio_input_threshold: voiceActivityThreshold,
           push_to_talk_key: pushToTalkKey,
-        } as Record<string, unknown>,
+          video_device: videoInputDevice || undefined,
+          denoiser_type: denoiserType,
+        },
       })
       useVoiceStore.getState().setSettings({
         audioInputDevice,
@@ -320,6 +461,8 @@ export default function AppSettingsModal() {
         inputMode,
         voiceActivityThreshold,
         pushToTalkKey,
+        videoInputDevice,
+        denoiserType,
       })
       applyVoiceSettings()
       setVoiceDirty(false)
@@ -339,9 +482,11 @@ export default function AppSettingsModal() {
     setAutoGainControl(true)
     setEchoCancellation(true)
     setNoiseSuppression(true)
+    setDenoiserType('default')
     setInputMode('voice_activity')
-    setVoiceActivityThreshold(50)
+    setVoiceActivityThreshold(-60)
     setPushToTalkKey('')
+    setVideoInputDevice('')
     setVoiceDirty(true)
   }
 
@@ -375,13 +520,12 @@ export default function AppSettingsModal() {
               </p>
               <div className="space-y-0.5">
                 {NAV.map((s, i) => (
-                  <>
+                  <div key={s.key}>
                     {/* Separator before Danger Zone */}
                     {s.danger && i > 0 && (
-                      <div key={`sep-${s.key}`} className="my-2 h-px bg-border mx-3" />
+                      <div className="my-2 h-px bg-border mx-3" />
                     )}
                     <button
-                      key={s.key}
                       onClick={() => setSection(s.key)}
                       className={cn(
                         'w-full text-left px-3 py-1.5 rounded text-sm transition-colors',
@@ -396,7 +540,7 @@ export default function AppSettingsModal() {
                     >
                       {s.label}
                     </button>
-                  </>
+                  </div>
                 ))}
               </div>
             </div>
@@ -653,6 +797,59 @@ export default function AppSettingsModal() {
 
                   <Separator />
 
+                  {/* ── Camera Device ── */}
+                  <div className="space-y-2">
+                    <Label htmlFor="video-input">{t('settings.videoDevice')}</Label>
+                    <select
+                      id="video-input"
+                      value={videoInputDevice}
+                      onChange={(e) => { setVideoInputDevice(e.target.value); markVoiceDirty(); stopCameraPreview() }}
+                      className={selectClass}
+                    >
+                      <option value="">{t('settings.defaultDevice')}</option>
+                      {videoDevices.map((d) => (
+                        <option key={d.deviceId} value={d.deviceId}>
+                          {d.label || `Camera (${d.deviceId.slice(0, 8)}…)`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* ── Camera Preview ── */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>{t('settings.cameraPreview')}</Label>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (cameraPreviewStream) {
+                            stopCameraPreview()
+                          } else {
+                            void startCameraPreview()
+                          }
+                        }}
+                      >
+                        {cameraPreviewStream ? t('settings.stopPreview') : t('settings.testCamera')}
+                      </Button>
+                    </div>
+                    {cameraPreviewStream ? (
+                      <video
+                        ref={cameraPreviewRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="w-full aspect-video rounded-lg bg-black object-cover"
+                      />
+                    ) : (
+                      <div className="w-full aspect-video rounded-lg bg-muted flex items-center justify-center">
+                        <p className="text-xs text-muted-foreground">{t('voicePanel.cameraOff')}</p>
+                      </div>
+                    )}
+                  </div>
+
+                  <Separator />
+
                   {/* ── Mic Test ── */}
                   <MicTest
                     inputDeviceId={audioInputDevice}
@@ -660,8 +857,11 @@ export default function AppSettingsModal() {
                     autoGainControl={autoGainControl}
                     echoCancellation={echoCancellation}
                     noiseSuppression={noiseSuppression}
+                    denoiserType={denoiserType}
                     outputDeviceId={audioOutputDevice}
                     outputLevel={outputLevel}
+                    inputMode={inputMode}
+                    voiceActivityThreshold={voiceActivityThreshold}
                   />
 
                   <Separator />
@@ -702,13 +902,13 @@ export default function AppSettingsModal() {
                       <div className="space-y-2 pt-1">
                         <div className="flex items-center justify-between">
                           <Label className="text-sm text-muted-foreground">{t('settings.sensitivityThreshold')}</Label>
-                          <span className="text-sm font-medium tabular-nums">{voiceActivityThreshold}%</span>
+                          <span className="text-sm font-medium tabular-nums">{voiceActivityThreshold} dBFS</span>
                         </div>
-                        <input
-                          type="range" min={0} max={100} step={1}
+
+                        <VadSlider
                           value={voiceActivityThreshold}
-                          onChange={(e) => { setVoiceActivityThreshold(Number(e.target.value)); markVoiceDirty() }}
-                          className="w-full accent-primary"
+                          onChange={(v) => { setVoiceActivityThreshold(v); markVoiceDirty() }}
+                          vadVolume={vadMicVolume}
                         />
                         <div className="flex justify-between text-[10px] text-muted-foreground select-none">
                           <span>{t('settings.sensitive')}</span>
@@ -762,7 +962,6 @@ export default function AppSettingsModal() {
                     <div className="space-y-1">
                       {[
                         { label: t('settings.echoCancellation'), desc: t('settings.echoCancellationDesc'), value: echoCancellation, onToggle: () => { setEchoCancellation((v) => !v); markVoiceDirty() } },
-                        { label: t('settings.noiseSuppression'), desc: t('settings.noiseSuppressionDesc'), value: noiseSuppression, onToggle: () => { setNoiseSuppression((v) => !v); markVoiceDirty() } },
                         { label: t('settings.autoGainControl'), desc: t('settings.autoGainControlDesc'), value: autoGainControl, onToggle: () => { setAutoGainControl((v) => !v); markVoiceDirty() } },
                       ].map(({ label, desc, value, onToggle }) => (
                         <div key={label} className="flex items-center justify-between py-2.5 gap-4">
@@ -773,6 +972,43 @@ export default function AppSettingsModal() {
                           <Toggle value={value} onToggle={onToggle} />
                         </div>
                       ))}
+
+                      {/* Noise Suppression mode selector */}
+                      <div className="py-2.5">
+                        <p className="text-sm mb-1">{t('settings.noiseSuppression')}</p>
+                        <p className="text-xs text-muted-foreground mb-2">{t('settings.noiseSuppressionDesc')}</p>
+                        <div className="flex gap-2 flex-wrap">
+                          {([
+                            { value: 'default', label: t('settings.denoiserDefault') },
+                            { value: 'rnnoise', label: t('settings.denoiserRnnoise') },
+                            { value: 'speex',   label: t('settings.denoiserSpeex')   },
+                          ] as const).map((opt) => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => { setDenoiserType(opt.value); markVoiceDirty() }}
+                              className={cn(
+                                'px-3 py-1.5 rounded-md text-xs font-medium border transition-colors',
+                                denoiserType === opt.value
+                                  ? 'bg-primary text-primary-foreground border-primary'
+                                  : 'border-input bg-background hover:bg-accent hover:text-accent-foreground',
+                              )}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                        {/* Global enable/disable toggle — always visible */}
+                        <div className="flex items-center justify-between mt-3 py-1 gap-4">
+                          <div className="min-w-0">
+                            <p className="text-xs text-muted-foreground">{t('settings.noiseSuppressionEnabled')}</p>
+                          </div>
+                          <Toggle
+                            value={noiseSuppression}
+                            onToggle={() => { setNoiseSuppression((v) => !v); markVoiceDirty() }}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
 
