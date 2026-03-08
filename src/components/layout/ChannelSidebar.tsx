@@ -873,7 +873,7 @@ function ChannelItem({
             <span className="cursor-grab active:cursor-grabbing shrink-0">
               <GripVertical className="w-3.5 h-3.5 opacity-0 group-hover/item:opacity-40 -ml-1" />
             </span>
-            <Icon className="w-4 h-4 shrink-0 opacity-70" />
+            <Icon className={cn('w-4 h-4 shrink-0', hasVoiceUsers ? 'text-green-500 opacity-100' : 'opacity-70')} />
             {isEditing ? (
               <input
                 autoFocus
@@ -967,9 +967,11 @@ function VoiceChannelUserItem({
   const openUserProfile = useUiStore((s) => s.openUserProfile)
   const currentUser = useAuthStore((s) => s.user)
   const peerVolume = useVoiceStore((s) => s.peers[user.userId]?.volume ?? 100)
-  const isSpeaking = useVoiceStore((s) => s.peers[user.userId]?.speaking ?? false)
+  const peerSpeaking = useVoiceStore((s) => s.peers[user.userId]?.speaking ?? false)
+  const localSpeaking = useVoiceStore((s) => s.localSpeaking)
   const lastPosRef = useRef({ x: 0, y: 0 })
   const isCurrentUser = currentUser?.id !== undefined && String(currentUser.id) === user.userId
+  const isSpeaking = isCurrentUser ? localSpeaking : peerSpeaking
 
   async function handleMessage() {
     try {
@@ -997,32 +999,26 @@ function VoiceChannelUserItem({
           onContextMenu={handleContextMenu}
           className="flex items-center gap-2 px-2 py-1 rounded text-sm text-muted-foreground hover:text-foreground hover:bg-accent/30 cursor-pointer"
         >
-          <div
-            className={cn(
-              'w-5 h-5 rounded-full bg-muted flex items-center justify-center shrink-0 overflow-hidden transition-all',
-              isSpeaking && 'ring-2 ring-green-500 ring-offset-1 ring-offset-sidebar',
-            )}
-          >
-            {user.avatarUrl ? (
-              <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-[10px] font-medium">{user.username.charAt(0).toUpperCase()}</span>
-            )}
+          {/* Avatar wrapper — ring is outside overflow-hidden */}
+          <div className={cn(
+            'relative shrink-0 rounded-full transition-colors',
+            isSpeaking && 'ring-2 ring-green-500 ring-offset-1 ring-offset-sidebar',
+          )}>
+            <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center overflow-hidden">
+              {user.avatarUrl ? (
+                <img src={user.avatarUrl} alt={user.username} className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-[10px] font-medium">{user.username.charAt(0).toUpperCase()}</span>
+              )}
+            </div>
           </div>
           <span className="truncate text-xs flex-1">
             {user.username}
-            {isCurrentUser && (
-              <span className="ml-1 text-[10px] text-muted-foreground/60">(You)</span>
-            )}
           </span>
-          {/* Mute/Deafen indicators - show both if both are true */}
-          <div className="flex items-center gap-1">
-            {user.muted && (
-              <MicOff className="w-3 h-3 text-destructive shrink-0" />
-            )}
-            {user.deafened && (
-              <HeadphoneOff className="w-3 h-3 text-destructive shrink-0" />
-            )}
+          {/* Mute/Deafen icons on the right side */}
+          <div className="flex items-center gap-1 shrink-0">
+            {user.muted && <MicOff className="w-3 h-3 text-destructive" />}
+            {user.deafened && <HeadphoneOff className="w-3 h-3 text-destructive" />}
           </div>
         </div>
       </ContextMenuTrigger>

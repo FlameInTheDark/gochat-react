@@ -81,8 +81,13 @@ export default function ChannelPage() {
   const voicePeers = useVoiceStore((s) => s.peers)
   const localMuted = useVoiceStore((s) => s.localMuted)
   const localDeafened = useVoiceStore((s) => s.localDeafened)
+  const localSpeaking = useVoiceStore((s) => s.localSpeaking)
   const localCameraEnabled = useVoiceStore((s) => s.localCameraEnabled)
   const localVideoStream = useVoiceStore((s) => s.localVideoStream)
+
+  const [spotlightId, setSpotlightId] = useState<string | null>(null)
+  // Reset spotlight when navigating away from a channel
+  useEffect(() => { setSpotlightId(null) }, [channelId])
 
   const currentUser = useAuthStore((s) => s.user)
 
@@ -215,6 +220,36 @@ export default function ChannelPage() {
     const currentUserId = String(currentUser?.id ?? '')
     const peerEntries = Object.entries(voicePeers).filter(([userId]) => userId !== currentUserId)
 
+    // Normalised list of all voice participants
+    const allParticipants = [
+      {
+        id: 'local',
+        label: currentUser?.name ?? '',
+        avatarUrl: currentUser?.avatar?.url,
+        speaking: localSpeaking,
+        muted: localMuted,
+        deafened: localDeafened,
+        videoStream: localCameraEnabled ? localVideoStream : null,
+        isLocal: true as const,
+      },
+      ...peerEntries.map(([userId, peer]) => {
+        const member = members?.find((m) => String(m.user?.id) === userId)
+        return {
+          id: userId,
+          label: member?.username ?? member?.user?.name ?? `User ${userId.slice(0, 6)}`,
+          avatarUrl: member?.user?.avatar?.url,
+          speaking: peer.speaking,
+          muted: peer.muted,
+          deafened: peer.deafened,
+          videoStream: peer.videoStream,
+          isLocal: false as const,
+        }
+      }),
+    ]
+
+    const spotlightParticipant = spotlightId ? allParticipants.find((p) => p.id === spotlightId) ?? null : null
+    const stripParticipants = spotlightId ? allParticipants.filter((p) => p.id !== spotlightId) : []
+
     return (
       <div className="flex flex-col flex-1 min-h-0">
         <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
@@ -228,53 +263,66 @@ export default function ChannelPage() {
           )}
         </div>
 
-        <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 overflow-auto">
-          {isConnected ? (
-            <>
+        {isConnected ? (
+          spotlightParticipant ? (
+            /* ── Spotlight layout ─────────────────────────────────────────── */
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* Main spotlight area */}
+              <div className="flex-1 min-h-0 flex items-center justify-center p-4">
+                <VoiceParticipant
+                  {...spotlightParticipant}
+                  size="spotlight"
+                  onClick={() => setSpotlightId(null)}
+                />
+              </div>
+              {/* Bottom strip */}
+              <div className="shrink-0 flex gap-3 px-4 pb-3 overflow-x-auto border-t border-sidebar-border pt-3">
+                {stripParticipants.map((p) => (
+                  <VoiceParticipant
+                    key={p.id}
+                    {...p}
+                    size="compact"
+                    onClick={p.videoStream ? () => setSpotlightId(p.id) : undefined}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* ── Grid layout ──────────────────────────────────────────────── */
+            <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6 overflow-auto">
               <p className="text-sm text-muted-foreground">
                 {peerEntries.length === 0
                   ? t('channel.connected', { count: 1 })
                   : t('channel.connected_plural', { count: peerEntries.length + 1 })}
               </p>
-
               <div className="flex flex-wrap justify-center gap-4 w-full">
-                <VoiceParticipant
-                  label={`${currentUser?.name ?? t('channel.you')} (${t('channel.you')})`}
-                  avatarUrl={currentUser?.avatar?.url}
-                  speaking={false}
-                  muted={localMuted}
-                  deafened={localDeafened}
-                  videoStream={localCameraEnabled ? localVideoStream : null}
-                  isLocal
-                />
-                {peerEntries.map(([userId, peer]) => (
-                  <VoiceParticipantRemote
-                    key={userId}
-                    userId={userId}
-                    peer={peer}
-                    members={members}
+                {allParticipants.map((p) => (
+                  <VoiceParticipant
+                    key={p.id}
+                    {...p}
+                    onClick={p.videoStream ? () => setSpotlightId(p.id) : undefined}
                   />
                 ))}
               </div>
-            </>
-          ) : (
-            <>
-              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
-                <Volume2 className="w-8 h-8 text-muted-foreground" />
-              </div>
-              <h3 className="text-xl font-bold">{channel?.name}</h3>
-              <p className="text-sm text-muted-foreground">
-                {t('channel.clickToJoin')}
-              </p>
-              <button
-                onClick={() => void handleJoinVoice()}
-                className="mt-2 px-5 py-2 rounded-md bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
-              >
-                {t('channel.joinVoice')}
-              </button>
-            </>
-          )}
-        </div>
+            </div>
+          )
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 p-6">
+            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+              <Volume2 className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <h3 className="text-xl font-bold">{channel?.name}</h3>
+            <p className="text-sm text-muted-foreground">
+              {t('channel.clickToJoin')}
+            </p>
+            <button
+              onClick={() => void handleJoinVoice()}
+              className="mt-2 px-5 py-2 rounded-md bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
+            >
+              {t('channel.joinVoice')}
+            </button>
+          </div>
+        )}
       </div>
     )
   }
@@ -367,7 +415,7 @@ export default function ChannelPage() {
                 className="flex-1 min-h-0"
               />
             ) : (
-              <MemberList serverId={serverId} />
+              <MemberList serverId={serverId} channel={channel} />
             )}
           </div>
         )}
@@ -382,11 +430,13 @@ export default function ChannelPage() {
 function VideoFeed({
   stream,
   mirror = false,
+  onAspect,
   onFrozen,
   onActive,
 }: {
   stream: MediaStream
   mirror?: boolean
+  onAspect?: (ratio: number) => void
   onFrozen?: () => void
   onActive?: () => void
 }) {
@@ -433,10 +483,16 @@ function VideoFeed({
       autoPlay
       playsInline
       muted
+      onLoadedMetadata={(e) => {
+        const { videoWidth: w, videoHeight: h } = e.currentTarget
+        if (w && h) onAspect?.(w / h)
+      }}
       className={cn('w-full h-full object-cover rounded-lg', mirror && '[transform:scaleX(-1)]')}
     />
   )
 }
+
+type ParticipantSize = 'normal' | 'compact' | 'spotlight'
 
 function VoiceParticipant({
   label,
@@ -446,6 +502,8 @@ function VoiceParticipant({
   deafened,
   videoStream,
   isLocal,
+  size = 'normal',
+  onClick,
 }: {
   label: string
   avatarUrl?: string
@@ -454,103 +512,107 @@ function VoiceParticipant({
   deafened?: boolean
   videoStream?: MediaStream | null
   isLocal?: boolean
+  size?: ParticipantSize
+  onClick?: () => void
 }) {
   const initials = label.charAt(0).toUpperCase()
-
   const [frozenLocally, setFrozenLocally] = useState(false)
-
-  useEffect(() => { setFrozenLocally(false) }, [videoStream])
-
+  const [videoAspect, setVideoAspect] = useState<number | null>(null)
+  useEffect(() => { setFrozenLocally(false); setVideoAspect(null) }, [videoStream])
   const handleFrozen = useCallback(() => setFrozenLocally(true), [])
   const handleActive = useCallback(() => setFrozenLocally(false), [])
-
   const hasVideo = !!videoStream && (isLocal || !frozenLocally)
 
+  const avatarCls = size === 'spotlight' ? 'w-24 h-24' : size === 'compact' ? 'w-12 h-12' : 'w-20 h-20'
+  const fallbackCls = size === 'spotlight' ? 'text-3xl' : size === 'compact' ? 'text-base' : 'text-xl'
+  const badgeCls = size === 'spotlight' ? 'w-7 h-7' : 'w-5 h-5'
+  const badgeIconCls = size === 'spotlight' ? 'w-4 h-4' : 'w-3 h-3'
+  const labelCls = size === 'compact' ? 'text-[10px] max-w-[80px]' : 'text-xs max-w-[100px]'
+
+  // Spotlight: full height, width derived from the camera's native aspect ratio.
+  // This means the video is never cropped and never letterboxed — it's exactly
+  // as wide as the AR dictates at the available height.
+  const spotlightContainerStyle = size === 'spotlight' && hasVideo
+    ? { height: '100%', aspectRatio: videoAspect ? String(videoAspect) : '16 / 9' }
+    : undefined
+
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className={cn(
+      'flex flex-col items-center gap-2',
+      size === 'spotlight' && hasVideo && 'h-full',
+    )}>
+      {/*
+        Outer wrapper has NO overflow-hidden — speaking ring and mute/deafen badges
+        are positioned here and must render outside the avatar's clipping boundary.
+      */}
       <div
         className={cn(
-          'relative overflow-hidden transition-all duration-150',
-          hasVideo
-            ? 'w-48 h-36 rounded-lg bg-zinc-900'
-            : 'w-16 h-16 rounded-full',
-          speaking && hasVideo && 'ring-2 ring-green-500 ring-offset-2 ring-offset-background',
+          'relative transition-all duration-150',
+          hasVideo && onClick && 'cursor-pointer',
         )}
+        style={spotlightContainerStyle}
+        onClick={onClick}
       >
         {hasVideo ? (
-          <>
+          /* Video: overflow-hidden is scoped to the video container, not the wrapper */
+          <div className={cn(
+            'rounded-lg bg-zinc-900 overflow-hidden relative',
+            size === 'spotlight' ? 'w-full h-full' : size === 'compact' ? 'w-36 h-24' : 'w-56 h-40',
+          )}>
             <VideoFeed
               key={videoStream!.id}
               stream={videoStream!}
               mirror={isLocal}
+              onAspect={size === 'spotlight' ? setVideoAspect : undefined}
               onFrozen={isLocal ? undefined : handleFrozen}
               onActive={isLocal ? undefined : handleActive}
             />
+            {/* Label + icon bar inside the video */}
             <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-black/50 flex items-center justify-between gap-1">
               <span className="text-xs text-white truncate">{label}</span>
               <div className="flex items-center gap-1 shrink-0">
-                {deafened ? (
-                  <HeadphoneOff className="w-3 h-3 text-destructive" />
-                ) : muted ? (
-                  <MicOff className="w-3 h-3 text-destructive" />
-                ) : null}
+                {deafened
+                  ? <HeadphoneOff className="w-3 h-3 text-destructive" />
+                  : muted
+                    ? <MicOff className="w-3 h-3 text-destructive" />
+                    : null}
               </div>
             </div>
+            {/* Speaking ring inside video */}
             {speaking && (
               <div className="absolute inset-0 ring-2 ring-green-500 rounded-lg pointer-events-none" />
             )}
-          </>
+          </div>
         ) : (
+          /* Avatar: Avatar has its own overflow-hidden; ring and badge sit on the wrapper */
           <>
-            <Avatar
-              className={cn(
-                'w-16 h-16 transition-all duration-150',
-                speaking && 'ring-2 ring-green-500 ring-offset-2 ring-offset-background',
-              )}
-            >
+            <Avatar className={cn(avatarCls, 'transition-all duration-150')}>
               {avatarUrl && <AvatarImage src={avatarUrl} alt={label} className="object-cover" />}
-              <AvatarFallback className="text-lg">{initials}</AvatarFallback>
+              <AvatarFallback className={fallbackCls}>{initials}</AvatarFallback>
             </Avatar>
-            {deafened ? (
-              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
-                <HeadphoneOff className="w-3 h-3 text-white" />
+            {/* Speaking ring — sibling of Avatar, not clipped by it */}
+            {speaking && (
+              <div className="absolute inset-0 rounded-full ring-2 ring-green-500 ring-offset-2 ring-offset-background pointer-events-none" />
+            )}
+            {/* Mute/Deafen badge — sibling of Avatar, not clipped by it */}
+            {(deafened || muted) && (
+              <div className={cn(
+                'absolute -bottom-1 -right-1 rounded-full bg-destructive border border-background flex items-center justify-center pointer-events-none',
+                badgeCls,
+              )}>
+                {deafened
+                  ? <HeadphoneOff className={cn(badgeIconCls, 'text-white')} />
+                  : <MicOff className={cn(badgeIconCls, 'text-white')} />
+                }
               </div>
-            ) : muted ? (
-              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-destructive flex items-center justify-center">
-                <MicOff className="w-3 h-3 text-white" />
-              </div>
-            ) : null}
+            )}
           </>
         )}
       </div>
       {!hasVideo && (
-        <span className="text-xs text-muted-foreground truncate max-w-[80px]">{label}</span>
+        <span className={cn('text-muted-foreground truncate', labelCls)}>{label}</span>
       )}
     </div>
   )
 }
 
-function VoiceParticipantRemote({
-  userId,
-  peer,
-  members,
-}: {
-  userId: string
-  peer: { speaking: boolean; muted: boolean; deafened?: boolean; videoStream: MediaStream | null }
-  members: { user?: { id?: number; name?: string; avatar?: { url?: string } }; username?: string }[] | undefined
-}) {
-  const member = members?.find((m) => String(m.user?.id) === userId)
-  const displayName = member?.username ?? member?.user?.name ?? `User ${userId.slice(0, 6)}`
-  const avatarUrl = member?.user?.avatar?.url
-
-  return (
-    <VoiceParticipant
-      label={displayName}
-      avatarUrl={avatarUrl}
-      speaking={peer.speaking}
-      muted={peer.muted}
-      deafened={peer.deafened}
-      videoStream={peer.videoStream}
-    />
-  )
-}

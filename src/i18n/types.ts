@@ -96,6 +96,10 @@ export interface Translation {
         echoCancellationDesc: string
         noiseSuppression: string
         noiseSuppressionDesc: string
+        noiseSuppressionEnabled: string
+        denoiserDefault: string
+        denoiserRnnoise: string
+        denoiserSpeex: string
         autoGainControl: string
         autoGainControlDesc: string
         inputMode: string
@@ -261,6 +265,9 @@ export interface Translation {
         deleteDesc: string
         editFailed: string
         deleteFailed: string
+        suppressEmbedsTitle: string
+        suppressEmbedsDesc: string
+        suppressEmbedsConfirm: string
         enterTo: string
         save: string
         escTo: string

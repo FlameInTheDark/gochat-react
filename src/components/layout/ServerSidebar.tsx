@@ -1103,7 +1103,7 @@ export default function ServerSidebar() {
     const overStr = String(over.id)
 
     // ── Merge highlight ──────────────────────────────────────────────────────
-    // Only top-level guilds and folders can be merge targets (Discord behaviour).
+    // Only top-level guilds and folders can be merge targets.
     // Guilds inside folders (ifguild:) are NOT merge targets — they only
     // support reorder within the folder or extraction by dragging outside.
     const isGuildDrag = activeStr.startsWith('guild:') || activeStr.startsWith('ifguild:')

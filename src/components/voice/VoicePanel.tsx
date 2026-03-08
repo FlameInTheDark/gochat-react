@@ -25,6 +25,7 @@ export default function VoicePanel() {
   const channelName = useVoiceStore((s) => s.channelName)
   const localMuted = useVoiceStore((s) => s.localMuted)
   const localDeafened = useVoiceStore((s) => s.localDeafened)
+  const localSpeaking = useVoiceStore((s) => s.localSpeaking)
   const localCameraEnabled = useVoiceStore((s) => s.localCameraEnabled)
   const storePing = useVoiceStore((s) => s.ping)
   const connectionState = useVoiceStore((s) => s.connectionState)
@@ -42,7 +43,13 @@ export default function VoicePanel() {
   const status = getConnectionStatus(connectionState, t)
 
   function toggleMute() {
-    setMuted(!localMuted)
+    // Unmuting while deafened: undeafen and explicitly unmute regardless of pre-deafen state
+    if (localMuted && localDeafened) {
+      setDeafened(false)
+      setMuted(false)
+    } else {
+      setMuted(!localMuted)
+    }
   }
 
   function toggleDeafen() {
@@ -105,7 +112,9 @@ export default function VoicePanel() {
             'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
             localMuted
               ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
-              : 'hover:bg-accent text-muted-foreground hover:text-foreground',
+              : localSpeaking
+                ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                : 'hover:bg-accent text-muted-foreground hover:text-foreground',
           )}
         >
           {localMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}

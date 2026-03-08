@@ -13,7 +13,7 @@ import { useTranslation } from 'react-i18next'
  * while the user is continuously typing.
  */
 const TYPING_THROTTLE_MS = 5_000
-/** Max files per message (mirrors Discord). */
+/** Max files per message. */
 const MAX_FILES = 10
 /** Max single-file size: 25 MB. */
 const MAX_FILE_SIZE = 25 * 1024 * 1024

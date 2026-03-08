@@ -17,6 +17,10 @@ import JSONBig from 'json-bigint'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
 import { sendRaw } from './wsService'
+import {
+  buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression,
+  type DenoiserNode,
+} from './denoiserService'
 
 // BigInt-aware serializer for SFU WS messages (channel IDs are int64 Snowflakes).
 // Used for both outgoing (stringify) and incoming (parse) messages — large user IDs
@@ -54,6 +58,9 @@ let memberEventCleanup: (() => void) | null = null
 // Shared AudioContext for all remote peers.
 let audioCtx: AudioContext | null = null
 
+// The active denoiser node inserted in the send pipeline (null when type='default').
+let denoiserNode: DenoiserNode | null = null
+
 // Ping tracking for RTT calculation
 let lastPingTime: number = 0
 
@@ -70,6 +77,217 @@ let localInputGain: GainNode | null = null
 // The processed tracks actually sent to the PeerConnection.
 // We keep references so that setMuted() can toggle the correct tracks.
 let sentTracks: MediaStreamTrack[] = []
+
+// ── VAD / PTT input monitor ────────────────────────────────────────────────────
+// Time voice must stay above threshold before gate opens (prevents brief pops)
+const VAD_ATTACK_MS  = 30
+// Time gate stays open after volume drops below threshold (prevents clipping)
+const VAD_HANGOVER_MS = 350
+// Short hold-release delay after PTT key-up (ms)
+const PTT_RELEASE_MS = 200
+
+let vadAnalyserNode: AnalyserNode | null = null
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let vadFloatData: any = null  // Float32Array — typed as any to avoid TS strict ArrayBuffer mismatch
+let vadRafId: number | null = null
+let vadLastTime = 0
+let vadAttackElapsed = 0   // ms voice has been above threshold
+let vadHangoverLeft  = 0   // ms gate stays open after voice drops below threshold
+let pttCleanup: (() => void) | null = null
+let pttReleaseTimer: ReturnType<typeof setTimeout> | null = null
+// Whether VAD/PTT currently gates transmission (separate from user mute button)
+let isTransmitting = false
+// Mute state saved when deafen is applied, used to restore it on undeafen
+let mutedBeforeDeafen = false
+
+/**
+ * Returns the dBFS gate threshold. voiceActivityThreshold is now stored
+ * directly as dBFS (-100 to 0), so this is an identity function kept for
+ * call-site clarity.
+ */
+export function thresholdToDb(threshold: number): number {
+  return threshold
+}
+
+/**
+ * Enable or disable the sent tracks, honouring the user's manual mute state.
+ * Also updates the localSpeaking store flag for UI indicators.
+ */
+function setTransmitting(active: boolean) {
+  if (isTransmitting === active) return
+  isTransmitting = active
+  const muted = useVoiceStore.getState().localMuted
+  const shouldEnable = active && !muted
+  for (const track of sentTracks) {
+    track.enabled = shouldEnable
+  }
+  useVoiceStore.getState().setLocalSpeaking(shouldEnable)
+  // Notify SFU so other participants get the speaking indicator
+  sfuSend({ event: 'speaking', data: shouldEnable ? '1' : '0' })
+  vlog('setTransmitting: active=%s muted=%s → track.enabled=%s', active, muted, shouldEnable)
+}
+
+/**
+ * Start voice activity detection on the local audio input.
+ *
+ * Uses dBFS (linear in dB) throughout.  getFloatTimeDomainData gives higher precision than byte data,
+ * which matters for detecting quiet sounds near the threshold.
+ *
+ * Gate logic mirrors the demo:
+ *   - Attack  (VAD_ATTACK_MS):   voice must be above threshold for this long
+ *             before the gate opens — prevents pops/clicks from triggering.
+ *   - Hangover (VAD_HANGOVER_MS): gate stays open this long after volume drops
+ *             below threshold — prevents word endings from being clipped.
+ */
+function startVAD() {
+  stopVAD()
+  if (!localInputGain || !audioCtx) {
+    vwarn('startVAD: no input gain or audio context — skipping')
+    return
+  }
+
+  vadAnalyserNode = audioCtx.createAnalyser()
+  vadAnalyserNode.fftSize = 2048
+  vadFloatData   = new Float32Array(vadAnalyserNode.fftSize)
+  localInputGain.connect(vadAnalyserNode)
+
+  vadLastTime      = 0
+  vadAttackElapsed = 0
+  vadHangoverLeft  = 0
+
+  // Start silent — VAD enables tracks when voice is detected
+  setTransmitting(false)
+
+  const loop = (now: number) => {
+    if (!vadAnalyserNode || !vadFloatData) return
+
+    const dt = vadLastTime > 0 ? now - vadLastTime : 0
+    vadLastTime = now
+
+    vadAnalyserNode.getFloatTimeDomainData(vadFloatData)
+    let sum = 0
+    for (let i = 0; i < vadFloatData.length; i++) {
+      sum += vadFloatData[i] * vadFloatData[i]
+    }
+    const rms = Math.sqrt(sum / vadFloatData.length)
+    const db  = Math.max(20 * Math.log10(Math.max(rms, 1e-8)), -100)
+    const thresholdDb = thresholdToDb(useVoiceStore.getState().settings.voiceActivityThreshold)
+    const above = db >= thresholdDb
+
+    if (above) {
+      vadAttackElapsed += dt
+      vadHangoverLeft   = VAD_HANGOVER_MS
+      if (!isTransmitting && vadAttackElapsed >= VAD_ATTACK_MS) {
+        setTransmitting(true)
+      }
+    } else {
+      vadAttackElapsed = 0
+      if (isTransmitting) {
+        vadHangoverLeft -= dt
+        if (vadHangoverLeft <= 0) {
+          setTransmitting(false)
+          vadHangoverLeft = 0
+        }
+      }
+    }
+
+    vadRafId = requestAnimationFrame(loop)
+  }
+  vadRafId = requestAnimationFrame(loop)
+  vlog('startVAD: started, thresholdDb=%.1f dBFS', thresholdToDb(useVoiceStore.getState().settings.voiceActivityThreshold))
+}
+
+function stopVAD() {
+  if (vadRafId !== null) {
+    cancelAnimationFrame(vadRafId)
+    vadRafId = null
+  }
+  if (vadAnalyserNode) {
+    try { vadAnalyserNode.disconnect() } catch { /* already disconnected */ }
+    vadAnalyserNode = null
+  }
+  vadFloatData     = null
+  vadLastTime      = 0
+  vadAttackElapsed = 0
+  vadHangoverLeft  = 0
+  vlog('stopVAD: stopped')
+}
+
+/** Start push-to-talk listeners for the configured key. */
+function startPTT() {
+  stopPTT()
+  const pttKey = useVoiceStore.getState().settings.pushToTalkKey
+  if (!pttKey) {
+    vwarn('startPTT: no PTT key configured')
+    return
+  }
+
+  // Start silent — key hold enables tracks
+  setTransmitting(false)
+
+  const onKeydown = (e: KeyboardEvent) => {
+    if (e.code !== pttKey || e.repeat) return
+    if (pttReleaseTimer !== null) {
+      clearTimeout(pttReleaseTimer)
+      pttReleaseTimer = null
+    }
+    setTransmitting(true)
+  }
+
+  const onKeyup = (e: KeyboardEvent) => {
+    if (e.code !== pttKey) return
+    if (pttReleaseTimer !== null) clearTimeout(pttReleaseTimer)
+    pttReleaseTimer = setTimeout(() => {
+      pttReleaseTimer = null
+      setTransmitting(false)
+    }, PTT_RELEASE_MS)
+  }
+
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keyup', onKeyup)
+
+  pttCleanup = () => {
+    window.removeEventListener('keydown', onKeydown)
+    window.removeEventListener('keyup', onKeyup)
+    if (pttReleaseTimer !== null) {
+      clearTimeout(pttReleaseTimer)
+      pttReleaseTimer = null
+    }
+  }
+  vlog('startPTT: listening for key=%s', pttKey)
+}
+
+function stopPTT() {
+  if (pttCleanup) {
+    pttCleanup()
+    pttCleanup = null
+  }
+}
+
+/**
+ * Start the appropriate input monitor (VAD or PTT) based on current settings.
+ * Exported so applyVoiceSettings can restart it after mode/threshold changes.
+ */
+export function startInputMonitor() {
+  stopVAD()
+  stopPTT()
+  if (!peerConnection || sentTracks.length === 0) {
+    vlog('startInputMonitor: not in voice channel, skipping')
+    return
+  }
+  const { inputMode } = useVoiceStore.getState().settings
+  if (inputMode === 'voice_activity') {
+    startVAD()
+  } else {
+    startPTT()
+  }
+}
+
+function stopInputMonitor() {
+  stopVAD()
+  stopPTT()
+  isTransmitting = false
+}
 
 // ── Debug logging ─────────────────────────────────────────────────────────────
 
@@ -528,8 +746,14 @@ function createPeerConnection(): RTCPeerConnection {
   return pc
 }
 
+function cleanupDenoiserNode() {
+  destroyDenoiserNode(denoiserNode)
+  denoiserNode = null
+}
+
 function cleanup(sendPresenceClear = true) {
   vlog('cleanup: tearing down voice connection')
+  stopInputMonitor()
 
   if (peerConnection) {
     vlog('cleanup: closing RTCPeerConnection (state=%s)', peerConnection.connectionState)
@@ -570,6 +794,8 @@ function cleanup(sendPresenceClear = true) {
     localInputGain.disconnect()
     localInputGain = null
   }
+
+  cleanupDenoiserNode()
 
   const gainCount = Object.keys(audioGains).length
   vlog('cleanup: disconnecting %d remote audio gain nodes', gainCount)
@@ -648,20 +874,22 @@ export async function joinVoice(
   // Request microphone access
   vlog('joinVoice: requesting getUserMedia(audio)')
   const settings = useVoiceStore.getState().settings
+  // When using a custom denoiser, disable browser-native noise suppression to avoid double processing.
+  const useNativeSuppression = effectiveNoiseSuppression(settings.denoiserType ?? 'default', settings.noiseSuppression)
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: settings.audioInputDevice ? { exact: settings.audioInputDevice } : undefined,
         autoGainControl: settings.autoGainControl,
         echoCancellation: settings.echoCancellation,
-        noiseSuppression: settings.noiseSuppression,
+        noiseSuppression: useNativeSuppression,
       },
       video: false
     })
   } catch (err) {
     const error = err as Error
     vwarn('joinVoice: getUserMedia failed (%s)', error.message)
-    
+
     // Retry with default device if the specific device failed (e.g. unplugged)
     if (settings.audioInputDevice && (error.name === 'OverconstrainedError' || error.name === 'NotFoundError')) {
       vwarn('joinVoice: retrying with default audio device...')
@@ -670,7 +898,7 @@ export async function joinVoice(
           audio: {
             autoGainControl: settings.autoGainControl,
             echoCancellation: settings.echoCancellation,
-            noiseSuppression: settings.noiseSuppression,
+            noiseSuppression: useNativeSuppression,
           },
           video: false
         })
@@ -711,7 +939,14 @@ export async function joinVoice(
     const source = ctx.createMediaStreamSource(localStream)
     localInputGain = ctx.createGain()
     localInputGain.gain.value = settings.audioInputLevel / 100
-    source.connect(localInputGain)
+
+    // Insert denoiser between source and input gain (if not using browser default).
+    cleanupDenoiserNode()
+    const denoiserType = effectiveDenoiserType(settings.denoiserType ?? 'default', settings.noiseSuppression)
+    vlog('joinVoice: denoiserType=%s (raw=%s noiseSuppression=%s)', denoiserType, settings.denoiserType, settings.noiseSuppression)
+    denoiserNode = await buildDenoiserNode(denoiserType, ctx, source)
+    const preGainNode: AudioNode = denoiserNode ?? source
+    preGainNode.connect(localInputGain)
 
     // Route through a MediaStreamDestination so gain is applied to the sent audio.
     const destination = ctx.createMediaStreamDestination()
@@ -828,6 +1063,11 @@ export async function joinVoice(
     vlog('voiceService: voice channel member event listeners removed')
   }
 
+  // Start VAD or PTT based on current settings.
+  // VAD starts in "silent" state and enables tracks when voice is detected.
+  // PTT starts in "silent" state and enables tracks when key is held.
+  startInputMonitor()
+
   vlog('joinVoice: setup complete, waiting for SFU offer...')
 }
 
@@ -845,24 +1085,24 @@ export function leaveVoice() {
 export function setMuted(muted: boolean) {
   vlog('setMuted: %s', muted)
 
-  // Toggle the SENT (processed) tracks — these are the ones the PeerConnection
-  // actually transmits to the SFU.  Toggling the raw localStream tracks may not
-  // propagate through the AudioContext pipeline in all browsers.
+  // Respect the VAD/PTT transmit gate: only enable tracks if VAD/PTT says active.
+  // When muting: always disable. When unmuting: restore to current transmit state.
+  const shouldEnable = !muted && isTransmitting
   if (sentTracks.length > 0) {
     for (const track of sentTracks) {
-      track.enabled = !muted
-      vlog('setMuted: sent track id=%s enabled=%s', track.id, track.enabled)
+      track.enabled = shouldEnable
+      vlog('setMuted: sent track id=%s enabled=%s', track.id, shouldEnable)
     }
   } else if (localStream) {
-    // Fallback: if for some reason sentTracks is empty, toggle raw tracks
     vwarn('setMuted: no sentTracks — falling back to localStream tracks')
     for (const track of localStream.getAudioTracks()) {
-      track.enabled = !muted
+      track.enabled = shouldEnable
     }
   }
 
-  sfuSend({ op: 7, t: T_MUTE_SELF, d: { muted } })
   useVoiceStore.getState().setLocalMuted(muted)
+  useVoiceStore.getState().setLocalSpeaking(shouldEnable)
+  sfuSend({ op: 7, t: T_MUTE_SELF, d: { muted } })
 
   // Send presence update with new mute state
   const store = useVoiceStore.getState()
@@ -883,6 +1123,14 @@ export function setMuted(muted: boolean) {
 
 export function setDeafened(deafened: boolean) {
   vlog('setDeafened: %s', deafened)
+  if (deafened) {
+    // Remember whether the mic was already muted, then ensure it is muted
+    mutedBeforeDeafen = useVoiceStore.getState().localMuted
+    if (!mutedBeforeDeafen) setMuted(true)
+  } else {
+    // Restore the mute state that was in effect before deafening
+    if (!mutedBeforeDeafen) setMuted(false)
+  }
   const settings = useVoiceStore.getState().settings
   const baseGain = settings.audioOutputLevel / 100
   // Mute / unmute all remote gain nodes, applying per-user volume
@@ -1037,10 +1285,12 @@ async function reacquireMicrophone(): Promise<void> {
   if (!peerConnection) return
 
   const settings = useVoiceStore.getState().settings
-  const wasMuted = useVoiceStore.getState().localMuted
 
   vlog('reacquireMicrophone: re-acquiring with echoCancellation=%s noiseSuppression=%s',
     settings.echoCancellation, settings.noiseSuppression)
+
+  // Stop VAD/PTT so they don't reference stale analyser/gain nodes
+  stopInputMonitor()
 
   // Stop and remove existing sent tracks from peer connection
   for (const track of sentTracks) {
@@ -1067,13 +1317,14 @@ async function reacquireMicrophone(): Promise<void> {
   }
 
   // Request new microphone access with updated settings
+  const useNativeSuppression = effectiveNoiseSuppression(settings.denoiserType ?? 'default', settings.noiseSuppression)
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: settings.audioInputDevice ? { exact: settings.audioInputDevice } : undefined,
         autoGainControl: settings.autoGainControl,
         echoCancellation: settings.echoCancellation,
-        noiseSuppression: settings.noiseSuppression,
+        noiseSuppression: useNativeSuppression,
       },
       video: false
     })
@@ -1082,7 +1333,11 @@ async function reacquireMicrophone(): Promise<void> {
     const source = ctx.createMediaStreamSource(localStream)
     localInputGain = ctx.createGain()
     localInputGain.gain.value = settings.audioInputLevel / 100
-    source.connect(localInputGain)
+    cleanupDenoiserNode()
+    const denoiserType = effectiveDenoiserType(settings.denoiserType ?? 'default', settings.noiseSuppression)
+    denoiserNode = await buildDenoiserNode(denoiserType, ctx, source)
+    const preGainNode: AudioNode = denoiserNode ?? source
+    preGainNode.connect(localInputGain)
 
     const destination = ctx.createMediaStreamDestination()
     localInputGain.connect(destination)
@@ -1092,10 +1347,10 @@ async function reacquireMicrophone(): Promise<void> {
     for (const track of processedTracks) {
       peerConnection.addTrack(track, processedStream)
       sentTracks.push(track)
-      track.enabled = !wasMuted
     }
 
     vlog('reacquireMicrophone: success, added %d processed track(s)', processedTracks.length)
+    startInputMonitor()
   } catch (err) {
     verr('reacquireMicrophone: failed - %s', (err as Error).message)
     // Try with default device as fallback
@@ -1104,7 +1359,7 @@ async function reacquireMicrophone(): Promise<void> {
         audio: {
           autoGainControl: settings.autoGainControl,
           echoCancellation: settings.echoCancellation,
-          noiseSuppression: settings.noiseSuppression,
+          noiseSuppression: useNativeSuppression,
         },
         video: false
       })
@@ -1113,7 +1368,11 @@ async function reacquireMicrophone(): Promise<void> {
       const source = ctx.createMediaStreamSource(localStream)
       localInputGain = ctx.createGain()
       localInputGain.gain.value = settings.audioInputLevel / 100
-      source.connect(localInputGain)
+      cleanupDenoiserNode()
+      const denoiserType2 = effectiveDenoiserType(settings.denoiserType ?? 'default', settings.noiseSuppression)
+      denoiserNode = await buildDenoiserNode(denoiserType2, ctx, source)
+      const preGainNode2: AudioNode = denoiserNode ?? source
+      preGainNode2.connect(localInputGain)
 
       const destination = ctx.createMediaStreamDestination()
       localInputGain.connect(destination)
@@ -1123,10 +1382,10 @@ async function reacquireMicrophone(): Promise<void> {
       for (const track of processedTracks) {
         peerConnection.addTrack(track, processedStream)
         sentTracks.push(track)
-        track.enabled = !wasMuted
       }
 
       vlog('reacquireMicrophone: fallback success, added %d processed track(s)', processedTracks.length)
+      startInputMonitor()
     } catch (fallbackErr) {
       verr('reacquireMicrophone: fallback also failed - %s', (fallbackErr as Error).message)
     }
@@ -1156,9 +1415,13 @@ export function applyVoiceSettings() {
     void (audioCtx as unknown as AudioContextWithSinkId).setSinkId(settings.audioOutputDevice).catch(() => {})
   }
 
-  // Re-acquire microphone if connected - new audio processing settings require fresh getUserMedia
+  // Re-acquire microphone if connected - new audio processing settings require fresh getUserMedia.
+  // reacquireMicrophone() restarts the input monitor after re-acquiring.
   if (peerConnection && localStream) {
     void reacquireMicrophone()
+  } else {
+    // Restart the input monitor to pick up mode/threshold/key changes
+    startInputMonitor()
   }
 }
 

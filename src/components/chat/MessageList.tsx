@@ -107,7 +107,7 @@ function PaginationSkeleton() {
 
 // ── Main component ────────────────────────────────────────────────────────────
 //
-// Discord-style layout: bottom-anchored with:
+// Chat layout: bottom-anchored with:
 //   • "beginning of history" shown only when confirmed (endReached)
 //   • "NEW MESSAGES" separator at the unread boundary
 //   • Scroll-to-separator on initial open with unread messages
@@ -241,7 +241,7 @@ export default function MessageList({
     if (!hadMessages || isAtBottomRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [messages.length, isLoading])
+  }, [messages, isLoading])
 
   // ── Scroll handler ────────────────────────────────────────────────────────
   function handleScroll() {

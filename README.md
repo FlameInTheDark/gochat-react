@@ -1,6 +1,6 @@
 # gochat-react
 
-A modern React chat application with Discord-like UI, built with TypeScript, Tailwind CSS, and shadcn/ui.
+A modern React chat application built with TypeScript, Tailwind CSS, and shadcn/ui.
 
 ## Tech Stack
 

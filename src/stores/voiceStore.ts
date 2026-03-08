@@ -16,6 +16,7 @@ interface VoiceState {
   channelName: string | null
   localMuted: boolean
   localDeafened: boolean
+  localSpeaking: boolean // true when VAD/PTT is actively transmitting
   localCameraEnabled: boolean
   localVideoStream: MediaStream | null
   ping: number // RTT in ms
@@ -32,6 +33,7 @@ interface VoiceState {
     voiceActivityThreshold: number // 0–100, sensitivity threshold for voice activity
     pushToTalkKey: string          // key code for PTT, e.g. 'KeyV'
     videoInputDevice: string       // deviceId for camera, '' = default
+    denoiserType: 'default' | 'rnnoise' | 'speex'  // noise suppression backend
   }
   peers: Record<string, VoicePeer> // keyed by userId string
 
@@ -45,6 +47,7 @@ interface VoiceState {
   setPeerVolume: (userId: string, volume: number) => void
   setLocalMuted: (muted: boolean) => void
   setLocalDeafened: (deafened: boolean) => void
+  setLocalSpeaking: (speaking: boolean) => void
   setLocalCameraEnabled: (enabled: boolean) => void
   setLocalVideoStream: (stream: MediaStream | null) => void
   setPeerVideoStream: (userId: string, stream: MediaStream | null) => void
@@ -59,6 +62,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   channelName: null,
   localMuted: false,
   localDeafened: false,
+  localSpeaking: false,
   localCameraEnabled: false,
   localVideoStream: null,
   ping: 0,
@@ -72,9 +76,10 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     echoCancellation: true,
     noiseSuppression: true,
     inputMode: 'voice_activity',
-    voiceActivityThreshold: 50,
+    voiceActivityThreshold: -60, // -60 dBFS, good default for speech
     pushToTalkKey: '',
     videoInputDevice: '',
+    denoiserType: 'default',
   },
   peers: {},
 
@@ -144,6 +149,8 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   setLocalMuted: (localMuted) => set({ localMuted }),
 
   setLocalDeafened: (localDeafened) => set({ localDeafened }),
+
+  setLocalSpeaking: (localSpeaking) => set({ localSpeaking }),
 
   setLocalCameraEnabled: (localCameraEnabled) => set({ localCameraEnabled }),
 

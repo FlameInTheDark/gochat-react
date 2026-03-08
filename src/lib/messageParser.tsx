@@ -12,56 +12,6 @@ export interface MentionResolver {
   onChannelClick?: (channelId: string) => void
 }
 
-// ── YouTube extraction ────────────────────────────────────────────────────────
-
-function extractYouTubeId(url: string): string | null {
-  try {
-    const u = new URL(url)
-    // youtu.be/<id>
-    if (u.hostname === 'youtu.be') {
-      const id = u.pathname.slice(1).split('/')[0]
-      return id || null
-    }
-    // youtube.com/...
-    if (
-      u.hostname === 'youtube.com' ||
-      u.hostname === 'www.youtube.com' ||
-      u.hostname === 'm.youtube.com'
-    ) {
-      // /watch?v=ID
-      const v = u.searchParams.get('v')
-      if (v) return v
-      // /embed/ID  /shorts/ID  /live/ID  /v/ID
-      const m = u.pathname.match(/\/(embed|shorts|live|v)\/([A-Za-z0-9_-]+)/)
-      if (m) return m[2] ?? null
-    }
-    return null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Extract unique YouTube video IDs + their source URLs from a message string.
- * Rendered by MessageItem as `<YoutubeEmbed>` blocks below the text.
- */
-export function extractYouTubeEmbeds(
-  content: string,
-): Array<{ videoId: string; url: string }> {
-  const results: Array<{ videoId: string; url: string }> = []
-  const seen = new Set<string>()
-  const urlRe = /https?:\/\/[^\s<>)]+/g
-  let m: RegExpExecArray | null
-  while ((m = urlRe.exec(content)) !== null) {
-    const url = m[0]
-    const videoId = extractYouTubeId(url)
-    if (videoId && !seen.has(videoId)) {
-      seen.add(videoId)
-      results.push({ videoId, url })
-    }
-  }
-  return results
-}
 
 // ── Inline token regex ────────────────────────────────────────────────────────
 // Groups:

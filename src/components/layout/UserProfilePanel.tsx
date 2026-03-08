@@ -111,7 +111,7 @@ export default function UserProfilePanel() {
   // ── Positioning ───────────────────────────────────────────────────────────
 
   const panelX = x > window.innerWidth / 2 ? x - PANEL_W - 12 : x + 12
-  const panelY = Math.max(8, Math.min(y - 60, window.innerHeight - 540))
+  const panelY = Math.max(8, Math.min(y, window.innerHeight - 540))
 
   // ── Data from query cache ─────────────────────────────────────────────────
 

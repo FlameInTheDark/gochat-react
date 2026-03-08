@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
-import { Trash2, Pencil, Copy, MessageSquare, Hash } from 'lucide-react'
+import { Trash2, Pencil, Copy, MessageSquare, Hash, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -30,10 +30,10 @@ import { useAppearanceStore, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore
 import { snowflakeToTime, snowflakeToDate } from '@/lib/snowflake'
 import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
-import { parseMessageContent, extractYouTubeEmbeds, isEmojiOnlyMessage, type MentionResolver } from '@/lib/messageParser'
+import { parseMessageContent, isEmojiOnlyMessage, type MentionResolver } from '@/lib/messageParser'
 import MessageAttachments from '@/components/chat/MessageAttachments'
 import InviteEmbed from '@/components/chat/InviteEmbed'
-import YoutubeEmbed from '@/components/chat/YoutubeEmbed'
+import MessageEmbed from '@/components/chat/MessageEmbed'
 import type { DtoMessage, DtoMember, DtoGuild } from '@/types'
 import type { DtoRole } from '@/client'
 
@@ -96,6 +96,8 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [suppressEmbedsOpen, setSuppressEmbedsOpen] = useState(false)
+  const [suppressEmbedsLoading, setSuppressEmbedsLoading] = useState(false)
   const [editContent, setEditContent] = useState('')
   const [editLoading, setEditLoading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -250,6 +252,23 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
     }
   }
 
+  async function handleSuppressEmbeds() {
+    setSuppressEmbedsLoading(true)
+    try {
+      const res = await messageApi.messageChannelChannelIdMessageIdPatch({
+        channelId,
+        messageId,
+        request: { embeds: [], flags: 4 },
+      })
+      updateMessage(channelId, res.data)
+      setSuppressEmbedsOpen(false)
+    } catch {
+      toast.error(t('messageItem.editFailed'))
+    } finally {
+      setSuppressEmbedsLoading(false)
+    }
+  }
+
   // Check if this is a join message
   const isJoinMessage = message.type === JOIN_MESSAGE_TYPE
 
@@ -379,10 +398,24 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
                   )}
                   {/* Attachments */}
                   <MessageAttachments attachments={message.attachments} maxWidth={attachmentMaxWidth} />
-                  {/* YouTube embeds — one per unique video ID found in the message */}
-                  {message.content && extractYouTubeEmbeds(message.content).map(({ videoId, url }) => (
-                    <YoutubeEmbed key={videoId} videoId={videoId} url={url} />
-                  ))}
+                  {/* Message embeds (rich, video, image, link, article, gifv) */}
+                  {message.embeds && message.embeds.length > 0 && (
+                    <div className="relative group/embeds w-fit">
+                      {message.embeds.map((embed, i) => (
+                        <MessageEmbed key={i} embed={embed} />
+                      ))}
+                      {isOwn && (
+                        <button
+                          type="button"
+                          onClick={() => setSuppressEmbedsOpen(true)}
+                          className="absolute -top-2 -right-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-muted border border-border text-muted-foreground opacity-0 group-hover/embeds:opacity-100 transition-opacity hover:bg-destructive hover:text-destructive-foreground hover:border-destructive"
+                          aria-label="Remove embeds"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {/* Invite embeds */}
                   {message.content && extractInviteCodes(message.content).map((code) => (
                     <InviteEmbed key={code} code={code} />
@@ -444,6 +477,25 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
           )}
         </ContextMenuContent>
       </ContextMenu>
+
+      <Dialog open={suppressEmbedsOpen} onOpenChange={(o) => !o && setSuppressEmbedsOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('messageItem.suppressEmbedsTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('messageItem.suppressEmbedsDesc')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSuppressEmbedsOpen(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="destructive" onClick={() => void handleSuppressEmbeds()} disabled={suppressEmbedsLoading}>
+              {t('messageItem.suppressEmbedsConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={deleteOpen} onOpenChange={(o) => !o && setDeleteOpen(false)}>
         <DialogContent>
