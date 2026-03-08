@@ -34,6 +34,8 @@ import { parseMessageContent, isEmojiOnlyMessage, type MentionResolver } from '@
 import MessageAttachments from '@/components/chat/MessageAttachments'
 import InviteEmbed from '@/components/chat/InviteEmbed'
 import MessageEmbed from '@/components/chat/MessageEmbed'
+import GifEmbed from '@/components/chat/GifEmbed'
+import { extractGifUrls, isGifOnlyMessage } from '@/lib/gifUrls'
 import type { DtoMessage, DtoMember, DtoGuild } from '@/types'
 import type { DtoRole } from '@/client'
 
@@ -156,6 +158,27 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
 
   // Detect emoji-only messages for big rendering (max 9 emoji, no other text)
   const emojiOnly = isEmojiOnlyMessage(message.content ?? '')
+
+  const gifUrls = useMemo(() => extractGifUrls(message.content ?? ''), [message.content])
+  const gifOnly = isGifOnlyMessage(message.content ?? '', gifUrls)
+
+  // Filter out backend embeds for Tenor/Giphy URLs — we render those ourselves
+  // via GifEmbed, so backend embeds for the same URLs would be duplicates.
+  const backendEmbeds = useMemo(
+    () => (message.embeds ?? []).filter((embed) => {
+      const url = embed.url ?? ''
+      // Always drop Tenor embeds — the service is being discontinued
+      if (url.includes('tenor.com')) return false
+      // Drop embeds for providers we render ourselves as GIFs
+      if (gifUrls.length === 0) return true
+      return (
+        !url.includes('giphy.com') &&
+        !url.includes('gifer.com') &&
+        !url.includes('imgur.com')
+      )
+    }),
+    [message.embeds, gifUrls],
+  )
 
   // Use Snowflake ID to derive creation time (more reliable than updated_at for display)
   const timestamp = snowflakeToTime(message.id)
@@ -385,7 +408,7 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
               ) : (
                 <>
                   {/* Parsed message content with inline markdown */}
-                  {message.content && (
+                  {message.content && !gifOnly && (
                     <div
                       className={cn(
                         'break-words whitespace-pre-wrap',
@@ -396,12 +419,16 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
                       {parseMessageContent(message.content, resolver)}
                     </div>
                   )}
+                  {/* Tenor / Giphy GIF embeds */}
+                  {gifUrls.map((g) => (
+                    <GifEmbed key={g.url} gifUrl={g} />
+                  ))}
                   {/* Attachments */}
                   <MessageAttachments attachments={message.attachments} maxWidth={attachmentMaxWidth} />
                   {/* Message embeds (rich, video, image, link, article, gifv) */}
-                  {message.embeds && message.embeds.length > 0 && (
+                  {backendEmbeds.length > 0 && (
                     <div className="relative group/embeds w-fit">
-                      {message.embeds.map((embed, i) => (
+                      {backendEmbeds.map((embed, i) => (
                         <MessageEmbed key={i} embed={embed} />
                       ))}
                       {isOwn && (
@@ -506,8 +533,10 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
             </DialogDescription>
           </DialogHeader>
           {message.content && (
-            <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic">
-              {message.content}
+            <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic break-words">
+              {message.content.length > 200
+                ? message.content.slice(0, 200) + '…'
+                : message.content}
             </blockquote>
           )}
           <DialogFooter>

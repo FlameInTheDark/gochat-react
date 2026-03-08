@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { EmbedEmbed } from '@/client'
 import { cn } from '@/lib/utils'
+import AnimatedImage from '@/components/ui/AnimatedImage'
 
 interface Props {
   embed: EmbedEmbed
@@ -48,9 +49,10 @@ export default function MessageEmbed({ embed }: Props) {
   if (type === 'image' || type === 'gifv') {
     const imgUrl = embed.image?.url ?? embed.thumbnail?.url
     if (!imgUrl) return null
+    const Img = type === 'gifv' ? AnimatedImage : 'img'
     return (
       <div className="mt-1 max-w-[400px]">
-        <img
+        <Img
           src={imgUrl}
           alt={embed.title ?? ''}
           className="rounded max-w-full object-contain"
@@ -70,6 +72,13 @@ export default function MessageEmbed({ embed }: Props) {
 
   const videoEmbedUrl = isVideo ? embed.video?.url : undefined
   const videoThumbnailUrl = isVideo ? embed.thumbnail?.url : undefined
+
+  const thumb = embed.thumbnail
+  const thumbAspect =
+    thumb?.width && thumb?.height ? thumb.width / thumb.height : null
+  const isWideThumbnail = thumbAspect !== null && thumbAspect > 1.5
+  const hasSideThumbnail = hasThumbnail && !isWideThumbnail
+  const hasWideThumbnail = hasThumbnail && isWideThumbnail
 
   return (
     <div
@@ -92,7 +101,7 @@ export default function MessageEmbed({ embed }: Props) {
         )}
 
         {!isVideo && (
-          <div className={cn('flex gap-3', hasThumbnail && 'items-start')}>
+          <div className={cn('flex gap-3', hasSideThumbnail && 'items-start')}>
             <div className="flex-1 min-w-0 space-y-1">
               {/* Author */}
               {embed.author?.name && (
@@ -144,10 +153,10 @@ export default function MessageEmbed({ embed }: Props) {
               )}
             </div>
 
-            {/* Thumbnail */}
-            {hasThumbnail && (
+            {/* Side thumbnail (square / small) */}
+            {hasSideThumbnail && (
               <img
-                src={embed.thumbnail!.url}
+                src={thumb!.url}
                 alt=""
                 className="w-20 h-20 rounded object-cover shrink-0"
                 loading="lazy"
@@ -246,6 +255,18 @@ export default function MessageEmbed({ embed }: Props) {
             alt=""
             className="rounded max-w-full object-contain mt-1"
             style={{ maxHeight: 300 }}
+            loading="lazy"
+            draggable={false}
+          />
+        )}
+
+        {/* Wide thumbnail — rendered full-width below content */}
+        {hasWideThumbnail && (
+          <img
+            src={thumb!.url}
+            alt=""
+            className="rounded w-full object-contain mt-1"
+            style={thumbAspect ? { aspectRatio: String(thumbAspect) } : undefined}
             loading="lazy"
             draggable={false}
           />

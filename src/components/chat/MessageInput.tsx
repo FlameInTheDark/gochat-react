@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import MentionInput from './MentionInput'
 import PendingAttachmentBar, { type PendingAttachment } from './PendingAttachmentBar'
 import { useTranslation } from 'react-i18next'
+import { needsEmbedSuppression } from '@/lib/gifUrls'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -185,13 +186,23 @@ export default function MessageInput({ channelId, channelName }: Props) {
       }
 
       // ── Step 3: Send the message with content + attachment IDs ───────────
-      await messageApi.messageChannelChannelIdPost({
+      const sentMsg = await messageApi.messageChannelChannelIdPost({
         channelId,
         request: {
           content: content || undefined,
           attachments: attachmentIds.length > 0 ? attachmentIds : undefined,
         },
       })
+
+      // If the message contains Tenor/Giphy URLs we render them ourselves,
+      // so suppress backend embed generation to avoid duplicates.
+      if (needsEmbedSuppression(content) && sentMsg.data?.id !== undefined) {
+        void messageApi.messageChannelChannelIdMessageIdPatch({
+          channelId,
+          messageId: String(sentMsg.data.id),
+          request: { flags: 4 },
+        })
+      }
 
       // Success — revoke object URLs and remove only the attachments we sent.
       sending.forEach((a) => {

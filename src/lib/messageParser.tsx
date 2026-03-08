@@ -1,6 +1,7 @@
 import React from 'react'
 import CodeBlock from '@/components/chat/CodeBlock'
 import { emojiUrl } from '@/lib/emoji'
+import AnimatedImage from '@/components/ui/AnimatedImage'
 
 // ── Resolver ─────────────────────────────────────────────────────────────────
 
@@ -132,7 +133,7 @@ function parseInline(
       const emojiName = match[11]
       const emojiId = match[12]
       nodes.push(
-        <img
+        <AnimatedImage
           key={k}
           src={emojiUrl(emojiId, 44)}
           alt={`:${emojiName}:`}

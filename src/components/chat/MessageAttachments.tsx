@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { DtoAttachment } from '@/types'
+import AnimatedImage from '@/components/ui/AnimatedImage'
 
 // ── Attachment kind ───────────────────────────────────────────────────────────
 type AttachmentKind = 'image' | 'video' | 'audio' | 'other'
@@ -228,13 +229,23 @@ function ImageTile({
       style={style}
       onClick={onClick}
     >
-      <img
-        src={meta.previewUrl ?? ''}
-        alt={meta.name}
-        className="w-full h-full object-cover"
-        loading="lazy"
-        draggable={false}
-      />
+      {meta.isGif ? (
+        <AnimatedImage
+          src={meta.url ?? ''}
+          preview={meta.previewUrl !== meta.url ? (meta.previewUrl ?? undefined) : undefined}
+          alt={meta.name}
+          className="w-full h-full object-cover"
+          draggable={false}
+        />
+      ) : (
+        <img
+          src={meta.previewUrl ?? ''}
+          alt={meta.name}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          draggable={false}
+        />
+      )}
     </div>
   )
 }
