@@ -36,7 +36,6 @@ export default function LoginPage() {
         setUser(res.data)
       })
       .catch(() => {
-        // Token invalid or expired, show login form
       })
       .finally(() => {
         setCheckingAuth(false)
