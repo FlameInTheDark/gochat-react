@@ -8,8 +8,9 @@ import type { DtoChannel, DtoGuild, DtoMember, DtoRole } from '@/client'
 import { calculateEffectivePermissions, hasPermission, PermissionBits } from '@/lib/permissions'
 import { useAuthStore } from '@/stores/authStore'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Smile } from 'lucide-react'
+import { Smile, ImagePlay } from 'lucide-react'
 import EmojiPicker from './EmojiPicker'
+import GifPicker from './GifPicker'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 import { useEmojiStore } from '@/stores/emojiStore'
@@ -790,6 +791,26 @@ export default function MentionInput({
             data-placeholder={t('chat.messagePlaceholder', { name: channelName ?? channelId })}
             className="mention-editor flex-1 min-h-[28px] max-h-48 overflow-y-auto outline-none text-sm text-foreground leading-6 break-words"
           />
+
+          {/* GIF picker */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label="Open GIF picker"
+                className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ImagePlay className="h-5 w-5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              side="top"
+              align="end"
+              className="w-auto p-0 border-0 bg-transparent shadow-none"
+            >
+              <GifPicker onSelect={(url) => onSend(url)} />
+            </PopoverContent>
+          </Popover>
 
           {/* Emoji picker */}
           <Popover>

@@ -19,6 +19,7 @@ import { useFolderStore } from '@/stores/folderStore'
 import { useReadStateStore } from '@/stores/readStateStore'
 import { useMentionStore } from '@/stores/mentionStore'
 import { useEmojiStore } from '@/stores/emojiStore'
+import { useGifStore } from '@/stores/gifStore'
 import i18n from '@/i18n'
 import { setupTokenRefreshScheduler } from '@/lib/tokenRefresh'
 
@@ -204,6 +205,11 @@ export default function AppLayout() {
               })),
             )
           }
+        }
+        // Restore favorite GIFs
+        const savedFavoriteGifs = settingsRes?.data?.settings?.favorite_gifs
+        if (Array.isArray(savedFavoriteGifs)) {
+          useGifStore.getState().setFavorites(savedFavoriteGifs)
         }
         // Apply saved display language
         const savedLanguage = settingsRes?.data?.settings?.language
