@@ -111,6 +111,26 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
     enabled: !!serverId,
   })
 
+  const { data: members = [] } = useQuery<DtoMember[]>({
+    queryKey: ['members', serverId],
+    queryFn: () => guildApi.guildGuildIdMembersGet({ guildId: serverId! }).then((r) => r.data ?? []),
+    enabled: !!serverId,
+    staleTime: 60_000,
+  })
+
+  const authorRoleColor = useMemo(() => {
+    if (!serverId || !message.author?.id) return undefined
+    const member = members.find((m) => String(m.user?.id) === String(message.author!.id))
+    if (!member?.roles?.length) return undefined
+    const memberRoleIds = new Set(member.roles.map(String))
+    const topRole = roles
+      .filter((r) => memberRoleIds.has(String(r.id)) && (r.color ?? 0) !== 0)
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0]
+    if (!topRole) return undefined
+    const c = topRole.color ?? 0
+    return `#${c.toString(16).padStart(6, '0')}`
+  }, [members, roles, message.author?.id, serverId])
+
   const { data: currentMember } = useQuery<DtoMember>({
     queryKey: ['member', serverId, 'me'],
     queryFn: () => userApi.userMeGuildsGuildIdMemberGet({ guildId: serverId! }).then((r) => r.data),
@@ -311,7 +331,8 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <button
             onClick={handleAuthorClick}
-            className="font-medium text-foreground hover:underline cursor-pointer"
+            className="font-medium hover:underline cursor-pointer"
+            style={authorRoleColor ? { color: authorRoleColor } : { color: 'var(--foreground)' }}
           >
             {authorName}
           </button>
@@ -361,6 +382,7 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
                   <button
                     onClick={handleAuthorClick}
                     className="font-semibold text-sm hover:underline focus:outline-none"
+                    style={authorRoleColor ? { color: authorRoleColor } : undefined}
                   >
                     {authorName}
                   </button>

@@ -184,6 +184,30 @@ export function useWebSocket() {
     }
   }, [queryClient])
 
+  // ── React to guild role WS events ──────────────────────────────────────────
+
+  useEffect(() => {
+    function onRoleEvent(e: Event) {
+      const detail = (e as CustomEvent<{ guild_id?: string | number } | undefined>).detail
+      const guildId = detail?.guild_id !== undefined ? String(detail.guild_id) : undefined
+      if (guildId) {
+        void queryClient.invalidateQueries({ queryKey: ['roles', guildId] })
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['roles'] })
+      }
+    }
+
+    window.addEventListener('ws:role_create', onRoleEvent)
+    window.addEventListener('ws:role_update', onRoleEvent)
+    window.addEventListener('ws:role_delete', onRoleEvent)
+
+    return () => {
+      window.removeEventListener('ws:role_create', onRoleEvent)
+      window.removeEventListener('ws:role_update', onRoleEvent)
+      window.removeEventListener('ws:role_delete', onRoleEvent)
+    }
+  }, [queryClient])
+
   // ── React to friend / DM WS events ────────────────────────────────────────
 
   useEffect(() => {

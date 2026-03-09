@@ -166,6 +166,16 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
   // Member's current role IDs as a Set for O(1) lookup
   const memberRoleIds = new Set((member.roles ?? []).map(String))
 
+  // Pick top role color: lowest position wins, skip zero-color roles
+  const topRoleColor = useMemo(() => {
+    const top = allRoles
+      .filter((r) => memberRoleIds.has(String(r.id)) && (r.color ?? 0) !== 0)
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0]
+    if (!top) return undefined
+    const c = top.color ?? 0
+    return `#${c.toString(16).padStart(6, '0')}`
+  }, [allRoles, member.roles])
+
   // Track last cursor position so context-menu "View Profile" can position the panel correctly
   const lastPosRef = useRef({ x: 0, y: 0 })
 
@@ -236,7 +246,7 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
             <StatusDot status={status} className="absolute -bottom-0.5 -right-0.5 w-3 h-3" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="truncate text-sm font-medium leading-tight">{displayName}</p>
+            <p className="truncate text-sm font-medium leading-tight" style={topRoleColor ? { color: topRoleColor } : undefined}>{displayName}</p>
             {customStatus && (
               <p className="truncate text-[10px] text-muted-foreground/70 leading-tight italic">
                 {customStatus}

@@ -548,6 +548,27 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
+    // ── Guild role events ────────────────────────────────────────────────────
+    // d = { guild_id, role: DtoRole }
+
+    // t=110: Role Create
+    if (t === 110) {
+      window.dispatchEvent(new CustomEvent('ws:role_create', { detail: d }))
+      return
+    }
+
+    // t=111: Role Update (includes position changes from order reorder)
+    if (t === 111) {
+      window.dispatchEvent(new CustomEvent('ws:role_update', { detail: d }))
+      return
+    }
+
+    // t=112: Role Delete
+    if (t === 112) {
+      window.dispatchEvent(new CustomEvent('ws:role_delete', { detail: d }))
+      return
+    }
+
     // ── Guild emoji events ───────────────────────────────────────────────────
 
     // t=116: Guild Emoji Create — emoji upload finalized and ready

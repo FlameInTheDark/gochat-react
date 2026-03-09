@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil, Shield, UserMinus, Ban } from 'lucide-react'
+import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil, Shield, UserMinus, Ban, GripVertical } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -125,9 +125,9 @@ const hexToColor = (hex: string) => parseInt(hex.replace('#', ''), 16)
  */
 const EVERYONE_ID = '__everyone__'
 
-/** Sort real roles alphabetically (the synthetic @everyone is always shown above). */
+/** Sort real roles by position (lower value = higher priority, shown first). */
 function sortRoles(roles: DtoRole[]): DtoRole[] {
-  return [...roles].sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+  return [...roles].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 }
 
 function Toggle({
@@ -183,6 +183,11 @@ export default function ServerSettingsModal() {
   const [creatingRole, setCreatingRole] = useState(false)
   const [newRoleName, setNewRoleName] = useState('')
   const [newRoleColor, setNewRoleColor] = useState('#5865f2')
+
+  // Role ordering via drag-and-drop
+  const [orderedRoles, setOrderedRoles] = useState<DtoRole[]>([])
+  const dragSrcIdx = useRef<number | null>(null)
+  const [savingOrder, setSavingOrder] = useState(false)
 
   // Member role assignment
   const [savingMemberRole, setSavingMemberRole] = useState<string | null>(null) // `${userId}:${roleId}`
@@ -317,7 +322,7 @@ export default function ServerSettingsModal() {
     staleTime: 30_000,
   })
 
-  const { data: roles = [] } = useQuery<DtoRole[]>({
+  const { data: roles = [], dataUpdatedAt: rolesUpdatedAt } = useQuery<DtoRole[]>({
     queryKey: ['roles', guildId],
     queryFn: () => rolesApi.guildGuildIdRolesGet({ guildId: guildId! }).then((r) => r.data ?? []),
     enabled: open && !!guildId && (section === 'roles' || section === 'members' || section === 'bans'),
@@ -353,7 +358,6 @@ export default function ServerSettingsModal() {
     staleTime: 30_000,
   })
 
-  const sortedRoles = sortRoles(roles)
   const roleMap = new Map<string, DtoRole>(roles.map((r) => [String(r.id), r]))
 
   // ── Effects ─────────────────────────────────────────────────────────────────
@@ -389,6 +393,15 @@ export default function ServerSettingsModal() {
       setCreatingRole(false)
     }
   }, [section])
+
+  // Sync ordered roles from server data.
+  // Depend on rolesUpdatedAt (a stable number) instead of the `roles` array,
+  // because the `= []` default creates a new reference every render when data
+  // is undefined, which would cause an infinite setState loop.
+  useEffect(() => {
+    setOrderedRoles(sortRoles(roles))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rolesUpdatedAt])
 
   // Escape to close
   useEffect(() => {
@@ -517,6 +530,28 @@ export default function ServerSettingsModal() {
       toast.error('Failed to delete role')
     } finally {
       setDeletingRoleId(null)
+    }
+  }
+
+  async function handleRoleReorder(newOrder: DtoRole[]) {
+    if (!guildId) return
+    setSavingOrder(true)
+    try {
+      await rolesApi.guildGuildIdRolesOrderPatch({
+        guildId,
+        request: {
+          roles: newOrder.map((r, i) => ({ id: String(r.id), position: i })),
+        },
+      })
+      queryClient.setQueryData<DtoRole[]>(
+        ['roles', guildId],
+        newOrder.map((r, i) => ({ ...r, position: i })),
+      )
+    } catch {
+      setOrderedRoles(sortRoles(roles))
+      toast.error('Failed to save role order')
+    } finally {
+      setSavingOrder(false)
     }
   }
 
@@ -879,6 +914,10 @@ export default function ServerSettingsModal() {
                       .filter((r): r is DtoRole => r !== undefined)
                     const joinDate = member.join_at ? new Date(member.join_at).toLocaleDateString() : null
                     const memberRoleIds = new Set((member.roles ?? []).map(String))
+                    const topRoleColor = roles
+                      .filter((r) => memberRoleIds.has(String(r.id)) && (r.color ?? 0) !== 0)
+                      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0]
+                    const nameColor = topRoleColor ? colorToHex(topRoleColor.color ?? 0) : undefined
                     const isTargetOwner = ownerIdStr !== null && userId === ownerIdStr
                     const targetPerms = calculateEffectivePermissions(member as DtoMember, roles as DtoRole[])
                     const isTargetAdmin = hasPerm(targetPerms, PermissionBits.ADMINISTRATOR)
@@ -896,7 +935,7 @@ export default function ServerSettingsModal() {
                             </Avatar>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <p className="text-sm font-medium">{displayName}</p>
+                                <p className="text-sm font-medium" style={nameColor ? { color: nameColor } : undefined}>{displayName}</p>
                                 {member.user?.discriminator && (
                                   <span className="text-xs text-muted-foreground">#{member.user.discriminator}</span>
                                 )}
@@ -1092,29 +1131,54 @@ export default function ServerSettingsModal() {
                       </span>
                     </button>
 
-                    {/* Regular roles */}
-                    {sortedRoles.map((role) => {
+                    {/* Regular roles — drag-and-drop to reorder */}
+                    {orderedRoles.map((role, index) => {
                       const rid = String(role.id)
                       const isDeleting = deletingRoleId === rid
                       return (
-                        <button
+                        <div
                           key={rid}
-                          onClick={() => selectRole(role)}
-                          disabled={isDeleting}
+                          draggable={!isDeleting && !savingOrder}
+                          onDragStart={(e) => {
+                            dragSrcIdx.current = index
+                            e.dataTransfer.effectAllowed = 'move'
+                          }}
+                          onDragOver={(e) => {
+                            e.preventDefault()
+                            e.dataTransfer.dropEffect = 'move'
+                            if (dragSrcIdx.current === null || dragSrcIdx.current === index) return
+                            const newOrder = [...orderedRoles]
+                            const [removed] = newOrder.splice(dragSrcIdx.current, 1)
+                            newOrder.splice(index, 0, removed)
+                            dragSrcIdx.current = index
+                            setOrderedRoles(newOrder)
+                          }}
+                          onDragEnd={() => {
+                            dragSrcIdx.current = null
+                            void handleRoleReorder(orderedRoles)
+                          }}
                           className={cn(
-                            'w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm text-left transition-colors',
+                            'flex items-center gap-1 rounded text-sm transition-colors group',
                             selectedRoleId === rid
                               ? 'bg-accent text-foreground'
                               : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
                             isDeleting && 'opacity-40',
+                            savingOrder && 'cursor-wait',
                           )}
                         >
-                          <span
-                            className="w-3 h-3 rounded-full shrink-0"
-                            style={{ backgroundColor: colorToHex(role.color ?? 0) }}
-                          />
-                          <span className="truncate flex-1">{role.name}</span>
-                        </button>
+                          <GripVertical className="w-3.5 h-3.5 shrink-0 ml-1 opacity-30 group-hover:opacity-60 cursor-grab active:cursor-grabbing" />
+                          <button
+                            onClick={() => selectRole(role)}
+                            disabled={isDeleting}
+                            className="flex items-center gap-2 px-1 py-1.5 flex-1 min-w-0 text-left"
+                          >
+                            <span
+                              className="w-3 h-3 rounded-full shrink-0"
+                              style={{ backgroundColor: colorToHex(role.color ?? 0) }}
+                            />
+                            <span className="truncate flex-1">{role.name}</span>
+                          </button>
+                        </div>
                       )
                     })}
                     {roles.length === 0 && !creatingRole && (
