@@ -3,15 +3,19 @@ import { userApi } from '@/api/client'
 
 interface GifState {
   favoriteGifs: string[]
+  contentHosts: string[]
   setFavorites: (urls: string[]) => void
   addFavorite: (url: string) => void
   removeFavorite: (url: string) => void
+  setContentHosts: (hosts: string[]) => void
 }
 
 export const useGifStore = create<GifState>((set, get) => ({
   favoriteGifs: [],
+  contentHosts: [],
 
   setFavorites: (urls) => set({ favoriteGifs: urls }),
+  setContentHosts: (hosts) => set({ contentHosts: hosts }),
 
   addFavorite: (url) => {
     if (get().favoriteGifs.includes(url)) return

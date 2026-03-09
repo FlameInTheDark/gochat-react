@@ -211,6 +211,11 @@ export default function AppLayout() {
         if (Array.isArray(savedFavoriteGifs)) {
           useGifStore.getState().setFavorites(savedFavoriteGifs)
         }
+        // Load trusted content hosts for inline GIF rendering
+        const contentHosts = settingsRes?.data?.content_hosts
+        if (Array.isArray(contentHosts)) {
+          useGifStore.getState().setContentHosts(contentHosts)
+        }
         // Apply saved display language
         const savedLanguage = settingsRes?.data?.settings?.language
         if (savedLanguage && savedLanguage.trim()) {

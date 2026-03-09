@@ -36,6 +36,7 @@ import InviteEmbed from '@/components/chat/InviteEmbed'
 import MessageEmbed from '@/components/chat/MessageEmbed'
 import GifEmbed from '@/components/chat/GifEmbed'
 import { extractGifUrls, isGifOnlyMessage } from '@/lib/gifUrls'
+import { useGifStore } from '@/stores/gifStore'
 import type { DtoMessage, DtoMember, DtoGuild } from '@/types'
 import type { DtoRole } from '@/client'
 
@@ -152,6 +153,7 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
   const removeMessage = useMessageStore((s) => s.removeMessage)
   const updateMessage = useMessageStore((s) => s.updateMessage)
   const currentUser = useAuthStore((s) => s.user)
+  const contentHosts = useGifStore((s) => s.contentHosts)
 
   // Check if current user is the server owner
   const isOwner = currentUser && guild?.owner !== undefined && String(guild.owner) === String(currentUser.id)
@@ -179,7 +181,7 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
   // Detect emoji-only messages for big rendering (max 9 emoji, no other text)
   const emojiOnly = isEmojiOnlyMessage(message.content ?? '')
 
-  const gifUrls = useMemo(() => extractGifUrls(message.content ?? ''), [message.content])
+  const gifUrls = useMemo(() => extractGifUrls(message.content ?? '', contentHosts), [message.content, contentHosts])
   const gifOnly = isGifOnlyMessage(message.content ?? '', gifUrls)
 
   // Filter out backend embeds for Tenor/Giphy URLs — we render those ourselves
@@ -190,14 +192,23 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
       // Always drop Tenor embeds — the service is being discontinued
       if (url.includes('tenor.com')) return false
       // Drop embeds for providers we render ourselves as GIFs
-      if (gifUrls.length === 0) return true
-      return (
-        !url.includes('giphy.com') &&
-        !url.includes('gifer.com') &&
-        !url.includes('imgur.com')
-      )
+      if (gifUrls.length > 0 && (
+        url.includes('giphy.com') ||
+        url.includes('gifer.com') ||
+        url.includes('imgur.com')
+      )) return false
+      // Drop embeds for content-host GIF URLs we render ourselves
+      if (contentHosts.length > 0) {
+        try {
+          const host = new URL(url).hostname
+          if (contentHosts.includes(host)) return false
+        } catch {
+          // not a valid URL — keep the embed
+        }
+      }
+      return true
     }),
-    [message.embeds, gifUrls],
+    [message.embeds, gifUrls, contentHosts],
   )
 
   // Use Snowflake ID to derive creation time (more reliable than updated_at for display)
@@ -443,7 +454,7 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
                   )}
                   {/* Tenor / Giphy GIF embeds */}
                   {gifUrls.map((g) => (
-                    <GifEmbed key={g.url} gifUrl={g} />
+                    <GifEmbed key={g.url} gifUrl={g} gifOnly={gifOnly} />
                   ))}
                   {/* Attachments */}
                   <MessageAttachments attachments={message.attachments} maxWidth={attachmentMaxWidth} />
@@ -555,7 +566,7 @@ export default function MessageItem({ message, isGrouped = false, resolver, atta
             </DialogDescription>
           </DialogHeader>
           {message.content && (
-            <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic break-words">
+            <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground italic break-all overflow-hidden min-w-0">
               {message.content.length > 200
                 ? message.content.slice(0, 200) + '…'
                 : message.content}

@@ -1,8 +1,30 @@
 import { useState, useEffect, useRef } from 'react'
-import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize } from 'lucide-react'
+import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { DtoAttachment } from '@/types'
 import AnimatedImage from '@/components/ui/AnimatedImage'
+import { useGifStore } from '@/stores/gifStore'
+
+// ── GIF favorite star button ──────────────────────────────────────────────────
+function GifStarButton({ url }: { url: string }) {
+  const isFavorite = useGifStore((s) => s.favoriteGifs.includes(url))
+  const addFavorite = useGifStore((s) => s.addFavorite)
+  const removeFavorite = useGifStore((s) => s.removeFavorite)
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        if (isFavorite) removeFavorite(url)
+        else addFavorite(url)
+      }}
+      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 h-7 w-7 flex items-center justify-center rounded-full bg-black/60 text-white transition-opacity hover:bg-black/80 z-10"
+      aria-label={isFavorite ? 'Remove from favorites' : 'Add to favorites'}
+    >
+      <Star className={cn('h-4 w-4', isFavorite && 'fill-yellow-400 text-yellow-400')} />
+    </button>
+  )
+}
 
 // ── Attachment kind ───────────────────────────────────────────────────────────
 type AttachmentKind = 'image' | 'video' | 'audio' | 'other'
@@ -62,7 +84,8 @@ function getMeta(a: DtoAttachment): AttachmentMeta {
   const contentType = a.content_type?.trim() || null
   const isGif =
     kind === 'image' &&
-    (contentType === 'image/gif' || name.toLowerCase().endsWith('.gif'))
+    (contentType === 'image/gif' || contentType === 'image/webp' ||
+     name.toLowerCase().endsWith('.gif') || name.toLowerCase().endsWith('.webp'))
   const url = a.url?.trim() || null
   const previewUrl = a.preview_url?.trim() || url
   const width = typeof a.width === 'number' && a.width > 0 ? a.width : null
@@ -225,7 +248,7 @@ function ImageTile({
   const { meta } = item
   return (
     <div
-      className={`rounded overflow-hidden cursor-zoom-in ${className ?? ''}`}
+      className={`rounded overflow-hidden cursor-zoom-in relative group ${className ?? ''}`}
       style={style}
       onClick={onClick}
     >
@@ -246,6 +269,7 @@ function ImageTile({
           draggable={false}
         />
       )}
+      {meta.isGif && meta.url && <GifStarButton url={meta.url} />}
     </div>
   )
 }

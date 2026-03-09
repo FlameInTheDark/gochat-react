@@ -118,7 +118,35 @@ function GiferVideo({ src, fallbackUrl, originalUrl }: { src: string; fallbackUr
   )
 }
 
-export default function GifEmbed({ gifUrl }: { gifUrl: GifUrl }) {
+/**
+ * Content-host GIF: uses AnimatedImage for viewport/focus pause behaviour but
+ * omits crossOrigin="anonymous" so CORS doesn't block display. The canvas
+ * frame-capture will silently fail (taint) and fall back to BLANK as the
+ * paused placeholder — that's acceptable.
+ * On load failure:
+ * - hideOnFail=true → unmount silently (text URL is still visible in the message)
+ * - hideOnFail=false → show UrlFallback (message is only this URL, nothing else to show)
+ */
+function ContentGifImage({ src, originalUrl, hideOnFail }: { src: string; originalUrl: string; hideOnFail: boolean }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return hideOnFail ? null : <UrlFallback url={src} />
+  return (
+    <div className="mt-1 relative group w-fit">
+      <AnimatedImage
+        src={src}
+        captureCrossOrigin="anonymous"
+        pauseFallback={src}
+        className="rounded max-w-full object-contain"
+        style={{ maxWidth: MAX_WIDTH, maxHeight: MAX_HEIGHT }}
+        draggable={false}
+        onError={() => setFailed(true)}
+      />
+      <StarButton url={originalUrl} />
+    </div>
+  )
+}
+
+export default function GifEmbed({ gifUrl, gifOnly = false }: { gifUrl: GifUrl; gifOnly?: boolean }) {
   if (gifUrl.provider === 'giphy') {
     const src = giphyGifUrl(gifUrl.url)
     if (!src) return <UrlFallback url={gifUrl.url} />
@@ -135,6 +163,12 @@ export default function GifEmbed({ gifUrl }: { gifUrl: GifUrl }) {
     const src = imgurGifUrl(gifUrl.url)
     if (!src) return <UrlFallback url={gifUrl.url} />
     return <GifImage src={src} fallbackUrl={gifUrl.url} originalUrl={gifUrl.url} />
+  }
+
+  if (gifUrl.provider === 'content') {
+    // gifOnly=true → message is only this URL, so on failure show a link (nothing else to show)
+    // gifOnly=false → text is visible, so on failure just hide the embed
+    return <ContentGifImage src={gifUrl.url} originalUrl={gifUrl.url} hideOnFail={!gifOnly} />
   }
 
   return null

@@ -137,11 +137,6 @@ export default function MessageList({
   const prevLengthRef = useRef(0)
   const [showJumpButton, setShowJumpButton] = useState(false)
 
-  // Scroll-position preservation refs (no extra renders needed)
-  const prevIsLoadingOlderRef = useRef(false)
-  const savedScrollHeightRef = useRef(0)
-  const savedScrollTopRef = useRef(0)
-
   // Unread separator ref + "which separator have we scrolled to" guard
   const separatorRef = useRef<HTMLDivElement | null>(null)
   const scrolledToSeparatorRef = useRef<string | null>(null)
@@ -183,31 +178,14 @@ export default function MessageList({
   const onAckLatestRef = useRef(onAckLatest)
   onAckLatestRef.current = onAckLatest
 
-  // ── Layout effect: scroll preservation + initial scroll to separator ───────
-  //
-  // This fires synchronously after every DOM update where the deps changed,
-  // before the browser paints — crucial for flicker-free scroll restoration.
+  // ── Layout effect: one-time scroll to unread separator ───────────────────
+  // CSS scroll anchoring (overflow-anchor: auto on the container) handles
+  // scroll-position preservation when older messages are prepended — no
+  // manual restoration needed. This effect only handles the separator jump.
   useLayoutEffect(() => {
     const el = scrollRef.current
     if (!el) return
 
-    // ── Scroll position preservation when older messages are prepended ───────
-    const wasLoading = prevIsLoadingOlderRef.current
-    const nowLoading = isLoadingOlder ?? false
-    prevIsLoadingOlderRef.current = nowLoading
-
-    if (!nowLoading && wasLoading && savedScrollHeightRef.current > 0) {
-      // Loading finished — restore scroll position using absolute value to avoid
-      // double-adjustment from browser scroll anchoring that may have fired
-      // when the skeleton appeared (false→true transition).
-      const diff = el.scrollHeight - savedScrollHeightRef.current
-      if (diff > 0) el.scrollTop = savedScrollTopRef.current + diff
-      savedScrollHeightRef.current = 0
-      savedScrollTopRef.current = 0
-    }
-
-    // ── One-time scroll to unread separator ──────────────────────────────────
-    // Fires only once per separator ID (scrolledToSeparatorRef guards repeats).
     if (
       unreadSeparatorAfter &&
       scrolledToSeparatorRef.current !== unreadSeparatorAfter &&
@@ -219,7 +197,7 @@ export default function MessageList({
       // Place the separator ~80 px from the top so there's a little context above it
       el.scrollTop += sepRect.top - containerRect.top - 80
     }
-  }, [isLoadingOlder, messages.length, unreadSeparatorAfter])
+  }, [messages.length, unreadSeparatorAfter])
 
   // ── Auto-scroll to bottom when messages arrive / initial load ────────────
   // useLayoutEffect (synchronous, before paint) avoids any flash of the message
@@ -255,11 +233,6 @@ export default function MessageList({
 
     // Load older when near the top
     if (!isLoadingOlder && !endReached && el.scrollTop <= LOAD_OLDER_THRESHOLD && onLoadOlder) {
-      // Save both scrollHeight AND scrollTop before the skeleton renders.
-      // The layout effect uses savedScrollTop as the base for absolute restoration,
-      // so browser scroll anchoring adjustments during the skeleton phase don't skew the result.
-      savedScrollHeightRef.current = el.scrollHeight
-      savedScrollTopRef.current = el.scrollTop
       onLoadOlder()
     }
 
@@ -296,6 +269,34 @@ export default function MessageList({
     }
   }, [])
 
+  // ── ResizeObserver: keep bottom-pinned users at the bottom when content grows ─
+  // CSS scroll anchoring handles the "not at bottom" case automatically.
+  // This observer covers the "at bottom + image loads" case where content grows
+  // below the current scroll position.
+  // Uses requestAnimationFrame so the snap runs AFTER scroll events are processed
+  // in the current frame — prevents ResizeObserver from fighting a scroll-up gesture.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const inner = el.firstElementChild
+    if (!inner) return
+    let rafId: number | null = null
+    const observer = new ResizeObserver(() => {
+      if (rafId !== null) return // already scheduled
+      rafId = requestAnimationFrame(() => {
+        rafId = null
+        if (isAtBottomRef.current) {
+          el.scrollTop = el.scrollHeight
+        }
+      })
+    })
+    observer.observe(inner)
+    return () => {
+      observer.disconnect()
+      if (rafId !== null) cancelAnimationFrame(rafId)
+    }
+  }, [])
+
   // ── Full-screen initial skeleton ──────────────────────────────────────────
   if (isLoading) {
     return (
@@ -321,7 +322,6 @@ export default function MessageList({
         ref={scrollRef}
         onScroll={handleScroll}
         className="h-full overflow-y-auto"
-        style={{ overflowAnchor: 'none' }}
       >
         {/* min-h-full lets the flex column always fill the viewport */}
         <div className="flex flex-col min-h-full px-4">

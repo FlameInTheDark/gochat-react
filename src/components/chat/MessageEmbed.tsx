@@ -42,6 +42,7 @@ function groupFields(fields: EmbedEmbed['fields']): FieldGroup[] {
 
 export default function MessageEmbed({ embed }: Props) {
   const [playing, setPlaying] = useState(false)
+  const [videoFailed, setVideoFailed] = useState(false)
 
   const type = embed.type ?? 'rich'
 
@@ -65,13 +66,20 @@ export default function MessageEmbed({ embed }: Props) {
   }
 
   // rich / link / article / video
-  const isVideo = type === 'video'
+  // isVideoType: pure video embed (YouTube etc.) — suppress normal content, show only player
+  const isVideoType = type === 'video'
+  // hasVideoData: any embed that carries a video url (including rich+video)
+  const videoUrl = embed.video?.url
+  const hasVideoData = !!videoUrl
+  const isDirectVideo = hasVideoData && (embed.video as { content_type?: string })?.content_type?.startsWith('video/')
+
   const fieldGroups = groupFields(embed.fields)
-  const hasThumbnail = !isVideo && !!embed.thumbnail?.url
+  // Suppress thumbnail when the embed has video (thumbnail = video poster, shown inside player)
+  const hasThumbnail = !isVideoType && !hasVideoData && !!embed.thumbnail?.url
   const accentColor = embed.color != null ? colorToHex(embed.color) : undefined
 
-  const videoEmbedUrl = isVideo ? embed.video?.url : undefined
-  const videoThumbnailUrl = isVideo ? embed.thumbnail?.url : undefined
+  // For rich+video, thumbnail serves as the video poster
+  const videoThumbnailUrl = hasVideoData ? embed.thumbnail?.url : undefined
 
   const thumb = embed.thumbnail
   const thumbAspect =
@@ -100,7 +108,7 @@ export default function MessageEmbed({ embed }: Props) {
           </p>
         )}
 
-        {!isVideo && (
+        {!isVideoType && (
           <div className={cn('flex gap-3', hasSideThumbnail && 'items-start')}>
             <div className="flex-1 min-w-0 space-y-1">
               {/* Author */}
@@ -166,63 +174,114 @@ export default function MessageEmbed({ embed }: Props) {
           </div>
         )}
 
-        {/* Video: title + 16:9 player */}
-        {isVideo && (
-          <>
-            {embed.title && (
-              <a
-                href={embed.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block text-sm font-semibold text-primary hover:underline"
-              >
-                {embed.title}
-              </a>
-            )}
-            {(videoEmbedUrl || videoThumbnailUrl) && (
-              <div
-                className="relative overflow-hidden rounded bg-black"
-                style={{ aspectRatio: '16 / 9' }}
-              >
-                {playing && videoEmbedUrl ? (
-                  <iframe
-                    className="h-full w-full"
-                    src={`${videoEmbedUrl}?autoplay=1`}
-                    title={embed.title ?? 'Video'}
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowFullScreen
-                  />
-                ) : videoThumbnailUrl ? (
-                  <button
-                    type="button"
-                    className="group relative flex h-full w-full items-center justify-center focus-visible:outline-none"
-                    onClick={() => videoEmbedUrl ? setPlaying(true) : window.open(embed.url, '_blank')}
-                    aria-label={embed.title ?? 'Play video'}
-                  >
-                    <img
-                      src={videoThumbnailUrl}
-                      alt=""
-                      className="absolute inset-0 h-full w-full object-cover"
-                      loading="lazy"
-                      draggable={false}
-                    />
-                    <span className="absolute inset-0 bg-black/30 transition group-hover:bg-black/45" />
-                    {videoEmbedUrl && (
-                      <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-white/85 shadow-lg transition group-hover:bg-white group-hover:scale-110">
-                        <svg className="h-6 w-6 translate-x-0.5 text-zinc-900" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                          <path d="M8 5v14l11-7z" />
-                        </svg>
-                      </span>
-                    )}
-                  </button>
-                ) : null}
-              </div>
-            )}
-          </>
+        {/* Video title (pure video embeds only — rich+video already shows title above) */}
+        {isVideoType && embed.title && (
+          <a
+            href={embed.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block text-sm font-semibold text-primary hover:underline"
+          >
+            {embed.title}
+          </a>
         )}
 
+        {/* Video player — shown for type=video and for rich+video */}
+        {hasVideoData && (videoUrl || videoThumbnailUrl) && (() => {
+          const MAX_W = 400
+          const MAX_H = 300
+          const vw = embed.video?.width ?? 0
+          const vh = embed.video?.height ?? 0
+          // Compute display size respecting both max-width and max-height
+          let dispW = MAX_W
+          let dispH = vw && vh ? Math.round(MAX_W * vh / vw) : Math.round(MAX_W * 9 / 16)
+          if (dispH > MAX_H) { dispH = MAX_H; dispW = vw && vh ? Math.round(MAX_H * vw / vh) : MAX_W }
+
+          // Thumbnail-with-link fallback (CDN blocks cross-origin, e.g. Twitter)
+          if (isDirectVideo && videoFailed) {
+            return videoThumbnailUrl ? (
+              <a
+                href={embed.url ?? videoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 relative group block overflow-hidden rounded"
+                style={{ width: dispW, height: dispH }}
+              >
+                <img
+                  src={videoThumbnailUrl}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                  draggable={false}
+                />
+                <span className="absolute inset-0 bg-black/30 transition group-hover:bg-black/45" />
+                <span className="absolute inset-0 flex items-center justify-center">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/85 shadow-lg">
+                    <svg className="h-5 w-5 translate-x-0.5 text-zinc-900" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                      <path d="M8 5v14l11-7z" />
+                    </svg>
+                  </span>
+                </span>
+              </a>
+            ) : null
+          }
+
+          return (
+            <div
+              className="relative overflow-hidden rounded bg-black mt-1"
+              style={{ width: dispW, height: dispH }}
+            >
+              {isDirectVideo ? (
+                // Direct MP4/WebM/etc. — use <video> element
+                <video
+                  className="h-full w-full object-contain"
+                  controls
+                  preload="metadata"
+                  poster={videoThumbnailUrl}
+                  onError={() => setVideoFailed(true)}
+                >
+                  <source src={videoUrl} type={(embed.video as { content_type?: string })?.content_type} />
+                </video>
+              ) : playing && videoUrl ? (
+                // Iframe-based embed (YouTube etc.)
+                <iframe
+                  className="h-full w-full"
+                  src={`${videoUrl}?autoplay=1`}
+                  title={embed.title ?? 'Video'}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : videoThumbnailUrl ? (
+                // Thumbnail + play button (click to play iframe)
+                <button
+                  type="button"
+                  className="group relative flex h-full w-full items-center justify-center focus-visible:outline-none"
+                  onClick={() => videoUrl ? setPlaying(true) : window.open(embed.url, '_blank')}
+                  aria-label={embed.title ?? 'Play video'}
+                >
+                  <img
+                    src={videoThumbnailUrl}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover"
+                    loading="lazy"
+                    draggable={false}
+                  />
+                  <span className="absolute inset-0 bg-black/30 transition group-hover:bg-black/45" />
+                  {videoUrl && (
+                    <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-white/85 shadow-lg transition group-hover:bg-white group-hover:scale-110">
+                      <svg className="h-6 w-6 translate-x-0.5 text-zinc-900" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path d="M8 5v14l11-7z" />
+                      </svg>
+                    </span>
+                  )}
+                </button>
+              ) : null}
+            </div>
+          )
+        })()}
+
         {/* Fields (non-video only) */}
-        {!isVideo && fieldGroups.length > 0 && (
+        {!isVideoType && fieldGroups.length > 0 && (
           <div className="space-y-1 pt-0.5">
             {fieldGroups.map((group, gi) =>
               group.inline ? (
@@ -249,7 +308,7 @@ export default function MessageEmbed({ embed }: Props) {
         )}
 
         {/* Full-size image (non-video only) */}
-        {!isVideo && embed.image?.url && (
+        {!isVideoType && embed.image?.url && (
           <img
             src={embed.image.url}
             alt=""

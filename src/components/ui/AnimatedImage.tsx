@@ -15,9 +15,24 @@ interface Props extends React.ImgHTMLAttributes<HTMLImageElement> {
    * image loads and uses that as the paused/off-screen placeholder.
    */
   preview?: string
+  /**
+   * Fallback used as the paused placeholder when canvas frame-capture fails
+   * (e.g. cross-origin images without CORS headers). Defaults to a 1×1
+   * transparent BLANK gif, which makes the image invisible when paused.
+   * Pass the image `src` itself to keep the image visible (animated, but
+   * browsers throttle background tabs naturally).
+   */
+  pauseFallback?: string
+  /**
+   * crossOrigin value used ONLY for the hidden shadow image that does canvas
+   * frame-capture. Independent of the main <img> element's crossOrigin.
+   * Use "anonymous" to attempt CORS-based capture without blocking display
+   * on CDNs that may or may not send CORS headers.
+   */
+  captureCrossOrigin?: React.ImgHTMLAttributes<HTMLImageElement>['crossOrigin']
 }
 
-export default function AnimatedImage({ src, preview, crossOrigin, ...rest }: Props) {
+export default function AnimatedImage({ src, preview, pauseFallback, captureCrossOrigin, crossOrigin, ...rest }: Props) {
   const ref = useRef<HTMLImageElement>(null)
   const loadedRef = useRef(!preview)
   const inViewRef = useRef(false)
@@ -26,7 +41,7 @@ export default function AnimatedImage({ src, preview, crossOrigin, ...rest }: Pr
     const el = ref.current
     if (!el) return
 
-    let pausedSrc: string | null = preview ?? null
+    let pausedSrc: string | null = preview ?? pauseFallback ?? null
     let worker: HTMLImageElement | null = null
 
     function apply() {
@@ -48,7 +63,8 @@ export default function AnimatedImage({ src, preview, crossOrigin, ...rest }: Pr
       // No caller-supplied preview: load the image in a shadow element and
       // draw frame 0 to canvas to obtain a static placeholder.
       const shadow = new Image()
-      if (crossOrigin) shadow.crossOrigin = crossOrigin
+      const shadowCrossOrigin = captureCrossOrigin ?? crossOrigin
+      if (shadowCrossOrigin) shadow.crossOrigin = shadowCrossOrigin
       shadow.src = src
       shadow.onload = () => {
         try {
@@ -62,7 +78,7 @@ export default function AnimatedImage({ src, preview, crossOrigin, ...rest }: Pr
             if (isAppPaused() || !inViewRef.current) apply()
           }
         } catch {
-          // Canvas taint or unsupported – fall back to BLANK
+          // Canvas taint or unsupported – keep pauseFallback (or BLANK)
         } finally {
           shadow.onload = null
         }
@@ -98,7 +114,7 @@ export default function AnimatedImage({ src, preview, crossOrigin, ...rest }: Pr
       focusListeners.delete(apply)
       if (worker) worker.onload = null
     }
-  }, [src, preview, crossOrigin])
+  }, [src, preview, pauseFallback, captureCrossOrigin, crossOrigin])
 
   return <img ref={ref} src={preview ?? src} crossOrigin={crossOrigin} {...rest} />
 }

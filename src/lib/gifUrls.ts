@@ -1,4 +1,4 @@
-export type GifUrl = { provider: 'giphy' | 'gifer' | 'imgur'; url: string }
+export type GifUrl = { provider: 'giphy' | 'gifer' | 'imgur' | 'content'; url: string }
 
 // ── Renderable GIF providers ──────────────────────────────────────────────────
 
@@ -16,8 +16,38 @@ const TENOR_RE = /https?:\/\/(?:www\.)?tenor\.com\/(?:view\/[a-zA-Z0-9][a-zA-Z0-
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+const BARE_URL_RE = /https?:\/\/[^\s<>"']+/g
+
+/**
+ * Normalize a content host entry to a plain hostname.
+ * Handles both "hostname.example.com" and "https://hostname.example.com" formats.
+ */
+function normalizeHost(entry: string): string {
+  try {
+    // If it parses as a URL, use its hostname
+    const u = new URL(entry.includes('://') ? entry : `https://${entry}`)
+    return u.hostname
+  } catch {
+    return entry
+  }
+}
+
+function isContentHost(hostname: string, contentHosts: string[]): boolean {
+  return contentHosts.some((entry) => normalizeHost(entry) === hostname)
+}
+
+/** Returns true if the given URL's hostname is in the trusted content hosts list. */
+export function isFromContentHost(url: string, contentHosts: string[]): boolean {
+  if (contentHosts.length === 0) return false
+  try {
+    return isContentHost(new URL(url).hostname, contentHosts)
+  } catch {
+    return false
+  }
+}
+
 /** Returns GIF URLs that should be rendered as embedded GIFs (excludes Tenor). */
-export function extractGifUrls(content: string): GifUrl[] {
+export function extractGifUrls(content: string, contentHosts: string[] = []): GifUrl[] {
   const results: GifUrl[] = []
   const seen = new Set<string>()
   let m: RegExpExecArray | null
@@ -37,15 +67,32 @@ export function extractGifUrls(content: string): GifUrl[] {
     if (!seen.has(m[0])) { seen.add(m[0]); results.push({ provider: 'imgur', url: m[0] }) }
   }
 
+  if (contentHosts.length > 0) {
+    BARE_URL_RE.lastIndex = 0
+    while ((m = BARE_URL_RE.exec(content)) !== null) {
+      const raw = m[0]
+      if (seen.has(raw)) continue
+      try {
+        const parsed = new URL(raw)
+        if (isContentHost(parsed.hostname, contentHosts)) {
+          seen.add(raw)
+          results.push({ provider: 'content', url: raw })
+        }
+      } catch {
+        // not a valid URL — skip
+      }
+    }
+  }
+
   return results
 }
 
 /**
- * True when the message contains any GIF-service URL (including Tenor) that
- * would trigger backend embed generation — used to decide whether to send
- * the message with `flags: 4` (suppress embeds).
+ * True when the message contains any GIF-service URL (including Tenor) or a
+ * content-host GIF URL that would trigger backend embed generation — used to
+ * decide whether to send the message with `flags: 4` (suppress embeds).
  */
-export function needsEmbedSuppression(content: string): boolean {
+export function needsEmbedSuppression(content: string, contentHosts: string[] = []): boolean {
   TENOR_RE.lastIndex = 0
   if (TENOR_RE.test(content)) return true
   GIPHY_RE.lastIndex = 0
@@ -53,7 +100,22 @@ export function needsEmbedSuppression(content: string): boolean {
   GIFER_RE.lastIndex = 0
   if (GIFER_RE.test(content)) return true
   IMGUR_RE.lastIndex = 0
-  return IMGUR_RE.test(content)
+  if (IMGUR_RE.test(content)) return true
+
+  if (contentHosts.length > 0) {
+    BARE_URL_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = BARE_URL_RE.exec(content)) !== null) {
+      try {
+        const parsed = new URL(m[0])
+        if (isContentHost(parsed.hostname, contentHosts)) return true
+      } catch {
+        // skip
+      }
+    }
+  }
+
+  return false
 }
 
 /** True when the message is nothing but renderable GIF URL(s) and whitespace. */

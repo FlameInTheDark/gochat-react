@@ -5,6 +5,7 @@ import MentionInput from './MentionInput'
 import PendingAttachmentBar, { type PendingAttachment } from './PendingAttachmentBar'
 import { useTranslation } from 'react-i18next'
 import { needsEmbedSuppression } from '@/lib/gifUrls'
+import { useGifStore } from '@/stores/gifStore'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ export default function MessageInput({ channelId, channelName }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const { t } = useTranslation()
+  const contentHosts = useGifStore((s) => s.contentHosts)
 
   // ── Attachment management ──────────────────────────────────────────────────
 
@@ -196,7 +198,7 @@ export default function MessageInput({ channelId, channelName }: Props) {
 
       // If the message contains Tenor/Giphy URLs we render them ourselves,
       // so suppress backend embed generation to avoid duplicates.
-      if (needsEmbedSuppression(content) && sentMsg.data?.id !== undefined) {
+      if (needsEmbedSuppression(content, contentHosts) && sentMsg.data?.id !== undefined) {
         void messageApi.messageChannelChannelIdMessageIdPatch({
           channelId,
           messageId: String(sentMsg.data.id),
