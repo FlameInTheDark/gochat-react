@@ -2,6 +2,7 @@ import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
+import TitleBar from '@/components/layout/TitleBar'
 import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import ConfirmPage from '@/pages/ConfirmPage'
@@ -16,6 +17,8 @@ import CreateServerModal from '@/components/modals/CreateServerModal'
 import CreateChannelModal from '@/components/modals/CreateChannelModal'
 import CreateCategoryModal from '@/components/modals/CreateCategoryModal'
 
+
+const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
@@ -54,7 +57,12 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <RouterProvider router={router} />
+        <div className="flex flex-col h-screen w-screen overflow-hidden">
+          {isElectron && <TitleBar />}
+          <div className="flex flex-1 min-h-0 overflow-hidden">
+            <RouterProvider router={router} />
+          </div>
+        </div>
         {/* Global modals rendered outside router so they survive navigation */}
         <CreateServerModal />
         <CreateChannelModal />

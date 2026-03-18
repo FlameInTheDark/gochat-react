@@ -22,7 +22,7 @@ export default function ConfirmPage() {
 
   if (!userId || !token) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex flex-1 w-full items-center justify-center bg-background">
         <p className="text-destructive">Invalid confirmation link.</p>
       </div>
     )
@@ -67,7 +67,7 @@ export default function ConfirmPage() {
 
   if (success) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex flex-1 w-full items-center justify-center bg-background">
         <div className="text-center space-y-2">
           <p className="text-green-500 font-medium">Account confirmed successfully!</p>
           <p className="text-sm text-muted-foreground">Redirecting to login…</p>
@@ -77,7 +77,7 @@ export default function ConfirmPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
+    <div className="flex flex-1 w-full items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm">
         <h1 className="text-center text-2xl font-bold">Complete your account</h1>
         <form onSubmit={handleSubmit} className="space-y-4">

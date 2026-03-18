@@ -3,6 +3,7 @@ import { Outlet, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useIdlePresence } from '@/hooks/useIdlePresence'
+import { useDeepLink } from '@/hooks/useDeepLink'
 import { axiosInstance, userApi } from '@/api/client'
 import AppShell from '@/components/layout/AppShell'
 import InviteModal from '@/components/modals/InviteModal'
@@ -22,6 +23,7 @@ import { useEmojiStore } from '@/stores/emojiStore'
 import { useGifStore } from '@/stores/gifStore'
 import i18n from '@/i18n'
 import { setupTokenRefreshScheduler } from '@/lib/tokenRefresh'
+import { compareSnowflakes } from '@/lib/snowflake'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 
@@ -33,6 +35,7 @@ const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 function AuthenticatedApp() {
   useWebSocket()
   useIdlePresence()
+  useDeepLink()
 
   return (
     <AppShell>
@@ -165,31 +168,26 @@ export default function AppLayout() {
               channelGuildMap[chId] = gId
             }
           }
-          const mentionSeed: Record<string, { count: number; guildId: string }> = {}
+          const mentionSeed: Record<string, { messageIds: string[]; guildId: string | null }> = {}
           for (const [channelId, items] of Object.entries(rawMentions)) {
             if (!Array.isArray(items) || !items.length) continue
-            const guildId = channelGuildMap[channelId]
-            if (!guildId) continue
+            const guildId = channelGuildMap[channelId] ?? null
+            let messageIds = items
+              .map((m) => {
+                const raw = m as unknown as Record<string, unknown>
+                const msgId = (raw['MessageId'] ?? raw['messageId']) as string | number | undefined
+                return msgId != null ? String(msgId) : null
+              })
+              .filter((msgId): msgId is string => msgId != null)
             const lastRead = readStates[channelId]
-            let count = items.length
             if (lastRead) {
-              try {
-                // PascalCase at runtime: item.MessageId (Go JSON marshaling)
-                count = items.filter((m) => {
-                  // Runtime keys are PascalCase (Go JSON marshaling without struct tags)
-                  const raw = m as unknown as Record<string, unknown>
-                  const msgId = (raw['MessageId'] ?? raw['messageId']) as string | number | undefined
-                  return msgId && BigInt(String(msgId)) > BigInt(lastRead)
-                }).length
-              } catch { /* ignore BigInt parse errors */ }
+              messageIds = messageIds.filter((msgId) => compareSnowflakes(msgId, lastRead) > 0)
             }
-            if (count > 0) {
-              mentionSeed[channelId] = { count, guildId }
+            if (messageIds.length > 0) {
+              mentionSeed[channelId] = { messageIds, guildId }
             }
           }
-          if (Object.keys(mentionSeed).length > 0) {
-            useMentionStore.getState().seedMentions(mentionSeed)
-          }
+          useMentionStore.getState().seedMentions(mentionSeed)
         }
         // Seed custom emoji store from guild_emojis in settings
         const guildEmojis = settingsRes?.data?.guild_emojis

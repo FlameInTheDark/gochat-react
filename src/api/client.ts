@@ -14,6 +14,7 @@ import {
 import JSONBig from 'json-bigint'
 import axios from 'axios'
 import { useAuthStore } from '@/stores/authStore'
+import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 const jsonBig = JSONBig({ storeAsString: true, useNativeBigInt: false })
 const jsonBigSerialize = JSONBig({ useNativeBigInt: true })
@@ -53,7 +54,7 @@ export const axiosInstance = axios.create({
 })
 
 axiosInstance.interceptors.request.use((cfg) => {
-  const token = localStorage.getItem('auth_token')
+  const token = useAuthStore.getState().token
   if (token && cfg.headers) {
     cfg.headers.Authorization = `Bearer ${token}`
   }
@@ -83,7 +84,7 @@ axiosInstance.interceptors.response.use(
       return Promise.reject(error)
     }
 
-    const refreshToken = localStorage.getItem('auth_refresh_token')
+    const refreshToken = useAuthStore.getState().refreshToken
     if (!refreshToken) {
       useAuthStore.getState().logout()
       return Promise.reject(error)
@@ -110,7 +111,7 @@ axiosInstance.interceptors.response.use(
     isRefreshing = true
 
     try {
-      const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+      const baseUrl = getApiBaseUrl()
       // Use plain axios (not axiosInstance) to avoid re-triggering this interceptor
       const res = await axios.get<{ token?: string; refresh_token?: string }>(
         `${baseUrl}/auth/refresh`,
@@ -146,7 +147,7 @@ axiosInstance.interceptors.response.use(
 
 const config = () =>
   new Configuration({
-    basePath: (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1',
+    basePath: getApiBaseUrl(),
   })
 
 export const authApi = new AuthApi(config(), undefined, axiosInstance)

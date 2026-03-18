@@ -6,8 +6,10 @@ interface ChannelEntry {
 
 interface UnreadState {
   channels: Map<string, ChannelEntry>
+  replaceChannels: (channels: Map<string, ChannelEntry>) => void
   markUnread: (channelId: string, guildId: string | null) => void
   markRead: (channelId: string) => void
+  removeChannel: (channelId: string) => void
   isChannelUnread: (channelId: string) => boolean
   isGuildUnread: (guildId: string) => boolean
 }
@@ -15,13 +17,17 @@ interface UnreadState {
 export const useUnreadStore = create<UnreadState>((set, get) => ({
   channels: new Map(),
 
+  replaceChannels: (channels) => {
+    set({ channels: new Map(channels) })
+  },
+
   markUnread: (channelId, guildId) => {
-    // Only update state if the channel isn't already marked unread
-    if (!get().channels.has(channelId)) {
-      const next = new Map(get().channels)
-      next.set(channelId, { guildId })
-      set({ channels: next })
-    }
+    const existing = get().channels.get(channelId)
+    if (existing && (existing.guildId === guildId || guildId == null)) return
+
+    const next = new Map(get().channels)
+    next.set(channelId, { guildId: guildId ?? existing?.guildId ?? null })
+    set({ channels: next })
   },
 
   markRead: (channelId) => {
@@ -30,6 +36,13 @@ export const useUnreadStore = create<UnreadState>((set, get) => ({
       next.delete(channelId)
       set({ channels: next })
     }
+  },
+
+  removeChannel: (channelId) => {
+    if (!get().channels.has(channelId)) return
+    const next = new Map(get().channels)
+    next.delete(channelId)
+    set({ channels: next })
   },
 
   isChannelUnread: (channelId) => get().channels.has(channelId),

@@ -2,7 +2,6 @@ import { useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Hash, ExternalLink, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { DtoChannel, DtoMessage } from '@/types'
 import type { MentionResolver } from '@/lib/messageParser'
@@ -19,6 +18,7 @@ interface SearchPanelProps {
   page: number
   totalPages: number
   onPageChange: (page: number) => void
+  onJumpToMessage?: (message: DtoMessage) => void | Promise<void>
   resolver?: MentionResolver
   className?: string
 }
@@ -69,6 +69,7 @@ export default function SearchPanel({
   page,
   totalPages,
   onPageChange,
+  onJumpToMessage,
   resolver,
   className,
 }: SearchPanelProps) {
@@ -76,21 +77,31 @@ export default function SearchPanel({
   const { t } = useTranslation()
 
   const jumpToMessage = useCallback(
-    (msg: DtoMessage) => {
+    async (msg: DtoMessage) => {
+      if (onJumpToMessage) {
+        await onJumpToMessage(msg)
+        return
+      }
       const path = serverId
         ? `/app/${serverId}/${String(msg.channel_id)}`
         : `/app/@me/${String(msg.channel_id)}`
-      navigate(path, { state: { jumpToMessageId: String(msg.id) } })
+      navigate(path, {
+        state: {
+          jumpToMessageId: String(msg.id),
+          jumpBehavior: 'direct-scroll',
+          jumpToMessagePosition: msg.position ?? undefined,
+        },
+      })
     },
-    [navigate, serverId],
+    [navigate, onJumpToMessage, serverId],
   )
 
-  const getChannelName = (chanId: number | undefined) =>
+  const getChannelName = (chanId: string | number | undefined) =>
     chanId !== undefined ? channels.find((c) => String(c.id) === String(chanId))?.name : undefined
 
   if (isLoading) {
     return (
-      <div className={cn('p-3 space-y-4', className)}>
+      <div className={cn('p-3 space-y-4 overflow-hidden', className)}>
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="space-y-1.5">
             <div className="flex items-center gap-2">
@@ -113,7 +124,7 @@ export default function SearchPanel({
 
   if (hasSearched && results.length === 0) {
     return (
-      <div className={cn('flex flex-col items-center justify-center text-muted-foreground p-8 text-center flex-1', className)}>
+      <div className={cn('flex flex-1 min-h-0 flex-col items-center justify-center overflow-hidden p-8 text-center text-muted-foreground', className)}>
         <Search className="w-10 h-10 mb-3 opacity-20" />
         <p className="text-sm font-semibold">{t('search.noResults')}</p>
         <p className="text-xs mt-1 opacity-70">{t('search.tryDifferent')}</p>
@@ -124,7 +135,7 @@ export default function SearchPanel({
   if (!hasSearched) return null
 
   return (
-    <div className={cn('flex flex-col flex-1 min-h-0', className)}>
+    <div className={cn('flex flex-1 min-h-0 flex-col overflow-hidden', className)}>
       {/* Result count */}
       <div className="px-4 py-2 text-xs text-muted-foreground border-b border-border shrink-0 flex items-center justify-between">
         <span>
@@ -138,19 +149,19 @@ export default function SearchPanel({
       </div>
 
       {/* Message list */}
-      <ScrollArea className="flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="py-1">
           {results.map((msg) => (
             <ResultCard
               key={String(msg.id)}
               msg={msg}
               channelName={getChannelName(msg.channel_id)}
-              onJump={() => jumpToMessage(msg)}
+              onJump={() => { void jumpToMessage(msg) }}
               resolver={resolver}
             />
           ))}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Pagination */}
       {totalPages > 1 && (

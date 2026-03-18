@@ -240,7 +240,7 @@ function UnreadPill({
 }
 
 // ── Mini guild icon (2×2 grid inside collapsed folder) ───────────────────────
-function MiniGuildIcon({ guild, isUnread }: { guild: DtoGuild; isUnread?: boolean }) {
+function MiniGuildIcon({ guild }: { guild: DtoGuild }) {
   return (
     <div
       className={cn(
@@ -788,7 +788,7 @@ function SortableFolderItem({
       >
         {/* Folder header — drag handle + collapse toggle */}
         <div className="relative">
-          <UnreadPill isActive={isActiveInFolder} isUnread={isUnread} groupClass="group/folder" leftClass="left-[-14px]" />
+          <UnreadPill isActive={false} isUnread={isUnread} groupClass="group/folder" leftClass="left-[-14px]" />
           <ContextMenu>
             <Tooltip>
               <ContextMenuTrigger asChild>
@@ -848,8 +848,7 @@ function SortableFolderItem({
  * (Can't call hooks inside SortableFolderItem's array.map directly)
  */
 function MiniGuildIconWithUnread({ guild }: { guild: DtoGuild }) {
-  const isUnread = useUnreadStore((s) => s.isGuildUnread(String(guild.id)))
-  return <MiniGuildIcon guild={guild} isUnread={isUnread} />
+  return <MiniGuildIcon guild={guild} />
 }
 
 // ── Main ServerSidebar ────────────────────────────────────────────────────────
@@ -1000,8 +999,8 @@ export default function ServerSidebar() {
   // Navigate away from deleted server
   useEffect(() => {
     function onGuildDelete(e: Event) {
-      const detail = (e as CustomEvent<{ id?: string | number } | undefined>).detail
-      const deletedId = detail?.id !== undefined ? String(detail.id) : undefined
+      const detail = (e as CustomEvent<{ guild_id?: string | number } | undefined>).detail
+      const deletedId = detail?.guild_id !== undefined ? String(detail.guild_id) : undefined
       if (deletedId && deletedId === serverId) {
         navigate('/app/@me', { replace: true })
       }

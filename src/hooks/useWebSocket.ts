@@ -5,8 +5,66 @@ import { useAuthStore } from '@/stores/authStore'
 import { userApi } from '@/api/client'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { useFolderStore } from '@/stores/folderStore'
+import { ChannelType, type DtoChannel } from '@/types'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
+
+interface WsChannelEventDetail {
+  guild_id?: string | number
+  channel?: DtoChannel
+  channel_id?: string | number
+  channel_type?: string | number
+}
+
+interface WsThreadEventDetail {
+  guild_id?: string | number
+  thread?: DtoChannel
+  thread_id?: string | number
+}
+
+interface ThreadLinkQueryResult {
+  thread: DtoChannel | null
+  missing: boolean
+}
+
+function isThreadChannelType(type: string | number | undefined): boolean {
+  return Number(type) === ChannelType.ChannelTypeThread
+}
+
+function getChannelEventGuildId(detail: WsChannelEventDetail | undefined): string | undefined {
+  if (detail?.guild_id !== undefined) return String(detail.guild_id)
+  if (detail?.channel?.guild_id !== undefined) return String(detail.channel.guild_id)
+  return undefined
+}
+
+function getThreadIdFromChannelEvent(detail: WsChannelEventDetail | undefined): string | undefined {
+  if (detail?.channel?.id != null && isThreadChannelType(detail.channel.type)) {
+    return String(detail.channel.id)
+  }
+  if (detail?.channel_id != null && isThreadChannelType(detail.channel_type)) {
+    return String(detail.channel_id)
+  }
+  return undefined
+}
+
+function getThreadGuildId(detail: WsThreadEventDetail | undefined): string | undefined {
+  if (detail?.guild_id !== undefined) return String(detail.guild_id)
+  if (detail?.thread?.guild_id !== undefined) return String(detail.thread.guild_id)
+  return undefined
+}
+
+function getThreadFromEvent(detail: WsThreadEventDetail | undefined): DtoChannel | undefined {
+  return detail?.thread && isThreadChannelType(detail.thread.type)
+    ? detail.thread
+    : undefined
+}
+
+function getThreadIdFromEvent(detail: WsThreadEventDetail | undefined): string | undefined {
+  const thread = getThreadFromEvent(detail)
+  if (thread?.id != null) return String(thread.id)
+  if (detail?.thread_id != null) return String(detail.thread_id)
+  return undefined
+}
 
 export function useWebSocket() {
   const token = useAuthStore((s) => s.token)
@@ -103,16 +161,46 @@ export function useWebSocket() {
 
   useEffect(() => {
     function onChannelEvent(e: Event) {
-      const detail = (e as CustomEvent<{ guild_id?: string | number; channel?: { guild_id?: string | number } } | undefined>).detail
-      const guildId = detail?.guild_id !== undefined
-        ? String(detail.guild_id)
-        : detail?.channel?.guild_id !== undefined
-          ? String(detail.channel.guild_id)
-          : undefined
+      const detail = (e as CustomEvent<WsChannelEventDetail | undefined>).detail
+      const guildId = getChannelEventGuildId(detail)
+      const threadId = getThreadIdFromChannelEvent(detail)
+
+      // For channel updates with full channel data, patch the cache directly to avoid a network refetch
+      if (e.type === 'ws:channel_update' && guildId && detail?.channel) {
+        queryClient.setQueryData<DtoChannel[]>(
+          ['channels', guildId],
+          (prev) => {
+            if (!prev) return prev
+            const updated = detail.channel!
+            const id = String(updated.id)
+            const idx = prev.findIndex((c) => String(c.id) === id)
+            if (idx === -1) return [...prev, updated]
+            const next = [...prev]
+            next[idx] = updated
+            return next
+          },
+        )
+        if (threadId) {
+          void queryClient.invalidateQueries({ queryKey: ['channel-threads', guildId] })
+          void queryClient.invalidateQueries({ queryKey: ['thread-channel', guildId, threadId] })
+          void queryClient.invalidateQueries({ queryKey: ['thread-link', guildId, threadId] })
+          void queryClient.invalidateQueries({ queryKey: ['thread-preview', threadId] })
+        }
+        return
+      }
+
       if (guildId) {
         void queryClient.invalidateQueries({ queryKey: ['channels', guildId] })
+        if (threadId) {
+          void queryClient.invalidateQueries({ queryKey: ['channel-threads', guildId] })
+          void queryClient.invalidateQueries({ queryKey: ['thread-channel', guildId, threadId] })
+          void queryClient.invalidateQueries({ queryKey: ['thread-link', guildId, threadId] })
+        }
       } else {
         void queryClient.invalidateQueries({ queryKey: ['channels'] })
+      }
+      if (threadId) {
+        void queryClient.invalidateQueries({ queryKey: ['thread-preview', threadId] })
       }
     }
 
@@ -126,6 +214,68 @@ export function useWebSocket() {
       window.removeEventListener('ws:channel_update', onChannelEvent)
       window.removeEventListener('ws:channel_delete', onChannelEvent)
       window.removeEventListener('ws:channel_order', onChannelEvent)
+    }
+  }, [queryClient])
+
+  useEffect(() => {
+    function onThreadUpsert(e: Event) {
+      const detail = (e as CustomEvent<WsThreadEventDetail | undefined>).detail
+      const guildId = getThreadGuildId(detail)
+      const thread = getThreadFromEvent(detail)
+      const threadId = getThreadIdFromEvent(detail)
+      if (!guildId || !thread || !threadId) return
+      const parentId = thread.parent_id != null ? String(thread.parent_id) : null
+
+      if (parentId) {
+        queryClient.setQueryData<DtoChannel[]>(['channel-threads', guildId, parentId], (current) => {
+          if (!current) return current
+
+          let found = false
+          const next = current.map((candidate) => {
+            if (String(candidate.id) !== threadId) return candidate
+            found = true
+            return thread
+          })
+
+          return found ? next : [...current, thread]
+        })
+      }
+
+      queryClient.setQueryData<DtoChannel | null>(['thread-channel', guildId, threadId], thread)
+      queryClient.setQueryData<ThreadLinkQueryResult>(['thread-link', guildId, threadId], {
+        thread,
+        missing: false,
+      })
+      void queryClient.invalidateQueries({ queryKey: ['channel-threads', guildId] })
+      void queryClient.invalidateQueries({ queryKey: ['thread-preview', threadId] })
+    }
+
+    function onThreadDelete(e: Event) {
+      const detail = (e as CustomEvent<WsThreadEventDetail | undefined>).detail
+      const guildId = getThreadGuildId(detail)
+      const threadId = getThreadIdFromEvent(detail)
+      if (!guildId || !threadId) return
+
+      queryClient.setQueriesData<DtoChannel[]>({ queryKey: ['channel-threads', guildId] }, (current) => {
+        if (!current) return current
+        return current.filter((candidate) => String(candidate.id) !== threadId)
+      })
+      queryClient.setQueryData<DtoChannel | null>(['thread-channel', guildId, threadId], null)
+      queryClient.setQueryData<ThreadLinkQueryResult>(['thread-link', guildId, threadId], {
+        thread: null,
+        missing: true,
+      })
+      queryClient.removeQueries({ queryKey: ['thread-preview', threadId] })
+    }
+
+    window.addEventListener('ws:thread_create', onThreadUpsert)
+    window.addEventListener('ws:thread_update', onThreadUpsert)
+    window.addEventListener('ws:thread_delete', onThreadDelete)
+
+    return () => {
+      window.removeEventListener('ws:thread_create', onThreadUpsert)
+      window.removeEventListener('ws:thread_update', onThreadUpsert)
+      window.removeEventListener('ws:thread_delete', onThreadDelete)
     }
   }, [queryClient])
 
@@ -167,6 +317,16 @@ export function useWebSocket() {
       }
     }
 
+    function onMemberModeration(e: Event) {
+      const detail = (e as CustomEvent<{ guild_id?: string | number } | undefined>).detail
+      const guildId = detail?.guild_id !== undefined ? String(detail.guild_id) : undefined
+      if (guildId) {
+        void queryClient.invalidateQueries({ queryKey: ['bans', guildId] })
+      } else {
+        void queryClient.invalidateQueries({ queryKey: ['bans'] })
+      }
+    }
+
     window.addEventListener('ws:member_added', onMemberEvent)
     window.addEventListener('ws:member_updated', onMemberEvent)
     window.addEventListener('ws:member_removed', onMemberEvent)
@@ -174,6 +334,7 @@ export function useWebSocket() {
     // so channel visibility filtering picks up the new role set immediately.
     window.addEventListener('ws:member_role_added', onMemberEvent)
     window.addEventListener('ws:member_role_removed', onMemberEvent)
+    window.addEventListener('ws:member_moderation', onMemberModeration)
 
     return () => {
       window.removeEventListener('ws:member_added', onMemberEvent)
@@ -181,6 +342,7 @@ export function useWebSocket() {
       window.removeEventListener('ws:member_removed', onMemberEvent)
       window.removeEventListener('ws:member_role_added', onMemberEvent)
       window.removeEventListener('ws:member_role_removed', onMemberEvent)
+      window.removeEventListener('ws:member_moderation', onMemberModeration)
     }
   }, [queryClient])
 
@@ -188,8 +350,15 @@ export function useWebSocket() {
 
   useEffect(() => {
     function onRoleEvent(e: Event) {
-      const detail = (e as CustomEvent<{ guild_id?: string | number } | undefined>).detail
-      const guildId = detail?.guild_id !== undefined ? String(detail.guild_id) : undefined
+      const detail = (e as CustomEvent<{
+        guild_id?: string | number
+        role?: { guild_id?: string | number }
+      } | undefined>).detail
+      const guildId = detail?.guild_id !== undefined
+        ? String(detail.guild_id)
+        : detail?.role?.guild_id !== undefined
+          ? String(detail.role.guild_id)
+          : undefined
       if (guildId) {
         void queryClient.invalidateQueries({ queryKey: ['roles', guildId] })
       } else {

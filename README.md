@@ -2,6 +2,10 @@
 
 A modern React chat application built with TypeScript, Tailwind CSS, and shadcn/ui.
 
+## Screenshot
+
+![gochat-react app screenshot](./screenshot.png)
+
 ## Tech Stack
 
 - **React 19** + **TypeScript** (strict)

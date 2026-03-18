@@ -65,7 +65,7 @@ export default function LoginPage() {
 
   if (checkingAuth) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex flex-1 w-full items-center justify-center bg-background">
         <div className="w-10 h-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
       </div>
     )
@@ -74,7 +74,7 @@ export default function LoginPage() {
   const isLoggedIn = !!user
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
+    <div className="flex flex-1 w-full items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm">
         {isLoggedIn ? (
           <>

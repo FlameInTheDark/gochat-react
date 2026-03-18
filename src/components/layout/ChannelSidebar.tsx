@@ -754,7 +754,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
 // Thin wrapper that reads the unread state, mention count, and voice channel users from Zustand
 function ChannelItemWithUnread(props: Omit<ChannelItemProps, 'isUnread' | 'mentionCount' | 'voiceUsers'>) {
   const isUnread = useUnreadStore((s) => s.channels.has(String(props.channel.id)))
-  const mentionCount = useMentionStore((s) => s.mentions[String(props.channel.id)]?.count ?? 0)
+  const mentionCount = useMentionStore((s) => s.getChannelMentionCount(String(props.channel.id)))
   const isVoice = props.channel.type === ChannelType.ChannelTypeGuildVoice
   const channelId = String(props.channel.id)
   // Get the raw array reference from store
@@ -787,7 +787,7 @@ interface ChannelItemProps {
   onEditCancel: () => void
   canManageChannels: boolean
   voiceUsers?: { userId: string; username: string; avatarUrl?: string; muted?: boolean; deafened?: boolean }[]
-  members?: { user?: { id?: number; name?: string; avatar?: { url?: string } }; username?: string }[] | undefined
+  members?: { user?: { id?: string | number; name?: string; avatar?: { url?: string } }; username?: string }[] | undefined
 }
 
 function ChannelItem({

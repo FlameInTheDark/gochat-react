@@ -1,13 +1,15 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
-import { useParams } from 'react-router-dom'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Users } from 'lucide-react'
-import { subscribeChannel } from '@/services/wsService'
+import { activateChannel, deactivateChannel } from '@/services/wsService'
+import ChatAttachmentDropZone from '@/components/chat/ChatAttachmentDropZone'
 import MessageList from '@/components/chat/MessageList'
-import MessageInput from '@/components/chat/MessageInput'
+import MessageInput, { type MessageInputHandle } from '@/components/chat/MessageInput'
 import SearchBar, { type SearchBarHandle, type AppliedFilter } from '@/components/chat/SearchBar'
 import SearchPanel from '@/components/chat/SearchPanel'
 import { useMessagePagination } from '@/hooks/useMessagePagination'
+import { createJumpRequest, type JumpBehavior, type JumpRequest } from '@/lib/messageJump'
 import { userApi, searchApi } from '@/api/client'
 import { SearchMessageSearchRequestHasEnum } from '@/client'
 import { ChannelType } from '@/types'
@@ -15,18 +17,44 @@ import type { DtoMember, DtoMessage } from '@/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 
+interface DMPageLocationState {
+  jumpToMessageId?: string
+  jumpBehavior?: JumpBehavior
+  jumpToMessagePosition?: number
+}
+
 export default function DMPage() {
   // NOTE: the route param is named :userId but by the time we land here the
   // navigation target is the DM *channel* ID returned by the friends API.
   const { userId: channelId } = useParams<{ userId: string }>()
-  const {
-    messages, isLoading, isLoadingOlder, isLoadingNewer,
-    endReached, latestReached, unreadSeparatorAfter,
-    loadOlder, loadNewer, ackLatest,
-  } = useMessagePagination(channelId)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const locationState = location.state as DMPageLocationState | null
+  const jumpIdFromState = locationState?.jumpToMessageId
+  const jumpBehaviorFromState = locationState?.jumpBehavior ?? 'direct-scroll'
+  const jumpPositionFromState = locationState?.jumpToMessagePosition ?? null
+  const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null)
+
+  // Derive jump from location state synchronously so useMessagePagination sees it
+  // on the same render that channelId changes, preventing a spurious loadInitialWindow.
+  const locationStateJump = useMemo(
+    () => jumpIdFromState
+      ? createJumpRequest(jumpIdFromState, {
+          behavior: jumpBehaviorFromState,
+          positionHint: jumpPositionFromState,
+        })
+      : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [jumpIdFromState],
+  )
+  const effectiveJumpRequest = locationStateJump ?? jumpRequest
 
   useEffect(() => {
-    if (channelId) subscribeChannel(channelId)
+    if (!channelId) return
+    activateChannel(channelId)
+    return () => {
+      deactivateChannel(channelId)
+    }
   }, [channelId])
 
   // DM channel + participant info
@@ -56,6 +84,21 @@ export default function DMPage() {
     staleTime: 5 * 60 * 1000,
   })
 
+  const {
+    rows,
+    mode,
+    jumpTargetRowKey,
+    focusTargetRowKey,
+    isLoadingInitial,
+    loadGap,
+    jumpToPresent,
+    ackLatest,
+  } = useMessagePagination(
+    channelId,
+    effectiveJumpRequest,
+    dmChannel?.last_message_id != null ? String(dmChannel.last_message_id) : undefined,
+  )
+
   const displayName = useMemo(() => {
     if (isGroupDm) return dmChannel?.name ?? 'Group'
     const name = participantUser?.name ?? dmChannel?.name ?? channelId
@@ -76,11 +119,44 @@ export default function DMPage() {
   const [hasSearched, setHasSearched] = useState(false)
   const lastSearchParamsRef = useRef<{ chips: AppliedFilter[]; text: string } | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
+  const messageInputRef = useRef<MessageInputHandle | null>(null)
+
+  const clearSearch = useCallback(() => {
+    setSearchResults([])
+    setSearchTotalPages(0)
+    setSearchPage(0)
+    setIsSearching(false)
+    setHasSearched(false)
+    lastSearchParamsRef.current = null
+    searchBarRef.current?.clear()
+  }, [])
 
   // Clear search when channel changes
   useEffect(() => {
     clearSearch()
-  }, [channelId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [channelId, clearSearch])
+
+  useEffect(() => {
+    setJumpRequest(null)
+  }, [channelId])
+
+  useEffect(() => {
+    if (!jumpIdFromState) return
+    // jumpIdFromState is handled via locationStateJump above; just clear the location state.
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [jumpIdFromState, location.pathname, navigate])
+
+  const handleJumpHandled = useCallback((requestKey: string) => {
+    setJumpRequest((current) => current?.requestKey === requestKey ? null : current)
+  }, [])
+
+  const handleSearchJump = useCallback(async (message: DtoMessage) => {
+    if (message.id == null) return
+    setJumpRequest(createJumpRequest(String(message.id), {
+      behavior: 'preload-window',
+      positionHint: message.position ?? null,
+    }))
+  }, [])
 
   async function doSearch(params: { chips: AppliedFilter[]; text: string }, pageNum: number) {
     const content = params.text
@@ -115,16 +191,6 @@ export default function DMPage() {
     } finally {
       setIsSearching(false)
     }
-  }
-
-  function clearSearch() {
-    setSearchResults([])
-    setSearchTotalPages(0)
-    setSearchPage(0)
-    setIsSearching(false)
-    setHasSearched(false)
-    lastSearchParamsRef.current = null
-    searchBarRef.current?.clear()
   }
 
   function goToPage(page: number) {
@@ -169,25 +235,32 @@ export default function DMPage() {
 
       {/* Content row */}
       <div className="flex flex-1 min-h-0">
-        <div className="flex flex-col flex-1 min-w-0">
+        <ChatAttachmentDropZone
+          className="flex-1 min-w-0"
+          onFileDrop={(files) => {
+            messageInputRef.current?.addFiles(files)
+            messageInputRef.current?.focusEditor()
+          }}
+        >
           <MessageList
-            messages={messages}
-            isLoading={isLoading}
-            isLoadingOlder={isLoadingOlder}
-            isLoadingNewer={isLoadingNewer}
-            endReached={endReached}
-            latestReached={latestReached}
-            unreadSeparatorAfter={unreadSeparatorAfter}
-            onLoadOlder={loadOlder}
-            onLoadNewer={loadNewer}
+            key={channelId}
+            rows={rows}
+            mode={mode}
+            isLoadingInitial={isLoadingInitial}
+            jumpTargetRowKey={jumpTargetRowKey}
+            focusTargetRowKey={focusTargetRowKey}
+            highlightRequest={effectiveJumpRequest}
+            onHighlightHandled={handleJumpHandled}
+            onLoadGap={loadGap}
+            onJumpToPresent={jumpToPresent}
             onAckLatest={ackLatest}
           />
-          <MessageInput channelId={channelId} channelName={displayName} />
-        </div>
+          <MessageInput ref={messageInputRef} channelId={channelId} channelName={displayName} />
+        </ChatAttachmentDropZone>
 
         {/* Search results panel */}
         {hasSearched && (
-          <div className={cn('flex flex-col border-l border-sidebar-border bg-sidebar shrink-0 w-80')}>
+          <div className={cn('flex min-h-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar shrink-0 w-80')}>
             <SearchPanel
               serverId=""
               results={searchResults}
@@ -197,6 +270,7 @@ export default function DMPage() {
               page={searchPage}
               totalPages={searchTotalPages}
               onPageChange={goToPage}
+              onJumpToMessage={handleSearchJump}
               className="flex-1 min-h-0"
             />
           </div>

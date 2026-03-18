@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Hash, Shield, Paperclip } from 'lucide-react'
@@ -19,14 +19,22 @@ import { emojiUrl } from '@/lib/emoji'
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface SuggestionItem {
-  type: 'user' | 'channel' | 'role' | 'special' | 'emoji'
+  type: 'user' | 'channel' | 'role' | 'special' | 'emoji' | 'slash'
   id: string
   display: string  // text shown in the chip in the editor
   token: string    // serialized token: <@id> <#id> <@&id> or <:name:id>
   name: string     // name for the suggestion list
   color?: number   // role color (RGB integer, 0 = none)
   emojiId?: string // emoji image ID (for emoji type)
+  description?: string // slash command result preview
 }
+
+// ── Slash commands ────────────────────────────────────────────────────────────
+
+const SLASH_COMMAND_LIST: Array<{ name: string; description: string }> = [
+  { name: 'tableflip', description: '(╯°□°)╯︵ ┻━┻' },
+  { name: 'unflip', description: '┬─┬ノ( º _ ºノ)' },
+]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -51,6 +59,18 @@ function serialize(el: HTMLElement): string {
     }
   }
   return result
+}
+
+/**
+ * Detect a slash command trigger when the entire editor content is `/word`
+ * (no chips). Returns the query after `/`, or null if not a slash context.
+ */
+function getSlashQuery(el: HTMLElement): string | null {
+  if (el.querySelector('[data-token]')) return null
+  const content = serialize(el)
+  const match = content.match(/^\/(\w*)$/)
+  if (!match) return null
+  return match[1]!
 }
 
 /**
@@ -197,6 +217,8 @@ interface Props {
   channelName?: string
   onSend: (content: string) => void
   onTyping: () => void
+  disabled?: boolean
+  topBar?: React.ReactNode
   /** Called when the paperclip button is clicked — opens the file picker. */
   onAttachClick?: () => void
   /**
@@ -216,16 +238,22 @@ interface Props {
   hasAttachments?: boolean
 }
 
-export default function MentionInput({
+export interface MentionInputHandle {
+  focusEditor: () => void
+}
+
+const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput({
   channelId,
   channelName,
   onSend,
   onTyping,
+  disabled = false,
+  topBar,
   onAttachClick,
   onFileDrop,
   attachmentBar,
   hasAttachments,
-}: Props) {
+}: Props, ref) {
   const { serverId } = useParams<{ serverId?: string }>()
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -311,6 +339,26 @@ export default function MentionInput({
     return true
   }
 
+  const focusEditor = useCallback(() => {
+    const el = editorRef.current
+    if (!el || disabled) return
+
+    el.focus()
+
+    const selection = window.getSelection()
+    if (!selection) return
+
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(false)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }, [disabled])
+
+  useImperativeHandle(ref, () => ({
+    focusEditor,
+  }), [focusEditor])
+
   // Close suggestions when clicking outside the entire component (editor + popup)
   useEffect(() => {
     function onPointerDown(e: PointerEvent) {
@@ -329,6 +377,22 @@ export default function MentionInput({
       el.classList.add('is-empty')
     }
   }, [])
+
+  function computeSlashSuggestions(query: string) {
+    const q = query.toLowerCase()
+    const items: SuggestionItem[] = SLASH_COMMAND_LIST
+      .filter((cmd) => !q || cmd.name.startsWith(q))
+      .map((cmd) => ({
+        type: 'slash' as const,
+        id: cmd.name,
+        display: `/${cmd.name}`,
+        token: `/${cmd.name}`,
+        name: cmd.name,
+        description: cmd.description,
+      }))
+    setSuggestions(items)
+    setActiveIdx(0)
+  }
 
   function computeSuggestions(q: { trigger: '@' | '#' | ':'; query: string }) {
     const query = q.query.toLowerCase()
@@ -454,6 +518,14 @@ export default function MentionInput({
     const el = editorRef.current
     if (!el) return
     el.focus()
+    if (item.type === 'slash') {
+      // Clear the editor and fire onSend immediately — MessageInput.send() expands the command
+      while (el.firstChild) el.removeChild(el.firstChild)
+      el.classList.add('is-empty')
+      setSuggestions([])
+      onSend(`/${item.name}`)
+      return
+    }
     if (item.type === 'emoji') {
       insertCustomEmojiChip(item.name, item.emojiId!)
     } else {
@@ -466,6 +538,7 @@ export default function MentionInput({
   }
 
   function handleInput() {
+    if (disabled) return
     const el = editorRef.current
     if (!el) return
 
@@ -473,16 +546,26 @@ export default function MentionInput({
     const isEmpty = !el.textContent?.trim() && !el.querySelector('[data-token]')
     el.classList.toggle('is-empty', isEmpty)
     
-    const q = getMentionQuery(el)
-    if (q) {
-      computeSuggestions(q)
+    const slashQuery = getSlashQuery(el)
+    if (slashQuery !== null) {
+      computeSlashSuggestions(slashQuery)
     } else {
-      setSuggestions([])
+      const q = getMentionQuery(el)
+      if (q) {
+        computeSuggestions(q)
+      } else {
+        setSuggestions([])
+      }
     }
     onTyping()
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (disabled) {
+      e.preventDefault()
+      return
+    }
+
     // Suggestion navigation
     if (suggestions.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -576,6 +659,10 @@ export default function MentionInput({
   }
 
   function handlePaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    if (disabled) {
+      e.preventDefault()
+      return
+    }
     // Files in clipboard (e.g. a screenshot via Ctrl+V)
     if (e.clipboardData.files.length > 0) {
       e.preventDefault()
@@ -589,6 +676,7 @@ export default function MentionInput({
   }
 
   function insertEmojiInEditor(emoji: string) {
+    if (disabled) return
     const el = editorRef.current
     if (!el) return
     el.focus()
@@ -649,6 +737,7 @@ export default function MentionInput({
   // ── Drag-and-drop ────────────────────────────────────────────────────────
 
   function handleDragEnter(e: React.DragEvent) {
+    if (disabled) return
     if (!e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
     dragCounterRef.current++
@@ -656,6 +745,7 @@ export default function MentionInput({
   }
 
   function handleDragLeave() {
+    if (disabled) return
     dragCounterRef.current--
     if (dragCounterRef.current <= 0) {
       dragCounterRef.current = 0
@@ -664,10 +754,12 @@ export default function MentionInput({
   }
 
   function handleDragOver(e: React.DragEvent) {
+    if (disabled) return
     if (e.dataTransfer.types.includes('Files')) e.preventDefault()
   }
 
   function handleDrop(e: React.DragEvent) {
+    if (disabled) return
     e.preventDefault()
     dragCounterRef.current = 0
     setIsDragging(false)
@@ -688,14 +780,16 @@ export default function MentionInput({
       onDrop={handleDrop}
     >
       {/* Suggestions popup — sits above the input */}
-      {suggestions.length > 0 && (
+      {!disabled && suggestions.length > 0 && (
         <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border border-border bg-popover shadow-lg overflow-hidden">
           <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border">
-            {suggestions[0]?.type === 'channel'
-              ? t('chat.channels')
-              : suggestions[0]?.type === 'emoji'
-                ? 'Emoji'
-                : t('chat.membersAndRoles')}
+            {suggestions[0]?.type === 'slash'
+              ? t('chat.commands', 'Commands')
+              : suggestions[0]?.type === 'channel'
+                ? t('chat.channels')
+                : suggestions[0]?.type === 'emoji'
+                  ? 'Emoji'
+                  : t('chat.membersAndRoles')}
           </div>
           {suggestions.map((item, i) => (
             <button
@@ -711,6 +805,11 @@ export default function MentionInput({
                 : 'text-foreground hover:bg-accent/50'
                 }`}
             >
+              {item.type === 'slash' && (
+                <div className="w-6 h-6 rounded bg-muted shrink-0 flex items-center justify-center text-[13px] font-bold text-muted-foreground">
+                  /
+                </div>
+              )}
               {item.type === 'emoji' && item.emojiId && (
                 <img
                   src={emojiUrl(item.emojiId, 44)}
@@ -737,7 +836,12 @@ export default function MentionInput({
                   style={{ color: roleColor(item.color) ?? 'var(--muted-foreground)' }}
                 />
               )}
-              <span className="font-medium truncate">{item.name}</span>
+              <span className="font-medium truncate">
+                {item.type === 'slash' ? `/${item.name}` : item.name}
+              </span>
+              {item.type === 'slash' && item.description && (
+                <span className="ml-auto text-xs text-muted-foreground shrink-0 pl-2">{item.description}</span>
+              )}
               {item.type === 'role' && (
                 <span className="ml-auto text-xs text-muted-foreground shrink-0">{t('chat.role')}</span>
               )}
@@ -753,6 +857,8 @@ export default function MentionInput({
           isDragging && 'border-primary ring-[3px] ring-primary/50',
         )}
       >
+        {topBar}
+
         {/* Attachment preview bar — rendered above the text row when present */}
         {attachmentBar && (
           <div className="px-2 pt-2">
@@ -775,6 +881,7 @@ export default function MentionInput({
               type="button"
               onClick={onAttachClick}
               aria-label="Attach file"
+              disabled={disabled}
               className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
             >
               <Paperclip className="h-5 w-5" />
@@ -783,13 +890,17 @@ export default function MentionInput({
 
           <div
             ref={editorRef}
-            contentEditable
+            contentEditable={!disabled}
             suppressContentEditableWarning
             onInput={handleInput}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
+            aria-disabled={disabled}
             data-placeholder={t('chat.messagePlaceholder', { name: channelName ?? channelId })}
-            className="mention-editor flex-1 min-h-[28px] max-h-48 overflow-y-auto outline-none text-sm text-foreground leading-6 break-words"
+            className={cn(
+              'mention-editor flex-1 min-h-[28px] max-h-48 overflow-y-auto outline-none text-sm text-foreground leading-6 break-words',
+              disabled && 'cursor-not-allowed text-muted-foreground',
+            )}
           />
 
           {/* GIF picker */}
@@ -798,6 +909,7 @@ export default function MentionInput({
               <button
                 type="button"
                 aria-label="Open GIF picker"
+                disabled={disabled}
                 className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
               >
                 <ImagePlay className="h-5 w-5" />
@@ -818,6 +930,7 @@ export default function MentionInput({
               <button
                 type="button"
                 aria-label="Open emoji picker"
+                disabled={disabled}
                 className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
               >
                 <Smile className="h-5 w-5" />
@@ -838,4 +951,8 @@ export default function MentionInput({
       </div>
     </div>
   )
-}
+})
+
+MentionInput.displayName = 'MentionInput'
+
+export default MentionInput

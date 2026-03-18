@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize, Star } from 'lucide-react'
+import { getFileExtension, isSvgFileLike } from '@/lib/fileTypes'
 import { cn } from '@/lib/utils'
+import PendingAttachmentBar from '@/components/chat/PendingAttachmentBar'
+import type { PendingUploadAttachment } from '@/lib/pendingAttachments'
 import type { DtoAttachment } from '@/types'
 import AnimatedImage from '@/components/ui/AnimatedImage'
 import { useGifStore } from '@/stores/gifStore'
@@ -48,17 +51,17 @@ type RenderGroup =
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const MAX_DIM = 360
-const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'svg'])
+const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp'])
 const VIDEO_EXT = new Set(['mp4', 'webm', 'mov', 'm4v', 'mkv', 'ogv'])
 const AUDIO_EXT = new Set(['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'opus'])
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function detectKind(a: DtoAttachment): AttachmentKind {
   const ct = a.content_type?.toLowerCase() ?? ''
-  if (ct.startsWith('image/')) return 'image'
+  if (ct.startsWith('image/') && !isSvgFileLike({ contentType: a.content_type, filename: a.filename })) return 'image'
   if (ct.startsWith('video/')) return 'video'
   if (ct.startsWith('audio/')) return 'audio'
-  const ext = (a.filename ?? '').toLowerCase().split('.').pop() ?? ''
+  const ext = getFileExtension(a.filename)
   if (IMAGE_EXT.has(ext)) return 'image'
   if (VIDEO_EXT.has(ext)) return 'video'
   if (AUDIO_EXT.has(ext)) return 'audio'
@@ -629,10 +632,25 @@ function AttachmentFile({ item }: { item: RenderItem }) {
 // ── Main component ────────────────────────────────────────────────────────────
 interface Props {
   attachments: DtoAttachment[] | null | undefined
+  pendingAttachments?: PendingUploadAttachment[] | null | undefined
   maxWidth?: number
 }
 
-export default function MessageAttachments({ attachments, maxWidth = MAX_DIM }: Props) {
+export default function MessageAttachments({
+  attachments,
+  pendingAttachments,
+  maxWidth = MAX_DIM,
+}: Props) {
+  if (pendingAttachments?.length) {
+    return (
+      <PendingAttachmentBar
+        attachments={pendingAttachments}
+        className="mt-1 px-0 py-0.5 pb-0"
+        showUploadStatus
+      />
+    )
+  }
+
   if (!attachments?.length) return null
 
   const groups = groupForRender(attachments)

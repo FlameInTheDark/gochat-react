@@ -10,17 +10,8 @@ import { useAuthStore } from '@/stores/authStore'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { playMentionSound } from '@/lib/sounds'
 import { axiosInstance } from '@/api/client'
-import type { DtoMessage } from '@/types'
-
-// Resolve the WebSocket URL lazily at connection time.
-// If the env var is a relative path (e.g. "/ws/subscribe"), expand it
-// against the current host so the Vite dev proxy can handle it.
-function getWsUrl(): string {
-  const raw: string = import.meta.env.VITE_WEBSOCKET_URL ?? '/ws/subscribe'
-  if (raw.startsWith('ws://') || raw.startsWith('wss://')) return raw
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${location.host}${raw}`
-}
+import { ChannelType, type DtoChannel, type DtoMessage } from '@/types'
+import { getWsUrl, getApiBaseUrl } from '@/lib/connectionConfig'
 
 // BigInt-aware serializer for outgoing WS messages that contain Snowflake IDs.
 // The Go backend expects int64 numbers — plain JSON.stringify emits quoted strings
@@ -49,7 +40,8 @@ const MAX_RECONNECT_DELAY = 30_000
 
 // Active subscriptions — restored after every reconnect
 const activeGuildSubs = new Set<string>()
-let activeChannelSub: string | null = null
+const explicitChannelCounts = new Map<string, number>()
+const visibleChannelCounts = new Map<string, number>()
 const activePresenceSubs = new Set<string>()
 
 // Own status kept in sync with presenceStore.ownStatus
@@ -149,6 +141,23 @@ function clearReconnectTimer() {
   }
 }
 
+function getSubscribedChannelIds(): string[] {
+  const all = new Set<string>(explicitChannelCounts.keys())
+  for (const channelId of visibleChannelCounts.keys()) {
+    all.add(channelId)
+  }
+  return [...all]
+}
+
+function isChannelVisible(channelId: string): boolean {
+  return (visibleChannelCounts.get(channelId) ?? 0) > 0
+}
+
+function syncChannelSubscriptions() {
+  if (socket?.readyState !== WebSocket.OPEN) return
+  sendJson({ op: 5, d: { channels: getSubscribedChannelIds().map((id) => BigInt(id)) } })
+}
+
 function scheduleReconnect() {
   if (intentionalClose || !currentToken) return
   clearReconnectTimer()
@@ -183,7 +192,7 @@ async function refreshTokenAndReconnect() {
   if (intentionalClose || !currentToken || isRefreshingToken) return
   isRefreshingToken = true
   try {
-    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    const baseUrl = getApiBaseUrl()
     // The 401 interceptor will refresh the token if needed and retry.
     // On success the store always holds the most recent valid token.
     await axiosInstance.get(`${baseUrl}/user/me`)
@@ -210,9 +219,7 @@ function resubscribe() {
   if (activeGuildSubs.size > 0) {
     sendJson({ op: 5, d: { guilds: [...activeGuildSubs].map((id) => BigInt(id)) } })
   }
-  if (activeChannelSub) {
-    sendJson({ op: 5, d: { channel: BigInt(activeChannelSub) } })
-  }
+  syncChannelSubscriptions()
 
   // Re-send own presence status (with custom text if set)
   sendJson({
@@ -246,9 +253,10 @@ interface WsHelloData {
 interface WsDeletedMessage {
   channel_id?: string | number
   id?: string | number
+  message_id?: string | number
 }
 
-// t=100 / t=405: actual message event — d = { guild_id, message: DtoMessage }
+// t=100: actual message event — d = { guild_id, message: DtoMessage }
 interface WsGuildMessageEvent {
   guild_id?: string | number
   message?: DtoMessage
@@ -283,6 +291,28 @@ interface WsMentionEvent {
   type?: number
 }
 
+// t=405: lightweight DM activity notification, delivered on user.{userId}
+interface WsDmNotification {
+  channel_id?: string | number
+  message_id?: string | number
+  from?: {
+    id?: string | number
+    name?: string
+    discriminator?: string
+    avatar?: unknown
+  }
+}
+
+interface WsThreadEvent {
+  guild_id?: string | number
+  thread?: DtoChannel
+}
+
+interface WsThreadDeleteEvent {
+  guild_id?: string | number
+  thread_id?: string | number
+}
+
 // Presence dispatch payload — server sends as op:3 (not op:0)
 interface WsPresenceEvent {
   user_id?: string | number
@@ -312,6 +342,10 @@ const VALID_STATUSES = new Set<UserStatus>(['online', 'idle', 'dnd', 'offline'])
 function normalizeStatus(s: string | undefined): UserStatus {
   if (s && VALID_STATUSES.has(s as UserStatus)) return s as UserStatus
   return 'offline'
+}
+
+function isThreadChannel(channel: DtoChannel | null | undefined): channel is DtoChannel {
+  return channel?.type === ChannelType.ChannelTypeThread
 }
 
 // ── Incoming message handler ──────────────────────────────────────────────────
@@ -399,20 +433,25 @@ function handleMessage(event: MessageEvent) {
 
     // t=100: Message Create (channel subscription)
     //   d = { guild_id, message: DtoMessage } — full message body present
-    // t=405: User DM Message — same shape as t=100
-    if (t === 100 || t === 405) {
+    if (t === 100) {
       const msg = extractMessage(d)
       if (msg?.channel_id !== undefined) {
         const channelId = String(msg.channel_id)
-        useMessageStore.getState().addMessage(channelId, msg)
+        const currentUserId = useAuthStore.getState().user?.id
+        const isOwnMessage =
+          currentUserId != null &&
+          msg.author?.id != null &&
+          String(msg.author.id) === String(currentUserId)
+        useMessageStore.getState().receiveMessage(channelId, msg)
 
-        // Track the latest known message ID for this channel
+        // Track the latest known message ID and ACK own messages — combined into
+        // a single readStateStore set() to minimise React re-renders.
         if (msg.id != null) {
-          useReadStateStore.getState().updateLastMessage(channelId, String(msg.id))
+          useReadStateStore.getState().receiveChannelMessage(channelId, String(msg.id), isOwnMessage)
         }
 
         // Mark unread if this message arrived for a channel we're not currently viewing
-        if (activeChannelSub !== channelId) {
+        if (!isOwnMessage && !isChannelVisible(channelId)) {
           const guildId = (d as WsGuildMessageEvent)?.guild_id != null
             ? String((d as WsGuildMessageEvent).guild_id)
             : null
@@ -424,10 +463,22 @@ function handleMessage(event: MessageEvent) {
           useTypingStore.getState().stopTyping(channelId, String(msg.author.id))
         }
       }
-      // For DM messages also signal the DM sidebar to refresh its channel list
-      if (t === 405) {
-        window.dispatchEvent(new CustomEvent('ws:dm_channel_create', { detail: d }))
+      return
+    }
+
+    // t=405: User DM Message notification
+    if (t === 405) {
+      const notif = d as WsDmNotification | undefined
+      if (notif?.channel_id != null) {
+        const channelId = String(notif.channel_id)
+        if (!isChannelVisible(channelId)) {
+          useUnreadStore.getState().markUnread(channelId, null)
+        }
+        if (notif.message_id != null) {
+          useReadStateStore.getState().updateLastMessage(channelId, String(notif.message_id))
+        }
       }
+      window.dispatchEvent(new CustomEvent('ws:dm_channel_create', { detail: d }))
       return
     }
 
@@ -439,7 +490,9 @@ function handleMessage(event: MessageEvent) {
       if (notif?.channel_id != null) {
         const channelId = String(notif.channel_id)
         const guildId = notif.guild_id != null ? String(notif.guild_id) : null
-        useUnreadStore.getState().markUnread(channelId, guildId)
+        if (!isChannelVisible(channelId)) {
+          useUnreadStore.getState().markUnread(channelId, guildId)
+        }
         // Update the latest-known message ID so unread detection stays accurate
         if (notif.message_id != null) {
           useReadStateStore.getState().updateLastMessage(channelId, String(notif.message_id))
@@ -457,7 +510,10 @@ function handleMessage(event: MessageEvent) {
         const userId = String(te.user_id)
         // Skip own typing events — we don't want to show ourselves as "typing"
         const me = useAuthStore.getState().user
-        if (me == null || String(me.id) !== userId) {
+        if (
+          isChannelVisible(channelId) &&
+          (me == null || String(me.id) !== userId)
+        ) {
           const name = te.username ?? te.user_name ?? te.name ?? userId
           useTypingStore.getState().startTyping(channelId, userId, name)
         }
@@ -471,13 +527,14 @@ function handleMessage(event: MessageEvent) {
     //   Delivered on user.{userId} topic so only the mentioned user receives it.
     if (t === 302) {
       const mention = d as WsMentionEvent | undefined
-      if (mention?.guild_id != null && mention?.channel_id != null) {
+      if (mention?.guild_id != null && mention?.channel_id != null && mention?.message_id != null) {
         const guildId = String(mention.guild_id)
         const channelId = String(mention.channel_id)
         // Only track & notify if user is NOT currently viewing that channel
-        if (!window.location.pathname.endsWith(`/${channelId}`)) {
-          useMentionStore.getState().addMention(guildId, channelId)
+        if (!isChannelVisible(channelId)) {
+          useMentionStore.getState().addMention(guildId, channelId, String(mention.message_id))
           playMentionSound()
+          window.electronAPI?.notify({ title: 'GoChat', body: 'You have a new mention' })
         }
       }
       window.dispatchEvent(new CustomEvent('ws:mention', { detail: d }))
@@ -496,8 +553,9 @@ function handleMessage(event: MessageEvent) {
     // t=102: Message Delete
     if (t === 102) {
       const del = d as WsDeletedMessage | undefined
-      if (del?.channel_id !== undefined && del?.id !== undefined) {
-        useMessageStore.getState().removeMessage(String(del.channel_id), String(del.id))
+      const messageId = del?.message_id ?? del?.id
+      if (del?.channel_id !== undefined && messageId !== undefined) {
+        useMessageStore.getState().removeMessage(String(del.channel_id), String(messageId))
       }
       return
     }
@@ -566,6 +624,43 @@ function handleMessage(event: MessageEvent) {
     // t=112: Role Delete
     if (t === 112) {
       window.dispatchEvent(new CustomEvent('ws:role_delete', { detail: d }))
+      return
+    }
+
+    // ── Thread lifecycle events ───────────────────────────────────────────────
+
+    // t=113: Thread Create
+    if (t === 113) {
+      const eventData = d as WsThreadEvent | undefined
+      if (isThreadChannel(eventData?.thread)) {
+        useMessageStore.getState().syncThreadMetadata(eventData.thread)
+      }
+      window.dispatchEvent(new CustomEvent('ws:thread_create', { detail: d }))
+      return
+    }
+
+    // t=114: Thread Update
+    if (t === 114) {
+      const eventData = d as WsThreadEvent | undefined
+      if (isThreadChannel(eventData?.thread)) {
+        useMessageStore.getState().syncThreadMetadata(eventData.thread)
+      }
+      window.dispatchEvent(new CustomEvent('ws:thread_update', { detail: d }))
+      return
+    }
+
+    // t=115: Thread Delete
+    if (t === 115) {
+      const eventData = d as WsThreadDeleteEvent | undefined
+      if (eventData?.thread_id != null) {
+        const threadId = String(eventData.thread_id)
+        useMessageStore.getState().removeThreadMetadata(threadId)
+        useMessageStore.getState().removeChannelMessages(threadId)
+        useUnreadStore.getState().removeChannel(threadId)
+        useMentionStore.getState().clearChannel(threadId)
+        useReadStateStore.getState().removeChannel(threadId)
+      }
+      window.dispatchEvent(new CustomEvent('ws:thread_delete', { detail: d }))
       return
     }
 
@@ -680,6 +775,12 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
+    // t=207: Guild Member Moderation
+    if (t === 207) {
+      window.dispatchEvent(new CustomEvent('ws:member_moderation', { detail: d }))
+      return
+    }
+
     // t=208: Voice Region Changing (pre-rebind notification)
     if (t === 208) {
       window.dispatchEvent(new CustomEvent('ws:voice_region_changing', { detail: d }))
@@ -733,11 +834,16 @@ function handleMessage(event: MessageEvent) {
     // t=400: User Read State Update
     // d = { channel_id, last_read_message_id } — sync from another client session
     if (t === 400) {
-      const rs = d as { channel_id?: string | number; last_read_message_id?: string | number } | undefined
-      if (rs?.channel_id != null && rs?.last_read_message_id != null) {
+      const rs = d as {
+        channel_id?: string | number
+        last_read_message_id?: string | number
+        message_id?: string | number
+      } | undefined
+      const messageId = rs?.message_id ?? rs?.last_read_message_id
+      if (rs?.channel_id != null && messageId != null) {
         useReadStateStore.getState().setReadState(
           String(rs.channel_id),
-          String(rs.last_read_message_id),
+          String(messageId),
         )
       }
       window.dispatchEvent(new CustomEvent('ws:read_state_update', { detail: d }))
@@ -899,13 +1005,47 @@ export function subscribeGuilds(guildIds: string[]) {
   }
 }
 
-// Subscribe to a single channel's message stream (op=5, d.channel).
-// ID is sent as int64 BigInt.
+// Subscribe to a single channel's message stream.
+// OP 5 channel subscriptions are an exact set, so every change re-sends the
+// complete `channels` list for this connection.
 export function subscribeChannel(channelId: string) {
-  activeChannelSub = channelId
-  if (socket?.readyState === WebSocket.OPEN) {
-    sendJson({ op: 5, d: { channel: BigInt(channelId) } })
+  const nextCount = (explicitChannelCounts.get(channelId) ?? 0) + 1
+  explicitChannelCounts.set(channelId, nextCount)
+  if (nextCount === 1) {
+    syncChannelSubscriptions()
   }
+}
+
+export function unsubscribeChannel(channelId: string) {
+  const currentCount = explicitChannelCounts.get(channelId) ?? 0
+  if (currentCount <= 1) {
+    explicitChannelCounts.delete(channelId)
+    if (!visibleChannelCounts.has(channelId)) {
+      syncChannelSubscriptions()
+    }
+    return
+  }
+  explicitChannelCounts.set(channelId, currentCount - 1)
+}
+
+export function activateChannel(channelId: string) {
+  const nextCount = (visibleChannelCounts.get(channelId) ?? 0) + 1
+  visibleChannelCounts.set(channelId, nextCount)
+  if (nextCount === 1 && !explicitChannelCounts.has(channelId)) {
+    syncChannelSubscriptions()
+  }
+}
+
+export function deactivateChannel(channelId: string) {
+  const currentCount = visibleChannelCounts.get(channelId) ?? 0
+  if (currentCount <= 1) {
+    visibleChannelCounts.delete(channelId)
+    if (!explicitChannelCounts.has(channelId)) {
+      syncChannelSubscriptions()
+    }
+    return
+  }
+  visibleChannelCounts.set(channelId, currentCount - 1)
 }
 
 // Replace the full presence subscription set (op=6, d.set).
@@ -955,13 +1095,18 @@ export function sendRaw(data: unknown) {
 // Legacy helper kept for backward compatibility (voice service etc.)
 export function subscribe(guildIds: string[], channelIds: string[]) {
   for (const id of guildIds) activeGuildSubs.add(id)
-  for (const id of channelIds) activeChannelSub = id // last one wins
+  let channelsChanged = false
+  for (const id of channelIds) {
+    const nextCount = (explicitChannelCounts.get(id) ?? 0) + 1
+    explicitChannelCounts.set(id, nextCount)
+    channelsChanged ||= nextCount === 1
+  }
   if (socket?.readyState !== WebSocket.OPEN) return
   if (guildIds.length > 0) {
     sendJson({ op: 5, d: { guilds: guildIds.map((id) => BigInt(id)) } })
   }
-  for (const ch of channelIds) {
-    sendJson({ op: 5, d: { channel: BigInt(ch) } })
+  if (channelsChanged) {
+    syncChannelSubscriptions()
   }
 }
 
@@ -971,7 +1116,8 @@ export function disconnect() {
   currentSessionId = null
   lastEventId = 0
   activeGuildSubs.clear()
-  activeChannelSub = null
+  explicitChannelCounts.clear()
+  visibleChannelCounts.clear()
   activePresenceSubs.clear()
   clearReconnectTimer()
   clearHeartbeat()

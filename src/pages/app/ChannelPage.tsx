@@ -1,42 +1,168 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { Hash, Volume2, MicOff, HeadphoneOff, Users } from 'lucide-react'
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
+import { Hash, Spool, Volume2, MicOff, HeadphoneOff, Users } from 'lucide-react'
+import axios from 'axios'
 import { Separator } from '@/components/ui/separator'
-import { guildApi, rolesApi, searchApi } from '@/api/client'
+import { guildApi, messageApi, rolesApi, searchApi } from '@/api/client'
 import { SearchMessageSearchRequestHasEnum } from '@/client'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { ChannelType } from '@/types'
-import type { DtoMessage } from '@/types'
+import type { DtoChannel, DtoGuild, DtoMessage } from '@/types'
 import type { ServerOutletContext } from './ServerLayout'
 import type { MentionResolver } from '@/lib/messageParser'
 import MessageList from '@/components/chat/MessageList'
-import MessageInput from '@/components/chat/MessageInput'
+import ChatAttachmentDropZone from '@/components/chat/ChatAttachmentDropZone'
+import MessageInput, { type MessageInputHandle } from '@/components/chat/MessageInput'
 import MemberList from '@/components/layout/MemberList'
 import SearchBar, { type SearchBarHandle, type AppliedFilter } from '@/components/chat/SearchBar'
 import SearchPanel from '@/components/chat/SearchPanel'
-import { subscribeChannel } from '@/services/wsService'
+import ThreadCreatePanel from '@/components/chat/ThreadCreatePanel'
+import ThreadListPanel from '@/components/chat/ThreadListPanel'
+import ThreadPanel from '@/components/chat/ThreadPanel'
+import { activateChannel, deactivateChannel } from '@/services/wsService'
 import { joinVoice } from '@/services/voiceService'
 import { toast } from 'sonner'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
+import { useMessageStore } from '@/stores/messageStore'
+import { useMentionStore } from '@/stores/mentionStore'
+import { useReadStateStore } from '@/stores/readStateStore'
+import { useUnreadStore } from '@/stores/unreadStore'
 import TypingIndicator from '@/components/chat/TypingIndicator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { useMessagePagination } from '@/hooks/useMessagePagination'
 import { useTranslation } from 'react-i18next'
+import { calculateEffectivePermissions, hasPermission, PermissionBits } from '@/lib/permissions'
+import { getTopRoleColor } from '@/lib/memberColors'
+import { createJumpRequest, type JumpBehavior, type JumpRequest } from '@/lib/messageJump'
+import { isAutoThreadFollowup, isThreadChannel, sortThreadsByActivity } from '@/lib/threads'
+import { buildMessagePreviewText } from '@/lib/messagePreview'
+
+type RightPanelMode = 'members' | 'none' | 'threads' | 'thread' | 'thread-create'
+type NonThreadRightPanelMode = Exclude<RightPanelMode, 'threads' | 'thread' | 'thread-create'>
+type RightPanelWidthKey = 'search' | 'members' | 'threads' | 'thread' | 'threadCreate'
+
+interface ChannelPageLocationState {
+  jumpToMessageId?: string
+  jumpBehavior?: JumpBehavior
+  jumpToMessagePosition?: number
+  openThreadId?: string
+  threadJumpToMessageId?: string
+  threadJumpBehavior?: JumpBehavior
+  threadJumpToMessagePosition?: number
+}
+
+interface MissingThreadLookupResult {
+  thread: DtoChannel | null
+  missing: boolean
+}
+
+const EMPTY_MESSAGES: DtoMessage[] = []
+const THREAD_PREVIEW_FETCH_LIMIT = 20
+const RIGHT_PANEL_WIDTH_STORAGE_KEY = 'channel-page.right-panel-widths'
+const RIGHT_PANEL_WIDTH_KEYS: RightPanelWidthKey[] = [
+  'search',
+  'members',
+  'threads',
+  'thread',
+  'threadCreate',
+]
+const DEFAULT_RIGHT_PANEL_WIDTHS: Record<RightPanelWidthKey, number> = {
+  search: 320,
+  members: 240,
+  threads: 352,
+  thread: 416,
+  threadCreate: 352,
+}
+
+function getRightPanelMaxWidth(): number {
+  if (typeof window === 'undefined') return 640
+  return Math.max(260, Math.min(640, Math.floor(window.innerWidth * 0.7)))
+}
+
+function clampRightPanelWidth(width: number): number {
+  return Math.min(Math.max(Math.round(width), 220), getRightPanelMaxWidth())
+}
+
+function loadRightPanelWidths(): Record<RightPanelWidthKey, number> {
+  const defaults = { ...DEFAULT_RIGHT_PANEL_WIDTHS }
+  if (typeof window === 'undefined') return defaults
+
+  try {
+    const raw = window.localStorage.getItem(RIGHT_PANEL_WIDTH_STORAGE_KEY)
+    if (!raw) return defaults
+
+    const parsed = JSON.parse(raw) as Partial<Record<RightPanelWidthKey, number>>
+    return {
+      search: clampRightPanelWidth(parsed.search ?? defaults.search),
+      members: clampRightPanelWidth(parsed.members ?? defaults.members),
+      threads: clampRightPanelWidth(parsed.threads ?? defaults.threads),
+      thread: clampRightPanelWidth(parsed.thread ?? defaults.thread),
+      threadCreate: clampRightPanelWidth(parsed.threadCreate ?? defaults.threadCreate),
+    }
+  } catch {
+    return defaults
+  }
+}
+
+function getRightPanelWidthKey(
+  hasSearched: boolean,
+  mode: RightPanelMode,
+): RightPanelWidthKey {
+  if (hasSearched) return 'search'
+  if (mode === 'thread') return 'thread'
+  if (mode === 'threads') return 'threads'
+  if (mode === 'thread-create') return 'threadCreate'
+  return 'members'
+}
+
+function isThreadRightPanelMode(mode: RightPanelMode): boolean {
+  return mode === 'threads' || mode === 'thread' || mode === 'thread-create'
+}
+
+function toNonThreadRightPanelMode(mode: RightPanelMode): NonThreadRightPanelMode {
+  return mode === 'members' ? 'members' : 'none'
+}
+
+function buildThreadPreviewText(
+  message: DtoMessage | null | undefined,
+  t: ReturnType<typeof useTranslation>['t'],
+): string {
+  return buildMessagePreviewText(message, {
+    emptyText: t('threads.previewEmpty'),
+    embedsText: t('threads.previewEmbeds'),
+    attachmentsText: (count) => t('threads.previewAttachments', { count }),
+  })
+}
+
+function isThreadLookupNotFound(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 404
+}
 
 export default function ChannelPage() {
   const { channelId, serverId } = useParams<{ channelId: string; serverId: string }>()
   const { channels } = useOutletContext<ServerOutletContext>()
   const channel = channels.find((c) => String(c.id) === channelId)
   const isVoice = channel?.type === ChannelType.ChannelTypeGuildVoice
+  const isTextChannel = channel?.type === ChannelType.ChannelTypeGuild
 
   const navigate = useNavigate()
   const location = useLocation()
+  const queryClient = useQueryClient()
   const { t } = useTranslation()
 
-  const [showMembers, setShowMembers] = useState(true)
+  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('members')
+  const [rightPanelModeBeforeThreads, setRightPanelModeBeforeThreads] =
+    useState<NonThreadRightPanelMode>('members')
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
+  const [threadJumpRequest, setThreadJumpRequest] = useState<JumpRequest | null>(null)
+  const [createThreadSource, setCreateThreadSource] = useState<DtoMessage | null>(null)
+  const [replyTarget, setReplyTarget] = useState<DtoMessage | null>(null)
+  const [rightPanelWidths, setRightPanelWidths] = useState<Record<RightPanelWidthKey, number>>(
+    () => loadRightPanelWidths(),
+  )
 
   // ── Search state ────────────────────────────────────────────────────────────
   const [searchResults, setSearchResults] = useState<DtoMessage[]>([])
@@ -46,34 +172,94 @@ export default function ChannelPage() {
   const [hasSearched, setHasSearched] = useState(false)
   const lastSearchParamsRef = useRef<{ chips: AppliedFilter[]; text: string } | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
+  const messageInputRef = useRef<MessageInputHandle | null>(null)
+  const rightPanelResizeCleanupRef = useRef<(() => void) | null>(null)
 
   // Jump-to-message from search.
-  const jumpIdFromState =
-    (location.state as { jumpToMessageId?: string } | null)?.jumpToMessageId
+  const locationState = location.state as ChannelPageLocationState | null
+  const jumpIdFromState = locationState?.jumpToMessageId
+  const jumpBehaviorFromState = locationState?.jumpBehavior ?? 'direct-scroll'
+  const jumpPositionFromState = locationState?.jumpToMessagePosition ?? null
+  const openThreadIdFromState = locationState?.openThreadId
+  const threadJumpIdFromState = locationState?.threadJumpToMessageId
+  const threadJumpBehaviorFromState = locationState?.threadJumpBehavior ?? 'direct-scroll'
+  const threadJumpPositionFromState = locationState?.threadJumpToMessagePosition ?? null
 
-  const [jumpToMessageId, setJumpToMessageId] = useState<string | undefined>(
-    jumpIdFromState,
+  const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null)
+
+  // Derive the jump request from location state synchronously (useMemo runs during render,
+  // before any effects). This ensures useMessagePagination sees the jump on the same render
+  // that channelId changes, preventing a spurious loadInitialWindow call.
+  const locationStateJump = useMemo(
+    () => jumpIdFromState
+      ? createJumpRequest(jumpIdFromState, {
+          behavior: jumpBehaviorFromState,
+          positionHint: jumpPositionFromState,
+        })
+      : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [jumpIdFromState], // stable while location state is unchanged; behavior/position change together
   )
 
-  useEffect(() => {
-    if (!jumpIdFromState) return
-    setJumpToMessageId(jumpIdFromState)
-    navigate(location.pathname, { replace: true, state: {} })
-  }, [jumpIdFromState]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The effective jump request: location state takes priority (cross-channel nav),
+  // falling back to the state-based request (same-channel jumps via setJumpRequest).
+  const effectiveJumpRequest = locationStateJump ?? jumpRequest
 
   useEffect(() => {
-    if (!jumpToMessageId) return
-    const timer = setTimeout(() => setJumpToMessageId(undefined), 3_000)
-    return () => clearTimeout(timer)
-  }, [jumpToMessageId])
+    if (!jumpIdFromState && !openThreadIdFromState && !threadJumpIdFromState) return
+    // Copy the location-state jump into jumpRequest state so effectiveJumpRequest stays
+    // non-null after location state is cleared (happens below via navigate).
+    if (jumpIdFromState && locationStateJump) {
+      setJumpRequest(locationStateJump)
+    }
+    if (openThreadIdFromState) {
+      setRightPanelModeBeforeThreads((current) => (
+        isThreadRightPanelMode(rightPanelMode) ? current : toNonThreadRightPanelMode(rightPanelMode)
+      ))
+      setActiveThreadId(openThreadIdFromState)
+      setRightPanelMode('thread')
+    }
+    if (threadJumpIdFromState) {
+      setThreadJumpRequest(
+        createJumpRequest(threadJumpIdFromState, {
+          behavior: threadJumpBehaviorFromState,
+          positionHint: threadJumpPositionFromState,
+        }),
+      )
+    }
+    navigate(location.pathname, { replace: true, state: {} })
+  }, [
+    jumpIdFromState,
+    locationStateJump,
+    navigate,
+    location.pathname,
+    openThreadIdFromState,
+    rightPanelMode,
+    threadJumpBehaviorFromState,
+    threadJumpIdFromState,
+    threadJumpPositionFromState,
+  ])
+
+  const handleChannelJumpHandled = useCallback((requestKey: string) => {
+    setJumpRequest((current) => current?.requestKey === requestKey ? null : current)
+  }, [])
+
+  const handleThreadJumpHandled = useCallback((requestKey: string) => {
+    setThreadJumpRequest((current) => current?.requestKey === requestKey ? null : current)
+  }, [])
 
   const {
-    messages, isLoading, isLoadingOlder, isLoadingNewer,
-    endReached, latestReached, unreadSeparatorAfter,
-    loadOlder, loadNewer, ackLatest,
+    rows,
+    mode,
+    jumpTargetRowKey,
+    focusTargetRowKey,
+    isLoadingInitial,
+    loadGap,
+    jumpToPresent,
+    ackLatest,
   } = useMessagePagination(
     isVoice ? undefined : channelId,
-    jumpToMessageId,
+    effectiveJumpRequest,
     channel?.last_message_id != null ? String(channel.last_message_id) : undefined,
   )
 
@@ -90,6 +276,9 @@ export default function ChannelPage() {
   useEffect(() => { setSpotlightId(null) }, [channelId])
 
   const currentUser = useAuthStore((s) => s.user)
+  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find(
+    (g) => String(g.id) === serverId,
+  )
 
   const { data: members } = useQuery({
     queryKey: ['members', serverId],
@@ -105,6 +294,261 @@ export default function ChannelPage() {
     enabled: !!serverId,
     staleTime: 60_000,
   })
+
+  const currentMember = members?.find((m) => String(m.user?.id) === String(currentUser?.id))
+  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
+  const effectivePermissions = currentMember && roles
+    ? calculateEffectivePermissions(currentMember, roles)
+    : 0
+  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
+  const canCreateThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.CREATE_THREADS)
+  const canSendInThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.SEND_MESSAGES_IN_THREADS)
+  const canManageThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_THREADS)
+
+  const { data: threadListData = [], isLoading: isThreadsLoading } = useQuery({
+    queryKey: ['channel-threads', serverId, channelId],
+    queryFn: () =>
+      guildApi.guildGuildIdChannelChannelIdThreadsGet({
+        guildId: serverId!,
+        channelId: channelId!,
+      }).then((res) => res.data ?? []),
+    enabled: !!serverId && !!channelId && isTextChannel,
+    staleTime: 30_000,
+  })
+
+  const channelThreads = useMemo(
+    () => sortThreadsByActivity(threadListData),
+    [threadListData],
+  )
+
+  const activeThreadFromList = channelThreads.find((thread) => String(thread.id) === activeThreadId)
+  const { data: directThreadChannel, isLoading: isActiveThreadLoading } = useQuery({
+    queryKey: ['thread-channel', serverId, activeThreadId],
+    queryFn: () =>
+      guildApi.guildGuildIdChannelChannelIdGet({
+        guildId: serverId!,
+        channelId: activeThreadId!,
+      }).then((res) => res.data),
+    enabled: !!serverId && !!activeThreadId && !activeThreadFromList,
+    staleTime: 30_000,
+  })
+
+  const activeThread = activeThreadFromList ?? (
+    isThreadChannel(directThreadChannel) ? directThreadChannel : null
+  )
+
+  const channelMessages = useMessageStore((s) =>
+    channelId ? (s.messages[channelId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES,
+  )
+  const threadMessages = useMessageStore((s) => s.messages)
+
+  const knownThreadById = useMemo(() => {
+    const map = new Map<string, DtoChannel>()
+    const addThread = (thread: DtoChannel | null | undefined) => {
+      if (!isThreadChannel(thread) || thread.id == null) return
+      map.set(String(thread.id), thread)
+    }
+
+    channelThreads.forEach(addThread)
+    addThread(activeThread)
+    channels.forEach(addThread)
+    channelMessages.forEach((message) => addThread(message.thread))
+
+    return map
+  }, [activeThread, channelMessages, channelThreads, channels])
+
+  const missingThreadLookupTargets = useMemo(() => {
+    const ordered: string[] = []
+    const seen = new Set<string>()
+
+    channelMessages.forEach((message) => {
+      const attachedThread = isThreadChannel(message.thread) ? message.thread : null
+      const threadId = attachedThread?.id != null
+        ? String(attachedThread.id)
+        : message.thread_id != null
+          ? String(message.thread_id)
+          : null
+      if (!threadId || attachedThread || knownThreadById.has(threadId) || seen.has(threadId)) return
+
+      const channelThreadCandidate = channels.find((candidate) => String(candidate.id) === threadId)
+      if (isThreadChannel(channelThreadCandidate)) return
+
+      seen.add(threadId)
+      ordered.push(threadId)
+    })
+
+    return ordered
+  }, [channelMessages, channels, knownThreadById])
+
+  const missingThreadLookupQueries = useQueries({
+    queries: missingThreadLookupTargets.map((threadId) => ({
+      queryKey: ['thread-link', serverId, threadId],
+      queryFn: async (): Promise<MissingThreadLookupResult> => {
+        try {
+          const res = await guildApi.guildGuildIdChannelChannelIdGet({
+            guildId: serverId!,
+            channelId: threadId,
+          })
+
+          return {
+            thread: isThreadChannel(res.data) ? res.data : null,
+            missing: false,
+          }
+        } catch (error) {
+          if (isThreadLookupNotFound(error)) {
+            return { thread: null, missing: true }
+          }
+          throw error
+        }
+      },
+      enabled: !!serverId,
+      retry: false,
+      staleTime: 60_000,
+    })),
+  })
+
+  const fetchedThreadById = useMemo(() => {
+    const map = new Map<string, DtoChannel>()
+
+    missingThreadLookupTargets.forEach((threadId, index) => {
+      const result = missingThreadLookupQueries[index]?.data
+      if (result?.thread) {
+        map.set(threadId, result.thread)
+      }
+    })
+
+    return map
+  }, [missingThreadLookupQueries, missingThreadLookupTargets])
+
+  const missingThreadIds = useMemo(() => {
+    const ids = new Set<string>()
+
+    missingThreadLookupTargets.forEach((threadId, index) => {
+      if (missingThreadLookupQueries[index]?.data?.missing) {
+        ids.add(threadId)
+      }
+    })
+
+    return ids
+  }, [missingThreadLookupQueries, missingThreadLookupTargets])
+
+  const threadById = useMemo(() => {
+    const map = new Map(knownThreadById)
+    fetchedThreadById.forEach((thread, threadId) => {
+      map.set(threadId, thread)
+    })
+    return map
+  }, [fetchedThreadById, knownThreadById])
+
+  useEffect(() => {
+    if (!serverId) return
+
+    const readStateStore = useReadStateStore.getState()
+    const unreadStore = useUnreadStore.getState()
+    const mentionStore = useMentionStore.getState()
+
+    threadById.forEach((_, threadId) => {
+      if (readStateStore.isUnread(threadId)) {
+        unreadStore.markUnread(threadId, serverId)
+      }
+      if (mentionStore.getChannelMentionCount(threadId) > 0) {
+        mentionStore.associateGuild(threadId, serverId)
+      }
+    })
+  }, [serverId, threadById])
+
+  const renderedThreadTargets = useMemo(() => {
+    const ordered: DtoChannel[] = []
+    const seen = new Set<string>()
+    const addThread = (thread: DtoChannel | null | undefined) => {
+      if (!isThreadChannel(thread) || thread.id == null) return
+      const id = String(thread.id)
+      if (seen.has(id)) return
+      seen.add(id)
+      ordered.push(thread)
+    }
+
+    channelMessages.forEach((message) => {
+      if (message.type !== 0 || message.thread_id == null) return
+      addThread(isThreadChannel(message.thread) ? message.thread : threadById.get(String(message.thread_id)))
+    })
+
+    return ordered
+  }, [channelMessages, threadById])
+
+  const shouldLoadThreadListPreviews = rightPanelMode === 'threads'
+
+  const threadPreviewTargets = useMemo(() => {
+    const ordered: DtoChannel[] = []
+    const seen = new Set<string>()
+    const addThread = (thread: DtoChannel | null | undefined) => {
+      if (!isThreadChannel(thread) || thread.id == null) return
+      const id = String(thread.id)
+      if (seen.has(id)) return
+      seen.add(id)
+      ordered.push(thread)
+    }
+
+    renderedThreadTargets.forEach(addThread)
+    if (shouldLoadThreadListPreviews) {
+      channelThreads.forEach(addThread)
+    }
+
+    return ordered
+  }, [channelThreads, renderedThreadTargets, shouldLoadThreadListPreviews])
+
+  const threadPreviewQueries = useQueries({
+    queries: threadPreviewTargets.map((thread) => ({
+      queryKey: ['thread-preview', String(thread.id), String(thread.last_message_id ?? 0)],
+      queryFn: async () => {
+        if (thread.last_message_id == null) return null
+        const res = await messageApi.messageChannelChannelIdGet({
+          channelId: String(thread.id),
+          limit: THREAD_PREVIEW_FETCH_LIMIT,
+        })
+        return res.data?.[0] ?? null
+      },
+      enabled: thread.last_message_id != null,
+      staleTime: 30_000,
+    })),
+  })
+
+  const threadPreviewMessageMap = useMemo(() => {
+    const previews: Record<string, DtoMessage | null> = {}
+    threadPreviewTargets.forEach((thread, index) => {
+      const threadId = String(thread.id)
+      const storedMessages = threadMessages[threadId] ?? []
+      previews[threadId] = storedMessages[storedMessages.length - 1] ?? threadPreviewQueries[index]?.data ?? null
+    })
+    return previews
+  }, [threadMessages, threadPreviewQueries, threadPreviewTargets])
+
+  const threadPreviewMap = useMemo(() => {
+    const previews: Record<string, string> = {}
+    channelThreads.forEach((thread) => {
+      previews[String(thread.id)] = buildThreadPreviewText(
+        threadPreviewMessageMap[String(thread.id)],
+        t,
+      )
+    })
+    return previews
+  }, [channelThreads, threadPreviewMessageMap, t])
+
+  const memberColorMap = useMemo(() => {
+    const colors: Record<string, string> = {}
+    if (!members?.length || !roles?.length) return colors
+
+    members.forEach((member) => {
+      const userId = member.user?.id != null ? String(member.user.id) : null
+      if (!userId) return
+      const color = getTopRoleColor(member.roles, roles)
+      if (color) {
+        colors[userId] = color
+      }
+    })
+
+    return colors
+  }, [members, roles])
 
   const openUserProfile = useUiStore((s) => s.openUserProfile)
 
@@ -128,22 +572,46 @@ export default function ChannelPage() {
         const m = members?.find((m) => String(m.user?.id) === id)
         return m?.username ?? m?.user?.name
       },
-      channel: (id) => channels.find((c) => String(c.id) === id)?.name,
+      channel: (id) => {
+        const thread = channelThreads?.find((c) => String(c.id) === id)
+        return thread?.name ?? channels.find((c) => String(c.id) === id)?.name
+      },
       role: (id) => roles?.find((r) => String(r.id) === id)?.name,
       onUserClick: handleUserClick,
       onChannelClick: handleChannelClick,
     }),
-    [members, channels, roles, handleUserClick, handleChannelClick],
+    [members, channelThreads, channels, roles, handleUserClick, handleChannelClick],
   )
 
+  const clearSearch = useCallback(() => {
+    setSearchResults([])
+    setSearchTotalPages(0)
+    setSearchPage(0)
+    setIsSearching(false)
+    setHasSearched(false)
+    lastSearchParamsRef.current = null
+    searchBarRef.current?.clear()
+  }, [])
+
   useEffect(() => {
-    if (channelId) subscribeChannel(channelId)
+    if (!channelId) return
+    activateChannel(channelId)
+    return () => {
+      deactivateChannel(channelId)
+    }
   }, [channelId])
 
   // Clear search when navigating to a different channel
   useEffect(() => {
     clearSearch()
-  }, [channelId]) // eslint-disable-line react-hooks/exhaustive-deps
+    setRightPanelMode('members')
+    setRightPanelModeBeforeThreads('members')
+    setJumpRequest(null)
+    setActiveThreadId(null)
+    setThreadJumpRequest(null)
+    setCreateThreadSource(null)
+    setReplyTarget(null)
+  }, [channelId, clearSearch])
 
   async function doSearch(params: { chips: AppliedFilter[]; text: string }, pageNum: number) {
     const content = params.text
@@ -182,21 +650,212 @@ export default function ChannelPage() {
     }
   }
 
-  function clearSearch() {
-    setSearchResults([])
-    setSearchTotalPages(0)
-    setSearchPage(0)
-    setIsSearching(false)
-    setHasSearched(false)
-    lastSearchParamsRef.current = null
-    searchBarRef.current?.clear()
-  }
-
   function goToPage(page: number) {
     if (lastSearchParamsRef.current) {
       void doSearch(lastSearchParamsRef.current, page)
     }
   }
+
+  const openThread = useCallback((
+    threadId: string,
+    options?: {
+      jumpToMessageId?: string
+      jumpBehavior?: JumpBehavior
+      jumpPosition?: number | null
+    },
+  ) => {
+    clearSearch()
+    setCreateThreadSource(null)
+    setRightPanelModeBeforeThreads((current) => (
+      isThreadRightPanelMode(rightPanelMode) ? current : toNonThreadRightPanelMode(rightPanelMode)
+    ))
+    setActiveThreadId(threadId)
+    setThreadJumpRequest(
+      options?.jumpToMessageId
+        ? createJumpRequest(options.jumpToMessageId, {
+            behavior: options.jumpBehavior ?? 'direct-scroll',
+            positionHint: options.jumpPosition ?? null,
+          })
+        : null,
+    )
+    setRightPanelMode('thread')
+  }, [clearSearch, rightPanelMode])
+
+  const openThreadList = useCallback(() => {
+    clearSearch()
+    setCreateThreadSource(null)
+    setRightPanelModeBeforeThreads((current) => (
+      isThreadRightPanelMode(rightPanelMode) ? current : toNonThreadRightPanelMode(rightPanelMode)
+    ))
+    setActiveThreadId(null)
+    setThreadJumpRequest(null)
+    setRightPanelMode('threads')
+  }, [clearSearch, rightPanelMode])
+
+  function handleThreadButtonClick() {
+    clearSearch()
+    setCreateThreadSource(null)
+    setActiveThreadId(null)
+    setThreadJumpRequest(null)
+    setRightPanelMode((mode) => {
+      if (isThreadRightPanelMode(mode)) return rightPanelModeBeforeThreads
+      setRightPanelModeBeforeThreads(toNonThreadRightPanelMode(mode))
+      return 'threads'
+    })
+  }
+
+  function handleMembersButtonClick() {
+    clearSearch()
+    setCreateThreadSource(null)
+    setRightPanelMode((mode) => (mode === 'members' ? 'none' : 'members'))
+  }
+
+  const handleCreateThreadAction = useCallback((message: DtoMessage) => {
+    clearSearch()
+    setRightPanelModeBeforeThreads((current) => (
+      isThreadRightPanelMode(rightPanelMode) ? current : toNonThreadRightPanelMode(rightPanelMode)
+    ))
+    setCreateThreadSource(message)
+    setRightPanelMode('thread-create')
+  }, [clearSearch, rightPanelMode])
+
+  const handleCreateThread = useCallback(async ({
+    name,
+    content,
+    attachmentIds,
+    nonce,
+    sourceMessageId,
+  }: {
+    name?: string
+    content: string
+    attachmentIds: number[]
+    nonce: string
+    sourceMessageId: string
+  }) => {
+    if (!channelId) return
+    const res = await messageApi.messageChannelChannelIdMessageIdThreadPost({
+      channelId: channelId as unknown as number,
+      messageId: sourceMessageId as unknown as number,
+      request: {
+        name,
+        content,
+        attachments: attachmentIds.length > 0 ? attachmentIds : undefined,
+        nonce,
+      },
+    })
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['channels', serverId] }),
+      queryClient.invalidateQueries({ queryKey: ['channel-threads', serverId, channelId] }),
+    ])
+    openThread(String(res.data.id))
+  }, [channelId, openThread, queryClient, serverId])
+
+  const openMessageLocation = useCallback(async (
+    targetChannelId: string,
+    messageId: string,
+    options?: {
+      jumpBehavior?: JumpBehavior
+      jumpPosition?: number | null
+    },
+  ) => {
+    if (!serverId) return
+    const jumpBehavior = options?.jumpBehavior ?? 'direct-scroll'
+
+    if (targetChannelId === channelId) {
+      setJumpRequest(createJumpRequest(messageId, {
+        behavior: jumpBehavior,
+        positionHint: options?.jumpPosition ?? null,
+      }))
+      return
+    }
+
+    if (targetChannelId === activeThreadId) {
+      openThread(targetChannelId, {
+        jumpToMessageId: messageId,
+        jumpBehavior,
+        jumpPosition: options?.jumpPosition ?? null,
+      })
+      return
+    }
+
+    const knownChannel = threadById.get(targetChannelId)
+      ?? channels.find((c) => String(c.id) === targetChannelId)
+
+    if (isThreadChannel(knownChannel) && knownChannel.parent_id != null) {
+      if (String(knownChannel.parent_id) === channelId) {
+        openThread(targetChannelId, {
+          jumpToMessageId: messageId,
+          jumpBehavior,
+          jumpPosition: options?.jumpPosition ?? null,
+        })
+        return
+      }
+
+      navigate(`/app/${serverId}/${String(knownChannel.parent_id)}`, {
+        state: {
+          openThreadId: targetChannelId,
+          threadJumpToMessageId: messageId,
+          threadJumpBehavior: jumpBehavior,
+          threadJumpToMessagePosition: options?.jumpPosition ?? undefined,
+        } satisfies ChannelPageLocationState,
+      })
+      return
+    }
+
+    if (!knownChannel) {
+      try {
+        const res = await guildApi.guildGuildIdChannelChannelIdGet({
+          guildId: serverId,
+          channelId: targetChannelId,
+        })
+        if (isThreadChannel(res.data) && res.data.parent_id != null) {
+          if (String(res.data.parent_id) === channelId) {
+            openThread(targetChannelId, {
+              jumpToMessageId: messageId,
+              jumpBehavior,
+              jumpPosition: options?.jumpPosition ?? null,
+            })
+            return
+          }
+
+          navigate(`/app/${serverId}/${String(res.data.parent_id)}`, {
+            state: {
+              openThreadId: targetChannelId,
+              threadJumpToMessageId: messageId,
+              threadJumpBehavior: jumpBehavior,
+              threadJumpToMessagePosition: options?.jumpPosition ?? undefined,
+            } satisfies ChannelPageLocationState,
+          })
+          return
+        }
+      } catch {
+        // Fall back to the default channel jump below.
+      }
+    }
+
+    navigate(`/app/${serverId}/${targetChannelId}`, {
+      state: {
+        jumpToMessageId: messageId,
+        jumpBehavior,
+        jumpToMessagePosition: options?.jumpPosition ?? undefined,
+      } satisfies ChannelPageLocationState,
+    })
+  }, [activeThreadId, channelId, channels, navigate, openThread, serverId, threadById])
+
+  async function handleSearchJump(msg: DtoMessage) {
+    if (msg.channel_id == null || msg.id == null) return
+    await openMessageLocation(String(msg.channel_id), String(msg.id), {
+      jumpBehavior: 'direct-scroll',
+      jumpPosition: msg.position ?? null,
+    })
+  }
+
+  useEffect(() => {
+    if (!activeThreadId || activeThread || isActiveThreadLoading) return
+    setActiveThreadId(null)
+    setThreadJumpRequest(null)
+    setRightPanelMode('threads')
+  }, [activeThread, activeThreadId, isActiveThreadLoading])
 
   if (!channelId) return null
 
@@ -213,6 +872,181 @@ export default function ChannelPage() {
       toast.error(t('channelSidebar.joinVoiceFailed'))
     }
   }
+
+  const canManageActiveThread = !!activeThread && (
+    canManageThreads ||
+    (currentUser?.id !== undefined && String(activeThread.creator_id) === String(currentUser.id))
+  )
+
+  const getParentMessageProps = useCallback(function getParentMessageProps(msg: DtoMessage) {
+    const isInformationalMessage = msg.type === 2 || msg.type === 3 || msg.type === 4
+    const canReply =
+      (msg.type === 0 || msg.type === 1) &&
+      !isAutoThreadFollowup(msg) &&
+      msg.id != null
+    const attachedThread = isThreadChannel(msg.thread) ? msg.thread : null
+    const threadId = attachedThread?.id != null
+      ? String(attachedThread.id)
+      : msg.thread_id != null
+        ? String(msg.thread_id)
+        : null
+    const channelThreadCandidate = threadId
+      ? channels.find((candidate) => String(candidate.id) === threadId)
+      : null
+    const linkedThread = attachedThread
+      ?? (threadId ? threadById.get(threadId) : null)
+      ?? (isThreadChannel(channelThreadCandidate) ? channelThreadCandidate : null)
+    const isMissingThread = threadId != null && missingThreadIds.has(threadId)
+    const threadPreviewMessage = threadId ? threadPreviewMessageMap[threadId] ?? null : null
+    const threadPreview = msg.type === 0 && threadId && linkedThread
+      ? {
+          name: linkedThread.name ?? t('threads.threadFallback'),
+          topic: linkedThread.topic?.trim() ? linkedThread.topic.trim() : null,
+          previewMessage: threadPreviewMessage,
+          previewText: buildThreadPreviewText(threadPreviewMessage, t),
+          onClick: () => openThread(threadId),
+        }
+      : undefined
+
+    const threadBadge = threadId && !threadPreview
+      ? {
+          label: isMissingThread
+            ? t('threads.missingThread')
+            : linkedThread?.name ?? t('threads.threadFallback'),
+          onClick: isMissingThread ? undefined : () => openThread(threadId),
+        }
+      : undefined
+
+    const threadAction = threadId && !isMissingThread
+      ? {
+          label: t('threads.openThread'),
+          onClick: () => openThread(threadId),
+        }
+      : (
+        isTextChannel &&
+        canCreateThreads &&
+        msg.id != null &&
+        !isInformationalMessage
+      )
+        ? {
+            label: t('threads.createThread'),
+            onClick: () => handleCreateThreadAction(msg),
+          }
+        : undefined
+
+    return {
+      threadPreview,
+      threadBadge,
+      threadAction,
+      replyAction: canReply ? {
+        label: t('messageItem.reply'),
+        onClick: () => setReplyTarget(msg),
+      } : undefined,
+      threadListAction: isTextChannel ? {
+        label: t('threads.title'),
+        onClick: openThreadList,
+      } : undefined,
+      onOpenReference: ({ channelId: targetChannelId, messageId }: { channelId: string; messageId: string }) => {
+        void openMessageLocation(targetChannelId, messageId)
+      },
+      hideContent: threadBadge != null && isAutoThreadFollowup(msg),
+      allowEdit: !isInformationalMessage,
+      allowDelete: true,
+    }
+  }, [channels, threadById, missingThreadIds, threadPreviewMessageMap, t, openThread, handleCreateThreadAction, setReplyTarget, openThreadList, openMessageLocation, isTextChannel, canCreateThreads])
+
+  const threadButtonActive =
+    rightPanelMode === 'threads' ||
+    rightPanelMode === 'thread' ||
+    rightPanelMode === 'thread-create'
+  const isThreadSidePanelVisible =
+    !hasSearched &&
+    (
+      rightPanelMode === 'threads' ||
+      rightPanelMode === 'thread' ||
+      rightPanelMode === 'thread-create'
+    )
+  const activeRightPanelWidthKey = getRightPanelWidthKey(hasSearched, rightPanelMode)
+  const activeRightPanelWidth = clampRightPanelWidth(
+    rightPanelWidths[activeRightPanelWidthKey] ?? DEFAULT_RIGHT_PANEL_WIDTHS[activeRightPanelWidthKey],
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, JSON.stringify(rightPanelWidths))
+    } catch {
+      // Ignore storage failures and keep the in-memory widths.
+    }
+  }, [rightPanelWidths])
+
+  useEffect(() => {
+    const handleResize = () => {
+      setRightPanelWidths((current) => {
+        let changed = false
+        const next = { ...current }
+        RIGHT_PANEL_WIDTH_KEYS.forEach((key) => {
+          const currentWidth = current[key] ?? DEFAULT_RIGHT_PANEL_WIDTHS[key]
+          const clamped = clampRightPanelWidth(currentWidth)
+          if (clamped !== currentWidth) {
+            next[key] = clamped
+            changed = true
+          }
+        })
+        return changed ? next : current
+      })
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      rightPanelResizeCleanupRef.current?.()
+    }
+  }, [])
+
+  const handleRightPanelResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isThreadSidePanelVisible) return
+    event.preventDefault()
+
+    rightPanelResizeCleanupRef.current?.()
+
+    const widthKey = getRightPanelWidthKey(hasSearched, rightPanelMode)
+    const startX = event.clientX
+    const startWidth = rightPanelWidths[widthKey] ?? DEFAULT_RIGHT_PANEL_WIDTHS[widthKey]
+    const previousUserSelect = document.body.style.userSelect
+    const previousCursor = document.body.style.cursor
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = clampRightPanelWidth(startWidth + (startX - moveEvent.clientX))
+      setRightPanelWidths((current) => {
+        if ((current[widthKey] ?? DEFAULT_RIGHT_PANEL_WIDTHS[widthKey]) === nextWidth) {
+          return current
+        }
+        return { ...current, [widthKey]: nextWidth }
+      })
+    }
+
+    const stopResizing = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopResizing)
+      window.removeEventListener('pointercancel', stopResizing)
+      document.body.style.userSelect = previousUserSelect
+      document.body.style.cursor = previousCursor
+      rightPanelResizeCleanupRef.current = null
+    }
+
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'col-resize'
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopResizing)
+    window.addEventListener('pointercancel', stopResizing)
+    rightPanelResizeCleanupRef.current = stopResizing
+  }, [hasSearched, isThreadSidePanelVisible, rightPanelMode, rightPanelWidths])
 
   // Voice channel view
   if (isVoice) {
@@ -329,98 +1163,180 @@ export default function ChannelPage() {
 
   // Text channel view
   return (
-    <div className="flex flex-col flex-1 min-h-0">
-      {/* Full-width header */}
-      <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
-        <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
-        <span className="font-semibold">{channel?.name ?? channelId}</span>
-        {channel?.topic && (
-          <>
-            <Separator orientation="vertical" className="h-5 mx-1" />
-            <span className="text-sm text-muted-foreground truncate">{channel.topic}</span>
-          </>
-        )}
+    <>
+      <div className="flex flex-col flex-1 min-h-0">
+        <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
+          <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
+          <span className="font-semibold">{channel?.name ?? channelId}</span>
+          {channel?.topic && (
+            <>
+              <Separator orientation="vertical" className="h-5 mx-1" />
+              <span className="text-sm text-muted-foreground truncate">{channel.topic}</span>
+            </>
+          )}
 
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={() => setShowMembers((v) => !v)}
-            title={showMembers ? t('channel.hideMemberList') : t('channel.showMemberList')}
-            className={cn(
-              'w-8 h-8 flex items-center justify-center rounded transition-colors',
-              showMembers
-                ? 'text-foreground bg-accent'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+          <div className="ml-auto flex items-center gap-2">
+            {isTextChannel && (
+              <button
+                onClick={handleThreadButtonClick}
+                title={threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}
+                className={cn(
+                  'w-8 h-8 flex items-center justify-center rounded transition-colors',
+                  threadButtonActive
+                    ? 'text-foreground bg-accent'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                )}
+              >
+                <Spool className="w-4 h-4" />
+              </button>
             )}
-          >
-            <Users className="w-4 h-4" />
-          </button>
-          <SearchBar
-            ref={searchBarRef}
-            className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
-            members={members}
-            channels={channels}
-            onSearch={(p) => void doSearch(p, 0)}
-            onClear={clearSearch}
-            hasResults={hasSearched}
-          />
-        </div>
-      </div>
-
-      {/* Content row */}
-      <div className="flex flex-1 min-h-0">
-        <div className="flex flex-col flex-1 min-w-0">
-          <MessageList
-            messages={messages}
-            isLoading={isLoading}
-            isLoadingOlder={isLoadingOlder}
-            isLoadingNewer={isLoadingNewer}
-            endReached={endReached}
-            latestReached={latestReached}
-            unreadSeparatorAfter={unreadSeparatorAfter}
-            highlightMessageId={jumpToMessageId}
-            channelName={channel?.name}
-            resolver={mentionResolver}
-            onLoadOlder={loadOlder}
-            onLoadNewer={loadNewer}
-            onAckLatest={ackLatest}
-          />
-          <TypingIndicator channelId={channelId} serverId={serverId ?? ''} />
-          <MessageInput
-            channelId={channelId}
-            channelName={
-              channel?.type === ChannelType.ChannelTypeGuildVoice
-                ? `🔊 ${channel?.name ?? channelId}`
-                : `#${channel?.name ?? channelId}`
-            }
-          />
-        </div>
-
-        {/* Right panel: results OR members */}
-        {(hasSearched || showMembers) && serverId && (
-          <div className={cn(
-            'flex flex-col border-l border-sidebar-border bg-sidebar shrink-0',
-            hasSearched ? 'w-80' : 'w-60',
-          )}>
-            {hasSearched ? (
-              <SearchPanel
-                serverId={serverId}
-                results={searchResults}
-                channels={channels}
-                isLoading={isSearching}
-                hasSearched={hasSearched}
-                page={searchPage}
-                totalPages={searchTotalPages}
-                onPageChange={goToPage}
-                resolver={mentionResolver}
-                className="flex-1 min-h-0"
-              />
-            ) : (
-              <MemberList serverId={serverId} channel={channel} />
-            )}
+            <button
+              onClick={handleMembersButtonClick}
+              title={rightPanelMode === 'members' ? t('channel.hideMemberList') : t('channel.showMemberList')}
+              className={cn(
+                'w-8 h-8 flex items-center justify-center rounded transition-colors',
+                rightPanelMode === 'members'
+                  ? 'text-foreground bg-accent'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              )}
+            >
+              <Users className="w-4 h-4" />
+            </button>
+            <SearchBar
+              ref={searchBarRef}
+              className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
+              members={members}
+              channels={channels}
+              onSearch={(params) => void doSearch(params, 0)}
+              onClear={clearSearch}
+              hasResults={hasSearched}
+            />
           </div>
-        )}
+        </div>
+
+        <div className="flex flex-1 min-h-0">
+          <ChatAttachmentDropZone
+            className="flex-1 min-w-0"
+            onFileDrop={(files) => {
+              messageInputRef.current?.addFiles(files)
+              messageInputRef.current?.focusEditor()
+            }}
+          >
+            <MessageList
+              key={channelId}
+              rows={rows}
+              mode={mode}
+              isLoadingInitial={isLoadingInitial}
+              jumpTargetRowKey={jumpTargetRowKey}
+              focusTargetRowKey={focusTargetRowKey}
+              highlightRequest={effectiveJumpRequest}
+              onHighlightHandled={handleChannelJumpHandled}
+              channelName={channel?.name}
+              resolver={mentionResolver}
+              getMessageProps={getParentMessageProps}
+              onLoadGap={loadGap}
+              onJumpToPresent={jumpToPresent}
+              onAckLatest={ackLatest}
+            />
+            <TypingIndicator channelId={channelId} serverId={serverId ?? ''} />
+            <MessageInput
+              ref={messageInputRef}
+              channelId={channelId}
+              channelName={channel?.name ? `#${channel.name}` : channelId}
+              resolver={mentionResolver}
+              replyTo={replyTarget}
+              onCancelReply={() => setReplyTarget(null)}
+            />
+          </ChatAttachmentDropZone>
+
+          {(hasSearched || rightPanelMode !== 'none') && serverId && (
+            <>
+              {isThreadSidePanelVisible && (
+                <div
+                  className="group relative w-1.5 shrink-0 cursor-col-resize bg-transparent touch-none"
+                  onPointerDown={handleRightPanelResizeStart}
+                >
+                  <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-sidebar-border/80 transition-colors group-hover:bg-foreground/30" />
+                </div>
+              )}
+              <div
+                className={cn(
+                  'flex min-h-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar shrink-0',
+                  hasSearched
+                    ? 'w-80'
+                    : isThreadSidePanelVisible
+                      ? ''
+                      : 'w-60',
+                )}
+                style={isThreadSidePanelVisible ? { width: `${activeRightPanelWidth}px` } : undefined}
+              >
+                {hasSearched ? (
+                  <SearchPanel
+                    serverId={serverId}
+                    results={searchResults}
+                    channels={channels}
+                    isLoading={isSearching}
+                    hasSearched={hasSearched}
+                    page={searchPage}
+                    totalPages={searchTotalPages}
+                    onPageChange={goToPage}
+                    onJumpToMessage={handleSearchJump}
+                    resolver={mentionResolver}
+                    className="flex-1 min-h-0"
+                  />
+                ) : rightPanelMode === 'thread' && activeThread ? (
+                  <ThreadPanel
+                    serverId={serverId}
+                    thread={activeThread}
+                    canManageThread={canManageActiveThread}
+                    canSendMessages={canSendInThreads}
+                    highlightRequest={threadJumpRequest}
+                    onHighlightHandled={handleThreadJumpHandled}
+                    resolver={mentionResolver}
+                    onOpenReferencedMessage={(targetChannelId, messageId) => {
+                      void openMessageLocation(targetChannelId, messageId)
+                    }}
+                    onBack={() => setRightPanelMode('threads')}
+                    onDeleted={() => {
+                      setActiveThreadId(null)
+                      setThreadJumpRequest(null)
+                      setRightPanelMode('threads')
+                    }}
+                  />
+                ) : rightPanelMode === 'thread-create' && createThreadSource ? (
+                  <ThreadCreatePanel
+                    parentChannelId={channelId}
+                    sourceMessage={createThreadSource}
+                    onBack={() => {
+                      setCreateThreadSource(null)
+                      setRightPanelMode('threads')
+                    }}
+                    onCreateThread={handleCreateThread}
+                  />
+                ) : rightPanelMode === 'thread' ? (
+                  <div className="flex flex-1 min-h-0 items-center justify-center text-sm text-muted-foreground">
+                    {t('common.loading')}
+                  </div>
+                ) : rightPanelMode === 'threads' ? (
+                <ThreadListPanel
+                  threads={channelThreads}
+                  previews={threadPreviewMap}
+                  previewMessages={threadPreviewMessageMap}
+                  memberColors={memberColorMap}
+                  isLoading={isThreadsLoading}
+                  activeThreadId={activeThreadId}
+                  resolver={mentionResolver}
+                  onOpenThread={(threadId) => openThread(threadId)}
+                />
+                ) : (
+                  <MemberList serverId={serverId} channel={channel} />
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   )
 }
 
@@ -516,12 +1432,20 @@ function VoiceParticipant({
   onClick?: () => void
 }) {
   const initials = label.charAt(0).toUpperCase()
-  const [frozenLocally, setFrozenLocally] = useState(false)
-  const [videoAspect, setVideoAspect] = useState<number | null>(null)
-  useEffect(() => { setFrozenLocally(false); setVideoAspect(null) }, [videoStream])
-  const handleFrozen = useCallback(() => setFrozenLocally(true), [])
-  const handleActive = useCallback(() => setFrozenLocally(false), [])
-  const hasVideo = !!videoStream && (isLocal || !frozenLocally)
+  const streamId = videoStream?.id ?? null
+  const [frozenStreamId, setFrozenStreamId] = useState<string | null>(null)
+  const [videoAspectState, setVideoAspectState] = useState<{ streamId: string | null; ratio: number | null }>({
+    streamId: null,
+    ratio: null,
+  })
+  const videoAspect = videoAspectState.streamId === streamId ? videoAspectState.ratio : null
+  const handleFrozen = useCallback(() => setFrozenStreamId(streamId), [streamId])
+  const handleActive = useCallback(() => setFrozenStreamId(null), [])
+  const handleAspect = useCallback(
+    (ratio: number) => setVideoAspectState({ streamId, ratio }),
+    [streamId],
+  )
+  const hasVideo = !!videoStream && (isLocal || frozenStreamId !== streamId)
 
   const avatarCls = size === 'spotlight' ? 'w-24 h-24' : size === 'compact' ? 'w-12 h-12' : 'w-20 h-20'
   const fallbackCls = size === 'spotlight' ? 'text-3xl' : size === 'compact' ? 'text-base' : 'text-xl'
@@ -563,7 +1487,7 @@ function VoiceParticipant({
               key={videoStream!.id}
               stream={videoStream!}
               mirror={isLocal}
-              onAspect={size === 'spotlight' ? setVideoAspect : undefined}
+              onAspect={size === 'spotlight' ? handleAspect : undefined}
               onFrozen={isLocal ? undefined : handleFrozen}
               onActive={isLocal ? undefined : handleActive}
             />

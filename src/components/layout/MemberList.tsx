@@ -25,6 +25,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { addPresenceSubscription } from '@/services/wsService'
 import { cn } from '@/lib/utils'
 import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
+import { getTopRoleColor } from '@/lib/memberColors'
 import type { DtoMember, DtoGuild, DtoChannel } from '@/types'
 import type { DtoRole } from '@/client'
 
@@ -168,13 +169,8 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
 
   // Pick top role color: lowest position wins, skip zero-color roles
   const topRoleColor = useMemo(() => {
-    const top = allRoles
-      .filter((r) => memberRoleIds.has(String(r.id)) && (r.color ?? 0) !== 0)
-      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0]
-    if (!top) return undefined
-    const c = top.color ?? 0
-    return `#${c.toString(16).padStart(6, '0')}`
-  }, [allRoles, member.roles])
+    return getTopRoleColor(memberRoleIds, allRoles)
+  }, [allRoles, memberRoleIds])
 
   // Track last cursor position so context-menu "View Profile" can position the panel correctly
   const lastPosRef = useRef({ x: 0, y: 0 })

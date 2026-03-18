@@ -68,6 +68,7 @@ function parseMentionPill(
     <span
       key={key}
       onClick={onClick}
+      data-message-interactive={onClick ? 'true' : undefined}
       className={`rounded px-0.5 font-medium transition-colors ${PILL_CLASS[type]} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
     >
       {label}
@@ -132,10 +133,12 @@ function parseInline(
       // Custom emoji <:name:id>
       const emojiName = match[11]
       const emojiId = match[12]
+      const emojiSrc = emojiUrl(emojiId, 44)
       nodes.push(
         <AnimatedImage
           key={k}
-          src={emojiUrl(emojiId, 44)}
+          src={emojiSrc}
+          pauseFallback={emojiSrc}
           alt={`:${emojiName}:`}
           title={`:${emojiName}:`}
           className="inline-block h-[1.375em] w-auto align-middle mx-0.5"
@@ -155,6 +158,7 @@ function parseInline(
           href={full}
           target="_blank"
           rel="noopener noreferrer"
+          data-message-interactive="true"
           className="text-primary underline underline-offset-2 hover:opacity-80 break-all"
         >
           {full}
@@ -170,6 +174,17 @@ function parseInline(
   }
 
   return nodes
+}
+
+export function parseInlineMessageContent(
+  content: string | null | undefined,
+  resolver?: MentionResolver,
+  prefix = 'inline-preview',
+): React.ReactNode {
+  if (!content) return null
+  const normalized = content.replace(/\s+/g, ' ').trim()
+  if (!normalized) return null
+  return <>{parseInline(normalized, prefix, resolver)}</>
 }
 
 // ── Block-level parser ────────────────────────────────────────────────────────

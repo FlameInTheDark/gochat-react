@@ -59,6 +59,48 @@ export interface Translation {
         joinVoice: string
         you: string
     }
+    threads: {
+        title: string
+        showThreadList: string
+        hideThreadList: string
+        emptyTitle: string
+        emptyDescription: string
+        closedBadge: string
+        previewEmpty: string
+        previewEmbeds: string
+        previewAttachments: string
+        openThread: string
+        createThread: string
+        threadFallback: string
+        missingThread: string
+        createTitle: string
+        createDescription: string
+        createContentRequired: string
+        createFailed: string
+        threadName: string
+        threadNamePlaceholder: string
+        starterMessage: string
+        starterMessagePlaceholder: string
+        composeDescription: string
+        backToList: string
+        editThread: string
+        deleteThread: string
+        editTitle: string
+        editDescription: string
+        topic: string
+        topicPlaceholder: string
+        closeThread: string
+        reopenThread: string
+        updateFailed: string
+        deleteTitle: string
+        deleteDescription: string
+        deleteFailed: string
+        closedComposer: string
+        noSendPermission: string
+        threadCreatedStarted: string
+        threadCreatedSeeAll: string
+        threadCreatedThreadsLink: string
+    }
     settings: {
         userSettings: string
         myAccount: string
@@ -212,6 +254,15 @@ export interface Translation {
         typingOne: string
         typingTwo: string
         typingSeveral: string
+        messagesSkippedApprox: string
+        loadingOlderMessages: string
+        loadingNewerMessages: string
+        moreOlderMessages: string
+        moreNewerMessages: string
+        viewingOlderMessages: string
+        retryLoad: string
+        olderMessagesFailed: string
+        newerMessagesFailed: string
     }
     search: {
         link: string
@@ -258,6 +309,12 @@ export interface Translation {
     messageItem: {
         copyText: string
         copyMessageId: string
+        reply: string
+        replyingTo: string
+        cancelReply: string
+        replyUnavailable: string
+        replyEmbeds: string
+        replyAttachments: string
         editMessage: string
         deleteMessage: string
         messageUser: string
@@ -265,6 +322,9 @@ export interface Translation {
         deleteDesc: string
         editFailed: string
         deleteFailed: string
+        sending: string
+        failedToSend: string
+        retrySend: string
         suppressEmbedsTitle: string
         suppressEmbedsDesc: string
         suppressEmbedsConfirm: string

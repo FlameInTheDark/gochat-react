@@ -30,24 +30,30 @@
 }
 
 @keyframes msg-highlight-fade {
-
-  /* Quick blink in (first 12%), then slow fade back to nothing */
   0% {
-    background-color: oklch(0.85 0.15 90 / 0);
+    background-color: oklch(0.78 0.12 85 / 0);
   }
 
-  12% {
-    background-color: oklch(0.85 0.15 90 / 0.5);
+  8% {
+    background-color: oklch(0.78 0.12 85 / 0.35);
+  }
+
+  25% {
+    background-color: oklch(0.78 0.12 85 / 0.18);
+  }
+
+  40% {
+    background-color: oklch(0.78 0.12 85 / 0.28);
   }
 
   100% {
-    background-color: oklch(0.85 0.15 90 / 0);
+    background-color: oklch(0.78 0.12 85 / 0);
   }
 }
 
 .message-highlight {
-  animation: msg-highlight-fade 2.5s ease-out forwards;
-  border-radius: 4px;
+  animation: msg-highlight-fade 3s ease-out forwards;
+  border-radius: 6px;
 }
 
 @layer base {

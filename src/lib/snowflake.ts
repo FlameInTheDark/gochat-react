@@ -7,6 +7,36 @@
  */
 const SNOWFLAKE_EPOCH = 1226358000000n // 2008-11-10 23:00:00 UTC
 
+export type SnowflakeLike = string | number | null | undefined
+
+function toSnowflakeBigInt(id: SnowflakeLike): bigint | null {
+  if (id === undefined || id === null) return null
+  try {
+    return BigInt(String(id))
+  } catch {
+    return null
+  }
+}
+
+export function compareSnowflakes(a: SnowflakeLike, b: SnowflakeLike): number {
+  const left = toSnowflakeBigInt(a)
+  const right = toSnowflakeBigInt(b)
+
+  if (left === null && right === null) return 0
+  if (left === null) return -1
+  if (right === null) return 1
+  if (left < right) return -1
+  if (left > right) return 1
+  return 0
+}
+
+export function maxSnowflake(a: SnowflakeLike, b: SnowflakeLike): string | undefined {
+  if (a == null && b == null) return undefined
+  if (a == null) return String(b)
+  if (b == null) return String(a)
+  return compareSnowflakes(a, b) >= 0 ? String(a) : String(b)
+}
+
 /**
  * Extract the creation Date from a Snowflake ID.
  * Accepts the ID as a string, number, or undefined (undefined → epoch zero).

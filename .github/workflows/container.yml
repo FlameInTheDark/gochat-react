@@ -53,6 +53,7 @@ jobs:
     outputs:
       released: ${{ steps.semantic.outputs.new_release_published }}
       version: ${{ steps.semantic.outputs.new_release_version }}
+      tag: ${{ steps.semantic.outputs.new_release_git_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,20 +73,61 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  release_assets:
+    if: github.ref == 'refs/heads/main' && needs.semantic_release.result == 'success' && needs.semantic_release.outputs.released == 'true'
+    needs: semantic_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.semantic_release.outputs.tag }}
+
+      - name: Set release metadata
+        run: |
+          echo "RELEASE_VERSION=${{ needs.semantic_release.outputs.version }}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${{ needs.semantic_release.outputs.tag }}" >> "$GITHUB_ENV"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build release assets
+        run: bun run build
+
+      - name: Archive release assets
+        run: tar -czf "gochat-react-${{ env.RELEASE_VERSION }}-dist.tar.gz" dist
+
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ env.RELEASE_TAG }}" "gochat-react-${{ env.RELEASE_VERSION }}-dist.tar.gz" --clobber
+
   release_build:
-    if: github.ref == 'refs/heads/main' && needs.semantic_release.outputs.released == 'true'
+    if: github.ref == 'refs/heads/main' && needs.semantic_release.result == 'success' && needs.semantic_release.outputs.released == 'true'
     needs: semantic_release
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.semantic_release.outputs.tag }}
 
-      - name: Set image name
+      - name: Set image metadata
         run: |
           echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=${{ needs.semantic_release.outputs.version }}" >> "$GITHUB_ENV"
+
+      - name: Capture release revision
+        run: |
+          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -100,9 +142,9 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.semantic_release.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.RELEASE_VERSION }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.version=${{ needs.semantic_release.outputs.version }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.RELEASE_VERSION }}
+            org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
