@@ -276,6 +276,7 @@ export default function ServerSettingsModal() {
   const [uploadingIcon, setUploadingIcon] = useState(false)
   const [cropDialogOpen, setCropDialogOpen] = useState(false)
   const [cropImageDataUrl, setCropImageDataUrl] = useState('')
+  const [localIconUrl, setLocalIconUrl] = useState<string | null>(null)
 
   // Invites
   const [inviteExpiry, setInviteExpiry] = useState('86400')
@@ -569,6 +570,9 @@ export default function ServerSettingsModal() {
   async function handleIconCropConfirmed(blob: Blob) {
     setCropDialogOpen(false)
     if (!guildId) return
+    // Optimistically show the cropped image immediately
+    const optimisticUrl = URL.createObjectURL(blob)
+    setLocalIconUrl(optimisticUrl)
     setUploadingIcon(true)
     try {
       // 1. Create the icon placeholder (always send as JPEG after crop)
@@ -591,6 +595,8 @@ export default function ServerSettingsModal() {
       toast.error('Failed to upload server icon')
     } finally {
       setUploadingIcon(false)
+      URL.revokeObjectURL(optimisticUrl)
+      setLocalIconUrl(null)
     }
   }
 
@@ -800,8 +806,8 @@ export default function ServerSettingsModal() {
                     title="Change server icon"
                   >
                     <div className="w-16 h-16 rounded-2xl overflow-hidden bg-primary flex items-center justify-center text-primary-foreground text-2xl font-bold select-none">
-                      {guild?.icon?.url
-                        ? <img src={guild.icon.url} alt={guild.name ?? ''} className="w-full h-full object-cover" />
+                      {(localIconUrl ?? guild?.icon?.url)
+                        ? <img src={localIconUrl ?? guild!.icon!.url} alt={guild?.name ?? ''} className="w-full h-full object-cover" />
                         : serverInitials}
                     </div>
                     {/* Hover overlay */}

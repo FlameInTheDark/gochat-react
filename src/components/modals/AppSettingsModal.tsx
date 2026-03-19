@@ -95,6 +95,7 @@ export default function AppSettingsModal() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [cropDialogOpen, setCropDialogOpen] = useState(false)
   const [cropImageDataUrl, setCropImageDataUrl] = useState('')
+  const [localAvatarUrl, setLocalAvatarUrl] = useState<string | null>(null)
 
   // My Account
   const [name, setName] = useState('')
@@ -385,6 +386,9 @@ export default function AppSettingsModal() {
   // Step 2 — crop confirmed → upload cropped JPEG blob
   async function handleAvatarCropConfirmed(blob: Blob) {
     setCropDialogOpen(false)
+    // Optimistically show the cropped image immediately
+    const optimisticUrl = URL.createObjectURL(blob)
+    setLocalAvatarUrl(optimisticUrl)
     setUploadingAvatar(true)
     try {
       const baseUrl = getApiBaseUrl()
@@ -405,6 +409,8 @@ export default function AppSettingsModal() {
       toast.error(t('settings.avatarFailed'))
     } finally {
       setUploadingAvatar(false)
+      URL.revokeObjectURL(optimisticUrl)
+      setLocalAvatarUrl(null)
     }
   }
 
@@ -618,7 +624,7 @@ export default function AppSettingsModal() {
                       title={t('settings.changeAvatar')}
                     >
                       <Avatar className="w-16 h-16 text-2xl">
-                        <AvatarImage src={user?.avatar?.url} alt={user?.name ?? ''} className="object-cover" />
+                        <AvatarImage src={localAvatarUrl ?? user?.avatar?.url} alt={user?.name ?? ''} className="object-cover" />
                         <AvatarFallback className="bg-primary text-primary-foreground text-2xl font-bold">
                           {initials}
                         </AvatarFallback>
