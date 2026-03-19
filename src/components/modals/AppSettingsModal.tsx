@@ -23,8 +23,21 @@ import OutputTest from '@/components/voice/OutputTest'
 import VadSlider from '@/components/voice/VadSlider'
 import { useTranslation } from 'react-i18next'
 import i18n, { SUPPORTED_LANGUAGES } from '@/i18n'
+import ProfileCardBody, { userColor } from '@/components/layout/ProfileCardBody'
 
 type Section = 'account' | 'appearance' | 'voice' | 'language' | 'danger'
+
+function numToHex(n: number | undefined | null, fallback: string): string {
+  if (n == null) return fallback
+  return '#' + (n & 0xffffff).toString(16).padStart(6, '0')
+}
+
+function hexToNum(hex: string): number {
+  return parseInt(hex.replace('#', ''), 16)
+}
+
+const DEFAULT_BANNER_COLOR = '#5865f2'
+const DEFAULT_PANEL_COLOR = '#2b2d31'
 
 /** Converts a KeyboardEvent.code like "KeyV" or "ShiftLeft" into a readable label. */
 function formatKeyCode(code: string): string {
@@ -86,6 +99,12 @@ export default function AppSettingsModal() {
   const [name, setName] = useState('')
   const [savingAccount, setSavingAccount] = useState(false)
 
+  // Profile customization — null means "no custom colour" (matches natural panel defaults)
+  const [bio, setBio] = useState('')
+  const [bannerColor, setBannerColor] = useState<string | null>(null)
+  const [panelColor, setPanelColor] = useState<string | null>(null)
+  const [savingProfile, setSavingProfile] = useState(false)
+
   // Appearance
   const [fontScale, setFontScale] = useState(DEFAULT_FONT_SCALE)
   const [chatSpacing, setChatSpacing] = useState(DEFAULT_CHAT_SPACING)
@@ -136,9 +155,14 @@ export default function AppSettingsModal() {
   useEffect(() => {
     if (open) {
       setName(user?.name ?? '')
+      setBio(user?.bio ?? '')
+      // 0 and undefined/null both mean "no custom colour" — use null so the
+      // preview shows the same natural defaults as the real member panel
+      setBannerColor(user?.banner_color ? numToHex(user.banner_color, DEFAULT_BANNER_COLOR) : null)
+      setPanelColor(user?.panel_color ? numToHex(user.panel_color, DEFAULT_PANEL_COLOR) : null)
       setSection('account')
     }
-  }, [open, user?.name])
+  }, [open, user?.name, user?.bio, user?.banner_color, user?.panel_color])
 
   const { setFontScale: setAppearenceFontScale, setChatSpacing: setAppearanceChatSpacing } = useAppearanceStore()
 
@@ -323,6 +347,12 @@ export default function AppSettingsModal() {
 
   const initials = (user?.name ?? '?').charAt(0).toUpperCase()
   const nameChanged = name.trim() !== '' && name.trim() !== user?.name
+  const savedBannerColor = user?.banner_color ? numToHex(user.banner_color, DEFAULT_BANNER_COLOR) : null
+  const savedPanelColor = user?.panel_color ? numToHex(user.panel_color, DEFAULT_PANEL_COLOR) : null
+  const profileDirty =
+    bio !== (user?.bio ?? '') ||
+    bannerColor !== savedBannerColor ||
+    panelColor !== savedPanelColor
 
   const NAV: { key: Section; label: string; danger?: boolean }[] = [
     { key: 'account', label: t('settings.myAccount') },
@@ -389,6 +419,30 @@ export default function AppSettingsModal() {
       toast.error(t('settings.profileFailed'))
     } finally {
       setSavingAccount(false)
+    }
+  }
+
+  async function handleSaveProfile() {
+    setSavingProfile(true)
+    try {
+      const patch = {
+        bio: bio.trim() || undefined,
+        // 0 signals "clear custom colour" to the backend (Go zero value = not set)
+        banner_color: bannerColor !== null ? hexToNum(bannerColor) : 0,
+        panel_color: panelColor !== null ? hexToNum(panelColor) : 0,
+      }
+      await userApi.userMePatch({ request: patch })
+      if (user) setUser({
+        ...user,
+        bio: bio.trim() || undefined,
+        banner_color: bannerColor !== null ? hexToNum(bannerColor) : undefined,
+        panel_color: panelColor !== null ? hexToNum(panelColor) : undefined,
+      })
+      toast.success(t('settings.profileUpdated'))
+    } catch {
+      toast.error(t('settings.profileFailed'))
+    } finally {
+      setSavingProfile(false)
     }
   }
 
@@ -642,6 +696,110 @@ export default function AppSettingsModal() {
                       >
                         {t('common.copy')}
                       </Button>
+                    </div>
+                  </div>
+
+                  <Separator />
+
+                  {/* Profile customization */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                      {t('settings.profileCustomization')}
+                    </h3>
+
+                    <div className="flex gap-6">
+                      {/* Left: form fields */}
+                      <div className="flex-1 space-y-4 min-w-0">
+                        <div className="space-y-2">
+                          <Label htmlFor="settings-bio">{t('settings.bio')}</Label>
+                          <textarea
+                            id="settings-bio"
+                            value={bio}
+                            onChange={(e) => setBio(e.target.value)}
+                            placeholder={t('settings.bioPlaceholder')}
+                            rows={3}
+                            maxLength={190}
+                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>{t('settings.bannerColor')}</Label>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="color"
+                              value={bannerColor ?? DEFAULT_BANNER_COLOR}
+                              onChange={(e) => setBannerColor(e.target.value)}
+                              className="w-10 h-9 rounded cursor-pointer border border-input bg-background p-0.5"
+                            />
+                            {bannerColor !== null ? (
+                              <>
+                                <span className="text-sm font-mono text-muted-foreground">{bannerColor.toUpperCase()}</span>
+                                <button
+                                  onClick={() => setBannerColor(null)}
+                                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                  {t('settings.resetToDefaults')}
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-muted-foreground italic">Default</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>{t('settings.panelColor')}</Label>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="color"
+                              value={panelColor ?? DEFAULT_PANEL_COLOR}
+                              onChange={(e) => setPanelColor(e.target.value)}
+                              className="w-10 h-9 rounded cursor-pointer border border-input bg-background p-0.5"
+                            />
+                            {panelColor !== null ? (
+                              <>
+                                <span className="text-sm font-mono text-muted-foreground">{panelColor.toUpperCase()}</span>
+                                <button
+                                  onClick={() => setPanelColor(null)}
+                                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                                >
+                                  {t('settings.resetToDefaults')}
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-muted-foreground italic">Default</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <Button
+                          onClick={() => void handleSaveProfile()}
+                          disabled={savingProfile || !profileDirty}
+                        >
+                          {savingProfile ? t('settings.saving') : t('settings.save')}
+                        </Button>
+                      </div>
+
+                      {/* Right: live profile panel preview */}
+                      <div className="space-y-2 shrink-0">
+                        <Label>{t('settings.profilePreview')}</Label>
+                        <div
+                          className={cn('w-52 rounded-lg overflow-hidden shadow-lg border border-border', !panelColor && 'bg-popover')}
+                          style={panelColor ? { backgroundColor: panelColor } : undefined}
+                        >
+                          <ProfileCardBody
+                            userId={String(user?.id ?? '')}
+                            displayName={user?.name ?? initials}
+                            discriminator={user?.discriminator}
+                            avatarUrl={user?.avatar?.url}
+                            bio={bio}
+                            panelColor={panelColor}
+                            bannerColor={bannerColor}
+                            accent={userColor(String(user?.id ?? 'default'))}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>

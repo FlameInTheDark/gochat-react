@@ -208,7 +208,9 @@ async function refreshTokenAndReconnect() {
     isRefreshingToken = false
   }
   if (!intentionalClose && currentToken) {
-    createSocket(currentToken)
+    // Use exponential backoff instead of reconnecting immediately,
+    // to avoid hammering /user/me + WS when the backend is unavailable.
+    scheduleReconnect()
   }
 }
 

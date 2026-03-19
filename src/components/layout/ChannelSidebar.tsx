@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare } from 'lucide-react'
+import { ChevronDown, ChevronRight, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -906,6 +906,18 @@ function ChannelItem({
           </button>
         </ContextMenuTrigger>
         <ContextMenuContent>
+          {isVoice && (
+            <>
+              <ContextMenuItem
+                onClick={() => navigate(`/app/${serverId}/${String(channel.id)}`)}
+                className="gap-2"
+              >
+                <Eye className="w-4 h-4" />
+                {t('channelSidebar.viewChannel')}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+            </>
+          )}
           {canManageChannels && (
             <>
               <ContextMenuItem onClick={onOpenSettings} className="gap-2">

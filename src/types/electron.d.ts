@@ -13,6 +13,8 @@ interface ElectronAPI {
   setTrayBadge: (count: number) => void
   onDeepLink: (cb: (url: string) => void) => () => void
   openExternal: (url: string) => void
+  onUpdateReady: (cb: () => void) => () => void
+  installUpdate: () => void
   secureStore: {
     get: (key: string) => string | null
     set: (key: string, value: string) => void

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { Hash, Spool, Volume2, MicOff, HeadphoneOff, Users } from 'lucide-react'
+import { Hash, Spool, Volume2, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users } from 'lucide-react'
 import axios from 'axios'
 import { Separator } from '@/components/ui/separator'
 import { guildApi, messageApi, rolesApi, searchApi } from '@/api/client'
@@ -21,7 +21,7 @@ import ThreadCreatePanel from '@/components/chat/ThreadCreatePanel'
 import ThreadListPanel from '@/components/chat/ThreadListPanel'
 import ThreadPanel from '@/components/chat/ThreadPanel'
 import { activateChannel, deactivateChannel } from '@/services/wsService'
-import { joinVoice } from '@/services/voiceService'
+import { joinVoice, leaveVoice, setMuted, setDeafened, enableCamera, disableCamera } from '@/services/voiceService'
 import { toast } from 'sonner'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -873,6 +873,27 @@ export default function ChannelPage() {
     }
   }
 
+  function voiceToggleMute() {
+    if (localMuted && localDeafened) {
+      setDeafened(false)
+      setMuted(false)
+    } else {
+      setMuted(!localMuted)
+    }
+  }
+
+  function voiceToggleDeafen() {
+    setDeafened(!localDeafened)
+  }
+
+  function voiceToggleCamera() {
+    if (localCameraEnabled) {
+      disableCamera()
+    } else {
+      void enableCamera()
+    }
+  }
+
   const canManageActiveThread = !!activeThread && (
     canManageThreads ||
     (currentUser?.id !== undefined && String(activeThread.creator_id) === String(currentUser.id))
@@ -1149,14 +1170,68 @@ export default function ChannelPage() {
             <p className="text-sm text-muted-foreground">
               {t('channel.clickToJoin')}
             </p>
+          </div>
+        )}
+
+        {/* Voice control bar */}
+        <div className="shrink-0 border-t border-sidebar-border bg-background px-4 py-3 flex items-center justify-center gap-2">
+          {isConnected ? (
+            <>
+              <button
+                onClick={voiceToggleMute}
+                title={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
+                className={cn(
+                  'flex items-center justify-center w-10 h-10 rounded-full transition-colors',
+                  localMuted
+                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                    : localSpeaking
+                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                      : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {localMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={voiceToggleDeafen}
+                title={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
+                className={cn(
+                  'flex items-center justify-center w-10 h-10 rounded-full transition-colors',
+                  localDeafened
+                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                    : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {localDeafened ? <HeadphoneOff className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={voiceToggleCamera}
+                title={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
+                className={cn(
+                  'flex items-center justify-center w-10 h-10 rounded-full transition-colors',
+                  localCameraEnabled
+                    ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                    : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {localCameraEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+              </button>
+              <button
+                onClick={leaveVoice}
+                title={t('voicePanel.disconnect')}
+                className="flex items-center justify-center w-10 h-10 rounded-full bg-muted hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <PhoneOff className="w-5 h-5" />
+              </button>
+            </>
+          ) : (
             <button
               onClick={() => void handleJoinVoice()}
-              className="mt-2 px-5 py-2 rounded-md bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
+              className="px-6 py-2 rounded-md bg-green-600 hover:bg-green-500 text-white text-sm font-medium transition-colors"
             >
               {t('channel.joinVoice')}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     )
   }

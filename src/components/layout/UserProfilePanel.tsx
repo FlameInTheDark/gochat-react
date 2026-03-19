@@ -7,29 +7,16 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
-import { rolesApi, userApi } from '@/api/client'
+import { guildApi, rolesApi, userApi } from '@/api/client'
 import type { DtoMember, DtoGuild } from '@/types'
 import type { DtoRole } from '@/client'
 import { cn } from '@/lib/utils'
 import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
+import ProfileCardBody, { userColor, colorToHex, panelTextColors } from './ProfileCardBody'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const PANEL_W = 300
-
-const AVATAR_PALETTE = [
-  '#5865f2', '#57f287', '#fee75c', '#eb459e',
-  '#ed4245', '#3ba55c', '#faa61a', '#00b0f4',
-]
-
-function userColor(userId: string): string {
-  let h = 0
-  for (const ch of userId) h = (h * 31 + ch.charCodeAt(0)) & 0x7fffffff
-  return AVATAR_PALETTE[h % AVATAR_PALETTE.length]
-}
-
-const colorToHex = (color: number) =>
-  `#${Math.max(0, color ?? 0).toString(16).padStart(6, '0')}`
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -55,15 +42,20 @@ export default function UserProfilePanel() {
   useEffect(() => {
     if (!profile) return
     let alive = true
+    let removeHandler: (() => void) | null = null
     const timer = setTimeout(() => {
       if (!alive) return
       const handler = (e: MouseEvent) => {
         if (!panelRef.current?.contains(e.target as Node)) close()
       }
       document.addEventListener('mousedown', handler)
-      return () => document.removeEventListener('mousedown', handler)
+      removeHandler = () => document.removeEventListener('mousedown', handler)
     }, 80)
-    return () => { alive = false; clearTimeout(timer) }
+    return () => {
+      alive = false
+      clearTimeout(timer)
+      removeHandler?.()
+    }
   }, [profile, close])
 
   // Escape to close
@@ -93,6 +85,30 @@ export default function UserProfilePanel() {
         .then((r) => r.data ?? []),
     enabled: !!guildId && !!userId && editingRoles && !!profile,
     staleTime: 15_000,
+  })
+
+  // Fetch the single member's fresh profile (bio, colors, roles) when the panel opens
+  useQuery<DtoMember>({
+    queryKey: ['member', guildId, userId],
+    queryFn: async () => {
+      const res = await guildApi.guildGuildIdMemberUserIdGet({
+        guildId: guildId!,
+        userId: userId as unknown as number,
+      })
+      // Upsert into the members list cache so the rest of the component reads fresh data
+      queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) => {
+        const idx = old.findIndex((m) => String(m.user?.id) === userId)
+        if (idx >= 0) {
+          const updated = [...old]
+          updated[idx] = res.data
+          return updated
+        }
+        return [...old, res.data]
+      })
+      return res.data
+    },
+    enabled: !!guildId && !!userId && !!profile,
+    staleTime: 0,
   })
 
   // Get friends list to check if user is already a friend
@@ -209,67 +225,58 @@ export default function UserProfilePanel() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   const accent = userColor(userId)
+  // 0 means "not set" (Go zero value) — treat as null so fallback accent/popover colors are used
+  const rawPanelColor = member?.user?.panel_color ? colorToHex(member.user.panel_color) : null
+  const rawBannerColor = member?.user?.banner_color ? colorToHex(member.user.banner_color) : null
+  const { textColor, mutedColor } = panelTextColors(rawPanelColor)
 
   return (
     <div
       ref={panelRef}
-      className="fixed z-[60] rounded-lg border border-border bg-popover shadow-2xl overflow-hidden flex flex-col"
-      style={{ left: panelX, top: panelY, width: PANEL_W }}
+      className={cn(
+        'fixed z-[60] rounded-lg border border-border shadow-2xl overflow-hidden flex flex-col',
+        !rawPanelColor && 'bg-popover',
+      )}
+      style={{ left: panelX, top: panelY, width: PANEL_W, ...(rawPanelColor ? { backgroundColor: rawPanelColor } : {}) }}
     >
-      {/* Colored banner */}
-      <div className="h-14 shrink-0" style={{ backgroundColor: accent + '44' }} />
-
-      {/* Avatar overlaps banner */}
-      <div className="-mt-8 px-4 pb-0">
-        {member?.user?.avatar?.url ? (
-          <img
-            src={member.user.avatar.url}
-            alt={displayName}
-            className="w-16 h-16 rounded-full border-[3px] border-popover object-cover"
-          />
-        ) : (
-          <div
-            className="w-16 h-16 rounded-full border-[3px] border-popover flex items-center justify-center text-2xl font-bold text-white select-none"
-            style={{ backgroundColor: accent }}
-          >
-            {displayName.charAt(0).toUpperCase()}
-          </div>
-        )}
-      </div>
-
-      <div className="px-4 pb-4 pt-2 space-y-4">
-
-        {/* Name block */}
-        <div>
-          <p className="font-bold text-base leading-snug">{displayName}</p>
-          {globalName && member?.username && globalName !== member.username && (
-            <p className="text-xs text-muted-foreground">{globalName}</p>
-          )}
-          {discriminator && (
-            <p className="text-xs text-muted-foreground">#{discriminator}</p>
-          )}
-        </div>
-
+      <ProfileCardBody
+        userId={userId}
+        displayName={displayName}
+        globalName={globalName}
+        discriminator={discriminator}
+        avatarUrl={member?.user?.avatar?.url}
+        bio={member?.user?.bio}
+        panelColor={rawPanelColor}
+        bannerColor={rawBannerColor}
+        accent={accent}
+      >
         {/* Member since */}
         {joinDate && (
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">
+            <p
+              className={cn('text-[10px] font-semibold uppercase tracking-wider mb-0.5', !mutedColor && 'text-muted-foreground')}
+              style={{ color: mutedColor }}
+            >
               {t('userProfile.memberSince')}
             </p>
-            <p className="text-sm">{joinDate}</p>
+            <p className="text-sm" style={{ color: textColor }}>{joinDate}</p>
           </div>
         )}
 
         {/* Roles */}
         <div>
           <div className="flex items-center justify-between mb-1.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <p
+              className={cn('text-[10px] font-semibold uppercase tracking-wider', !mutedColor && 'text-muted-foreground')}
+              style={{ color: mutedColor }}
+            >
               {assignedRoles.length > 0 ? t('userProfile.rolesWithCount', { count: assignedRoles.length }) : t('userProfile.roles')}
             </p>
             {canManageRoles && guildId && (
               <button
                 onClick={() => setEditingRoles((v) => !v)}
-                className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                className={cn('text-[10px] transition-colors', !mutedColor && 'text-muted-foreground hover:text-foreground')}
+                style={{ color: mutedColor }}
               >
                 {editingRoles ? t('common.done') : t('common.edit')}
               </button>
@@ -277,7 +284,6 @@ export default function UserProfilePanel() {
           </div>
 
           {!editingRoles ? (
-            /* Display mode: colored role badges */
             <div className="flex flex-wrap gap-1 min-h-[22px]">
               {assignedRoles.map((role) => {
                 const hex = colorToHex(role.color ?? 0)
@@ -285,16 +291,9 @@ export default function UserProfilePanel() {
                   <span
                     key={String(role.id)}
                     className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded font-medium leading-none"
-                    style={{
-                      backgroundColor: hex + '22',
-                      color: hex,
-                      border: `1px solid ${hex}55`,
-                    }}
+                    style={{ backgroundColor: hex + '22', color: hex, border: `1px solid ${hex}55` }}
                   >
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: hex }}
-                    />
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
                     {role.name}
                   </span>
                 )
@@ -304,12 +303,9 @@ export default function UserProfilePanel() {
               )}
             </div>
           ) : (
-            /* Edit mode: toggleable checklist of all guild roles */
             <div className="max-h-52 overflow-y-auto rounded-md border border-border">
               {allRoles.length === 0 && (
-                <p className="text-xs text-muted-foreground text-center py-3">
-                  {t('userProfile.noServerRoles')}
-                </p>
+                <p className="text-xs text-muted-foreground text-center py-3">{t('userProfile.noServerRoles')}</p>
               )}
               {allRoles.map((role) => {
                 const rid = String(role.id)
@@ -326,13 +322,8 @@ export default function UserProfilePanel() {
                       isSaving ? 'opacity-50 cursor-wait' : 'hover:bg-accent/60',
                     )}
                   >
-                    {/* Role color dot */}
-                    <span
-                      className="w-2.5 h-2.5 rounded-full shrink-0"
-                      style={{ backgroundColor: hex }}
-                    />
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: hex }} />
                     <span className="flex-1 truncate">{role.name}</span>
-                    {/* Checkbox */}
                     <span
                       className={cn(
                         'w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors',
@@ -341,13 +332,7 @@ export default function UserProfilePanel() {
                     >
                       {currentlyHas && (
                         <svg className="w-3 h-3 text-primary-foreground" viewBox="0 0 12 12" fill="none">
-                          <path
-                            d="M2 6l3 3 5-5"
-                            stroke="currentColor"
-                            strokeWidth="1.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
+                          <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                         </svg>
                       )}
                     </span>
@@ -361,28 +346,17 @@ export default function UserProfilePanel() {
         {/* Actions */}
         <div className="border-t border-border pt-3 space-y-2">
           {!isSelf && !isFriend && memberDiscriminator && (
-            <Button
-              size="sm"
-              variant="secondary"
-              className="w-full gap-2"
-              onClick={() => void handleSendFriendRequest()}
-            >
+            <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleSendFriendRequest()}>
               <UserPlus className="w-4 h-4" />
               {t('userProfile.addFriend')}
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="secondary"
-            className="w-full gap-2"
-            onClick={() => void handleMessage()}
-          >
+          <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleMessage()}>
             <MessageSquare className="w-4 h-4" />
             {t('userProfile.sendMessage')}
           </Button>
         </div>
-
-      </div>
+      </ProfileCardBody>
     </div>
   )
 }

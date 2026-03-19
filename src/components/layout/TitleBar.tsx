@@ -2,10 +2,15 @@ import { useState, useEffect } from 'react'
 
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
+  const [updateReady, setUpdateReady] = useState(false)
 
   useEffect(() => {
     window.electronAPI?.isMaximized().then(setMaximized)
     return window.electronAPI?.onMaximizeChange(setMaximized)
+  }, [])
+
+  useEffect(() => {
+    return window.electronAPI?.onUpdateReady(() => setUpdateReady(true))
   }, [])
 
   return (
@@ -14,9 +19,23 @@ export default function TitleBar() {
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       <div
-        className="ml-auto flex h-full"
+        className="ml-auto flex h-full items-center"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
       >
+        {updateReady && (
+          <button
+            onClick={() => window.electronAPI?.installUpdate()}
+            className="mr-2 flex items-center gap-1.5 rounded bg-green-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-green-500"
+            title="Update ready — click to restart and install"
+          >
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="6" y1="1" x2="6" y2="8" />
+              <polyline points="3,5.5 6,8.5 9,5.5" />
+              <line x1="1" y1="11" x2="11" y2="11" />
+            </svg>
+            Restart to update
+          </button>
+        )}
         <button
           onClick={() => window.electronAPI?.minimize()}
           className="flex h-full w-11 items-center justify-center text-foreground/60 hover:bg-white/10 hover:text-foreground"

@@ -118,6 +118,12 @@ export interface Translation {
         changeAvatar: string
         avatarUpdated: string
         avatarFailed: string
+        bio: string
+        bioPlaceholder: string
+        bannerColor: string
+        panelColor: string
+        profileCustomization: string
+        profilePreview: string
         chatFontScale: string
         messageSpacing: string
         preview: string
@@ -360,6 +366,7 @@ export interface Translation {
         addChannel: string
         copyCategoryId: string
         deleteCategory: string
+        viewChannel: string
         editChannel: string
         copyChannelId: string
         deleteChannel: string
@@ -394,6 +401,7 @@ export interface Translation {
         noServerRoles: string
         sendMessage: string
         addFriend: string
+        bio: string
     }
     common: {
         save: string

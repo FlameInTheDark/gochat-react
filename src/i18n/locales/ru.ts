@@ -131,6 +131,12 @@ const ru: Translation = {
         changeAvatar: 'Изменить аватар',
         avatarUpdated: 'Аватар обновлён!',
         avatarFailed: 'Не удалось загрузить аватар',
+        bio: 'Биография',
+        bioPlaceholder: 'Расскажите о себе…',
+        bannerColor: 'Цвет баннера',
+        panelColor: 'Цвет панели профиля',
+        profileCustomization: 'Настройка профиля',
+        profilePreview: 'Предпросмотр',
 
         // Appearance
         chatFontScale: 'Масштаб шрифта чата',
@@ -392,6 +398,7 @@ const ru: Translation = {
         addChannel: 'Добавить канал',
         copyCategoryId: 'Скопировать ID',
         deleteCategory: 'Удалить',
+        viewChannel: 'Открыть канал',
         editChannel: 'Редактировать',
         copyChannelId: 'Скопировать ID',
         deleteChannel: 'Удалить',
@@ -420,6 +427,7 @@ const ru: Translation = {
     },
     userProfile: {
         memberSince: 'Вступил(а)',
+        bio: 'О себе',
         roles: 'Роли',
         rolesWithCount: 'Роли — {{count}}',
         noRoles: 'Нет ролей',

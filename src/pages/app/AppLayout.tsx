@@ -37,6 +37,20 @@ function AuthenticatedApp() {
   useIdlePresence()
   useDeepLink()
 
+  // Keep authStore user in sync with WS t=406 profile update events
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const updated = (e as CustomEvent<DtoUser>).detail
+      if (updated) {
+        const current = useAuthStore.getState().user
+        // Merge so sparse WS updates don't clear fields like avatar
+        useAuthStore.getState().setUser(current ? { ...current, ...updated } : updated)
+      }
+    }
+    window.addEventListener('ws:user_update', handler)
+    return () => window.removeEventListener('ws:user_update', handler)
+  }, [])
+
   return (
     <AppShell>
       <Outlet />

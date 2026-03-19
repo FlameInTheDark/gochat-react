@@ -131,6 +131,12 @@ const en: Translation = {
         changeAvatar: 'Change avatar',
         avatarUpdated: 'Avatar updated!',
         avatarFailed: 'Failed to upload avatar',
+        bio: 'Bio',
+        bioPlaceholder: 'Tell us about yourself…',
+        bannerColor: 'Banner Color',
+        panelColor: 'Profile Panel Color',
+        profileCustomization: 'Profile Customization',
+        profilePreview: 'Preview',
 
         // Appearance
         chatFontScale: 'Chat Font Scale',
@@ -389,6 +395,7 @@ const en: Translation = {
         addChannel: 'Add Channel',
         copyCategoryId: 'Copy Category ID',
         deleteCategory: 'Delete Category',
+        viewChannel: 'View Channel',
         editChannel: 'Edit Channel',
         copyChannelId: 'Copy Channel ID',
         deleteChannel: 'Delete Channel',
@@ -417,6 +424,7 @@ const en: Translation = {
     },
     userProfile: {
         memberSince: 'Member Since',
+        bio: 'About Me',
         roles: 'Roles',
         rolesWithCount: 'Roles — {{count}}',
         noRoles: 'No roles assigned',
