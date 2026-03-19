@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { userApi, axiosInstance } from '@/api/client'
 import type { ModelUserSettingsGuildFolders, ModelUserSettingsGuilds } from '@/client'
+import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 export interface GuildFolder {
   /** Locally-generated ID — not persisted to API */
@@ -417,7 +418,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       // client's serializeDataIfNeeded() calls JSON.stringify() which cannot handle
       // BigInt values (Snowflake IDs).  axiosInstance.transformRequest uses JSONBig
       // which correctly serialises BigInt as JSON integers.
-      const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+      const baseUrl = getApiBaseUrl()
       await axiosInstance.post(`${baseUrl}/user/me/settings`, {
         ...existing,
         guilds: [...topLevelSettings, ...folderGuildSettings],

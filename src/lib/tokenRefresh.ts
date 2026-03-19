@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { useAuthStore } from '@/stores/authStore'
+import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 // Refresh the token this many ms before it actually expires.
 const REFRESH_LEEWAY_MS = 30_000
@@ -33,7 +34,7 @@ async function doRefresh() {
     return
   }
   try {
-    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    const baseUrl = getApiBaseUrl()
     // Plain axios (not axiosInstance) to avoid re-triggering the 401 interceptor.
     const res = await axios.get<{ token?: string; refresh_token?: string }>(
       `${baseUrl}/auth/refresh`,

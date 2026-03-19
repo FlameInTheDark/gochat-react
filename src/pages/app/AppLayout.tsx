@@ -23,6 +23,7 @@ import { useEmojiStore } from '@/stores/emojiStore'
 import { useGifStore } from '@/stores/gifStore'
 import i18n from '@/i18n'
 import { setupTokenRefreshScheduler } from '@/lib/tokenRefresh'
+import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { compareSnowflakes } from '@/lib/snowflake'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
@@ -124,7 +125,7 @@ export default function AppLayout() {
 
     setIsValidating(true)
 
-    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    const baseUrl = getApiBaseUrl()
     const controller = new AbortController()
 
     // Fetch user identity and settings in parallel.

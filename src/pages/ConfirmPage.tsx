@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { axiosInstance } from '@/api/client'
+import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 export default function ConfirmPage() {
   const { userId, token } = useParams<{ userId: string; token: string }>()
@@ -33,7 +34,7 @@ export default function ConfirmPage() {
     if (passwordMismatch) return
     setError(null)
     setLoading(true)
-    const base = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    const base = getApiBaseUrl()
     try {
       await axiosInstance.post(`${base}/auth/confirmation`, {
         id: BigInt(userId!),

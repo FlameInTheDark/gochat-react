@@ -7,11 +7,8 @@
  * Size variants: 44 or 96 — anything else redirects to the closest variant.
  */
 
-const _apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
-// Strip the /api/v1 suffix to get the backend root URL.
-// Works for both relative (/api/v1 → '') and absolute (http://host/api/v1 → http://host).
-const _backendRoot = _apiBase.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '')
+import { getBackendRoot } from '@/lib/connectionConfig'
 
 export function emojiUrl(emojiId: string, size?: 44 | 96): string {
-  return `${_backendRoot}/emoji/${emojiId}.webp${size ? `?size=${size}` : ''}`
+  return `${getBackendRoot()}/emoji/${emojiId}.webp${size ? `?size=${size}` : ''}`
 }

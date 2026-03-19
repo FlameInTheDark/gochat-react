@@ -24,6 +24,7 @@ import VadSlider from '@/components/voice/VadSlider'
 import { useTranslation } from 'react-i18next'
 import i18n, { SUPPORTED_LANGUAGES } from '@/i18n'
 import ProfileCardBody, { userColor } from '@/components/layout/ProfileCardBody'
+import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 type Section = 'account' | 'appearance' | 'voice' | 'language' | 'danger'
 
@@ -386,7 +387,7 @@ export default function AppSettingsModal() {
     setCropDialogOpen(false)
     setUploadingAvatar(true)
     try {
-      const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+      const baseUrl = getApiBaseUrl()
       const placeholder = await userApi.userMeAvatarPost({
         request: { content_type: 'image/jpeg', file_size: blob.size },
       })

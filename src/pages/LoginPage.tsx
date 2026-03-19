@@ -8,6 +8,7 @@ import { authApi, axiosInstance } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { useTranslation } from 'react-i18next'
 import type { DtoUser } from '@/types'
+import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -29,7 +30,7 @@ export default function LoginPage() {
       return
     }
 
-    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    const baseUrl = getApiBaseUrl()
     axiosInstance
       .get<DtoUser>(`${baseUrl}/user/me`)
       .then((res) => {

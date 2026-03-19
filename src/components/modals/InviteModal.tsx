@@ -14,10 +14,7 @@ import { useUiStore } from '@/stores/uiStore'
 import { inviteApi, axiosInstance } from '@/api/client'
 import type { DtoGuildInvite } from '@/client'
 import { useTranslation } from 'react-i18next'
-
-function getInviteUrl(code: string) {
-  return `${location.origin}/invite/${code}`
-}
+import { getApiBaseUrl, getInviteUrl } from '@/lib/connectionConfig'
 
 export default function InviteModal() {
   const open = useUiStore((s) => s.inviteModalOpen)
@@ -43,7 +40,7 @@ export default function InviteModal() {
       // 100 years in seconds; pre-serialize with JSON.stringify to avoid
       // json-bigint mishandling numbers > 2^31 as BigInt candidates
       const NEVER_EXPIRES_SEC = 100 * 365 * 24 * 60 * 60
-      const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+      const baseUrl = getApiBaseUrl()
       await axiosInstance.post(
         `${baseUrl}/guild/invites/${serverId}`,
         JSON.stringify({ expires_in_sec: NEVER_EXPIRES_SEC }),

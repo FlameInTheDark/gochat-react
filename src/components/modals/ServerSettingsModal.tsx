@@ -37,12 +37,9 @@ import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { emojiUrl } from '@/lib/emoji'
+import { getApiBaseUrl, getInviteUrl } from '@/lib/connectionConfig'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getInviteUrl(code: string) {
-  return `${location.origin}/invite/${code}`
-}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -630,7 +627,7 @@ export default function ServerSettingsModal() {
 
   async function handleUploadEmoji() {
     if (!guildId || !emojiFile || !emojiName.trim()) return
-    const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '/api/v1'
+    const baseUrl = getApiBaseUrl()
     setUploadingEmoji(true)
     try {
       // Step 1: create placeholder
