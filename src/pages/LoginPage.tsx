@@ -126,6 +126,11 @@ export default function LoginPage() {
               </Button>
             </form>
             <p className="text-center text-sm text-muted-foreground">
+              <Link to="/forgot-password" className="underline">
+                {t('auth.forgotPassword')}
+              </Link>
+            </p>
+            <p className="text-center text-sm text-muted-foreground">
               {t('auth.noAccount')}{' '}
               <Link to="/register" className="underline">
                 {t('auth.register')}

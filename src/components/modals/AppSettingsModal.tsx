@@ -195,8 +195,8 @@ export default function AppSettingsModal() {
       const d = settingsData.devices
       setAudioInputDevice(d.audio_input_device ?? '')
       setAudioOutputDevice(d.audio_output_device ?? '')
-      setInputLevel(d.audio_input_level ?? 100)
-      setOutputLevel(d.audio_output_level ?? 100)
+      setInputLevel(d.audio_input_level || 100)
+      setOutputLevel(d.audio_output_level || 100)
       setAutoGainControl(d.auto_gain_control ?? true)
       setEchoCancellation(d.echo_cancellation ?? true)
       setNoiseSuppression(d.noise_suppression ?? true)
@@ -211,7 +211,7 @@ export default function AppSettingsModal() {
       const dx = d as Record<string, unknown>
       if (dx.input_mode === 'push_to_talk') setInputMode('push_to_talk')
       else setInputMode('voice_activity')
-      if (typeof dx.audio_input_threshold === 'number') setVoiceActivityThreshold(dx.audio_input_threshold)
+      if (typeof dx.audio_input_threshold === 'number') setVoiceActivityThreshold(dx.audio_input_threshold || -60)
       if (typeof dx.push_to_talk_key === 'string') setPushToTalkKey(dx.push_to_talk_key)
     }
     setVoiceDirty(false)

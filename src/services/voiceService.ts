@@ -55,6 +55,10 @@ let currentChannelId: string | null = null
 // Voice channel member event listeners cleanup function
 let memberEventCleanup: (() => void) | null = null
 
+// One canonical MediaStream per remote user — tracks are added/replaced in-place
+// so the <video> srcObject reference stays stable across SFU renegotiations.
+const remoteStreams: Map<string, MediaStream> = new Map()
+
 // Shared AudioContext for all remote peers.
 let audioCtx: AudioContext | null = null
 
@@ -517,10 +521,14 @@ function onSfuMessage(event: MessageEvent) {
     const { user_id } = d as { user_id: string }
     vlog('GATEWAY: user left voice channel: %s', user_id)
     useVoiceStore.getState().removePeer(user_id)
-    // Also disconnect their gain node
     if (audioGains[user_id]) {
       audioGains[user_id].disconnect()
       delete audioGains[user_id]
+    }
+    const leavingStream = remoteStreams.get(user_id)
+    if (leavingStream) {
+      leavingStream.getTracks().forEach(t => { try { t.stop() } catch { /* ok */ } })
+      remoteStreams.delete(user_id)
     }
     return
   }
@@ -633,26 +641,44 @@ function createPeerConnection(): RTCPeerConnection {
 
     // ── Video track ────────────────────────────────────────────────────────
     if (ev.track.kind === 'video') {
-      const stream = ev.streams[0] ?? new MediaStream([ev.track])
-      vlog('ontrack: video track from userId=%s, storing stream (id=%s)', userId, stream.id)
-
-      // Only store the stream if the track is active (not immediately muted)
-      if (!ev.track.muted) {
-        useVoiceStore.getState().setPeerVideoStream(userId, stream)
+      // Get or create the canonical per-user stream so the <video> srcObject
+      // reference stays stable across SFU-initiated renegotiations, avoiding
+      // re-init flicker. New video tracks (camera on after renegotiation) are
+      // added into the same stream rather than replacing the stored reference.
+      let userStream = remoteStreams.get(userId)
+      if (!userStream) {
+        userStream = new MediaStream()
+        remoteStreams.set(userId, userStream)
+        vlog('ontrack: created per-user stream for userId=%s', userId)
       }
 
-      ev.track.onunmute = () => {
-        vlog('remote video track UNMUTED for userId=%s — restoring stream', userId)
-        useVoiceStore.getState().setPeerVideoStream(userId!, stream)
+      // Replace any stale video track from a previous negotiation round.
+      for (const t of userStream.getVideoTracks()) {
+        userStream.removeTrack(t)
       }
-      ev.track.onmute = () => {
+      userStream.addTrack(ev.track)
+      vlog('ontrack: video track added for userId=%s (muted=%s)', userId, ev.track.muted)
+
+      // Store immediately — don't wait for unmute. The VideoFeed component
+      // handles a briefly-inactive (muted) track gracefully.
+      useVoiceStore.getState().setPeerVideoStream(userId, userStream)
+
+      // Capture for closures — userStream ref is stable but the variable
+      // may be reassigned if ontrack fires again before these fire.
+      const capturedStream = userStream
+      ev.track.addEventListener('unmute', () => {
+        vlog('remote video track UNMUTED for userId=%s', userId)
+        useVoiceStore.getState().setPeerVideoStream(userId!, capturedStream)
+      })
+      ev.track.addEventListener('mute', () => {
         vwarn('remote video track MUTED for userId=%s — clearing stream', userId)
         useVoiceStore.getState().setPeerVideoStream(userId!, null)
-      }
-      ev.track.onended = () => {
-        vwarn('remote video track ENDED for userId=%s — clearing stream', userId)
+      })
+      ev.track.addEventListener('ended', () => {
+        vwarn('remote video track ENDED for userId=%s', userId)
+        capturedStream.removeTrack(ev.track)
         useVoiceStore.getState().setPeerVideoStream(userId!, null)
-      }
+      })
       return
     }
 
@@ -805,6 +831,12 @@ function cleanup(sendPresenceClear = true) {
   for (const key of Object.keys(audioGains)) {
     delete audioGains[key]
   }
+
+  vlog('cleanup: clearing %d per-user remote streams', remoteStreams.size)
+  for (const stream of remoteStreams.values()) {
+    stream.getTracks().forEach(t => { try { t.stop() } catch { /* ok */ } })
+  }
+  remoteStreams.clear()
 
   if (audioCtx) {
     vlog('cleanup: closing AudioContext (state=%s)', audioCtx.state)
@@ -1050,6 +1082,11 @@ export async function joinVoice(
         audioGains[userId].disconnect()
         delete audioGains[userId]
       }
+      const leavingStream = remoteStreams.get(userId)
+      if (leavingStream) {
+        leavingStream.getTracks().forEach(t => { try { t.stop() } catch { /* ok */ } })
+        remoteStreams.delete(userId)
+      }
     }
   }
 
@@ -1231,15 +1268,16 @@ export async function enableCamera(): Promise<void> {
  * and no SFU renegotiation, avoiding the "no inbound track" bug that occurs
  * when addTrack() tries to add a second video transceiver after removeTrack().
  */
-export function disableCamera(): void {
+export async function disableCamera(): Promise<void> {
   if (!localVideoSender) {
     vwarn('disableCamera: no video sender')
     return
   }
 
   vlog('disableCamera: soft-disabling via replaceTrack(null) — preserving transceiver')
-  // replaceTrack(null): sender goes silent without removing the transceiver from SDP
-  localVideoSender.replaceTrack(null).catch((e) =>
+  // Await replaceTrack(null) so the sender is truly silent before we stop
+  // the physical tracks. Stopping tracks first can cause a brief error state.
+  await localVideoSender.replaceTrack(null).catch((e) =>
     vwarn('disableCamera: replaceTrack(null) failed — %o', e),
   )
   // localVideoSender intentionally kept (non-null) for the next enable cycle

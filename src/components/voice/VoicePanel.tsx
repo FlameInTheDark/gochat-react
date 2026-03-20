@@ -58,7 +58,7 @@ export default function VoicePanel() {
 
   function toggleCamera() {
     if (localCameraEnabled) {
-      disableCamera()
+      void disableCamera()
     } else {
       void enableCamera()
     }

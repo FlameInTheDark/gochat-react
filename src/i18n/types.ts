@@ -16,6 +16,22 @@ export interface Translation {
         welcomeBack: string
         openApp: string
         switchAccount: string
+        forgotPassword: string
+        forgotPasswordTitle: string
+        forgotPasswordDesc: string
+        sendResetLink: string
+        sendingReset: string
+        recoveryFailed: string
+        checkEmailTitle: string
+        checkEmailDesc: string
+        backToSignIn: string
+        resetPasswordTitle: string
+        newPassword: string
+        confirmPassword: string
+        passwordMismatch: string
+        resetPassword: string
+        resettingPassword: string
+        resetFailed: string
     }
     app: {
         loading: string

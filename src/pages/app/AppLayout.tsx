@@ -240,8 +240,8 @@ export default function AppLayout() {
           useVoiceStore.getState().setSettings({
             audioInputDevice: d.audio_input_device ?? '',
             audioOutputDevice: d.audio_output_device ?? '',
-            audioInputLevel: d.audio_input_level ?? 100,
-            audioOutputLevel: d.audio_output_level ?? 100,
+            audioInputLevel: d.audio_input_level || 100,
+            audioOutputLevel: d.audio_output_level || 100,
             autoGainControl: d.auto_gain_control ?? true,
             echoCancellation: d.echo_cancellation ?? true,
             noiseSuppression: d.noise_suppression ?? true,

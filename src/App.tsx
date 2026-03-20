@@ -7,6 +7,8 @@ import LoginPage from '@/pages/LoginPage'
 import RegisterPage from '@/pages/RegisterPage'
 import ConfirmPage from '@/pages/ConfirmPage'
 import InvitePage from '@/pages/InvitePage'
+import ForgotPasswordPage from '@/pages/ForgotPasswordPage'
+import ResetPasswordPage from '@/pages/ResetPasswordPage'
 import AppLayout from '@/pages/app/AppLayout'
 import MeLayout from '@/pages/app/MeLayout'
 import ServerLayout from '@/pages/app/ServerLayout'
@@ -29,6 +31,8 @@ const router = createBrowserRouter([
   { path: '/register', element: <RegisterPage /> },
   { path: '/confirm/:userId/:token', element: <ConfirmPage /> },
   { path: '/invite/:code', element: <InvitePage /> },
+  { path: '/forgot-password', element: <ForgotPasswordPage /> },
+  { path: '/reset/:token', element: <ResetPasswordPage /> },
   {
     path: '/app',
     element: <AppLayout />,

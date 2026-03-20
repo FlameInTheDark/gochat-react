@@ -41,7 +41,7 @@ export default function InvitePage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="min-h-screen w-full flex items-center justify-center bg-background">
       <div className="w-full max-w-sm p-8 rounded-xl border border-border bg-card space-y-6 text-center">
         {error ? (
           <>

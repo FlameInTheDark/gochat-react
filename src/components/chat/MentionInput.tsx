@@ -274,11 +274,15 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
   const customEmojiGroups = useMemo(() =>
     Object.entries(guildEmojiMap)
       .filter(([, emojis]) => emojis.length > 0)
-      .map(([guildId, emojis]) => ({
-        guildId,
-        guildName: guilds?.find((g) => String(g.id) === guildId)?.name ?? guildId,
-        emojis,
-      })),
+      .map(([guildId, emojis]) => {
+        const guild = guilds?.find((g) => String(g.id) === guildId)
+        return {
+          guildId,
+          guildName: guild?.name ?? guildId,
+          guildIconUrl: guild?.icon?.url,
+          emojis,
+        }
+      }),
   [guildEmojiMap, guilds])
 
   // Fetch guild data for suggestions — reuse cached queries from ServerLayout

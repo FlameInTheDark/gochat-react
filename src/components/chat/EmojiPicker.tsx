@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import emojiGroupsData from 'unicode-emoji-json/data-by-group.json'
 import {
   Clock,
@@ -28,6 +28,7 @@ interface EmojiEntry {
 export interface CustomEmojiGroup {
   guildId: string
   guildName: string
+  guildIconUrl?: string
   emojis: { id: string; name: string; animated?: boolean }[]
 }
 
@@ -100,13 +101,97 @@ type PreviewItem =
   | { kind: 'unicode'; entry: EmojiEntry }
   | { kind: 'custom'; id: string; name: string }
 
+// ── LazySection ───────────────────────────────────────────────────────────────
+// Defers rendering children until the section enters the scroll viewport.
+// Receives the *ref object* (not .current) so that the effect can read the
+// DOM node after it is committed — avoiding the null-on-first-render problem.
+
+interface LazySectionProps {
+  slug: string
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  registerSection: (node: HTMLElement | null, slug: string) => void
+  children: React.ReactNode
+  className?: string
+  estimatedRows?: number
+}
+
+function LazySection({
+  slug,
+  scrollRef,
+  registerSection,
+  children,
+  className,
+  estimatedRows = 4,
+}: LazySectionProps) {
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    // By the time effects run the DOM is committed and all refs are set.
+    const root = scrollRef.current
+    const node = sectionRef.current
+    if (!node) return
+
+    // If the section is already inside the visible area on mount, show it
+    // immediately (no observer needed — this covers the first categories).
+    if (root) {
+      const rect = node.getBoundingClientRect()
+      const rootRect = root.getBoundingClientRect()
+      if (rect.top < rootRect.bottom + 300) {
+        setVisible(true)
+        return
+      }
+    } else {
+      // Fallback: no scroll container yet — reveal immediately so content
+      // is never permanently hidden.
+      setVisible(true)
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setVisible(true)
+          observer.disconnect()
+        }
+      },
+      { root, rootMargin: '300px 0px', threshold: 0 },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+    // scrollRef is a stable ref object — safe to use without re-running
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const setRef = (node: HTMLElement | null) => {
+    sectionRef.current = node
+    registerSection(node, slug)
+  }
+
+  const minH = `${estimatedRows * 36}px`
+
+  return (
+    <section
+      ref={setRef}
+      data-slug={slug}
+      className={className}
+      style={visible ? undefined : { minHeight: minH }}
+    >
+      {visible ? children : null}
+    </section>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface EmojiPickerProps {
   onSelect: (emoji: string) => void
-  /** Custom emojis grouped by server — shown above regular categories */
   customEmojiGroups?: CustomEmojiGroup[]
 }
+
+// How long (ms) to suppress the scroll-observer's category update after a
+// programmatic nav-click scroll, to prevent it from clobbering the selection.
+const PROGRAMMATIC_SCROLL_GRACE_MS = 600
 
 export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPickerProps) {
   const [recent, setRecent] = useState<string[]>(() => loadRecent())
@@ -119,6 +204,8 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
   const sectionRefsMap = useRef(new Map<string, HTMLElement>())
   const observerRef = useRef<IntersectionObserver | null>(null)
   const prevSearchRef = useRef('')
+  // Set to true while a programmatic scrollToCategory scroll is in flight
+  const programmaticScrollRef = useRef(false)
 
   // Persist recent to localStorage
   useEffect(() => {
@@ -130,7 +217,7 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
     searchRef.current?.focus()
   }, [])
 
-  // Reset scroll to top when search term changes; update activeCategory
+  // Reset scroll / category when search changes
   useEffect(() => {
     const trimmed = search.trim()
     if (trimmed !== prevSearchRef.current && scrollRef.current) {
@@ -146,23 +233,27 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  // IntersectionObserver to track active category while scrolling
+  // IntersectionObserver to track active category while the user scrolls
   useEffect(() => {
     const root = scrollRef.current
     if (!root) return
 
     observerRef.current = new IntersectionObserver(
       (entries) => {
+        // Ignore observer firings during/after a programmatic nav-click scroll
+        if (programmaticScrollRef.current) return
         if (search.trim()) return
+
         const visible = entries
           .filter((e) => e.isIntersecting && e.intersectionRatio > 0)
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)
+
         if (visible.length > 0) {
           const slug = visible[0].target.getAttribute('data-slug')
           if (slug) setActiveCategory(slug)
         }
       },
-      { root, threshold: 0.4 },
+      { root, threshold: 0.1 },
     )
 
     sectionRefsMap.current.forEach((node) => {
@@ -189,10 +280,17 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
 
   function scrollToCategory(slug: string) {
     const node = sectionRefsMap.current.get(slug)
-    if (node) {
-      node.scrollIntoView({ block: 'start' })
-      setActiveCategory(slug)
-    }
+    if (!node) return
+
+    // Mark as programmatic so the IntersectionObserver doesn't fight us
+    programmaticScrollRef.current = true
+    clearTimeout((scrollToCategory as unknown as { _tid?: ReturnType<typeof setTimeout> })._tid)
+    ;(scrollToCategory as unknown as { _tid?: ReturnType<typeof setTimeout> })._tid = setTimeout(() => {
+      programmaticScrollRef.current = false
+    }, PROGRAMMATIC_SCROLL_GRACE_MS)
+
+    node.scrollIntoView({ block: 'start' })
+    setActiveCategory(slug)
   }
 
   function handleSelect(entry: EmojiEntry) {
@@ -253,18 +351,21 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
   // Left sidebar nav
   type NavItem =
     | { kind: 'icon'; slug: string; name: string; Icon: LucideIcon }
-    | { kind: 'initial'; slug: string; name: string; initial: string }
+    | { kind: 'guild'; slug: string; name: string; initial: string; iconUrl?: string }
 
   const navItems: NavItem[] = [
     ...(customEmojiGroups ?? [])
       .filter((g) => g.emojis.length > 0)
       .map((g): NavItem => ({
-        kind: 'initial',
+        kind: 'guild',
         slug: `guild-${g.guildId}`,
         name: g.guildName,
         initial: g.guildName.charAt(0).toUpperCase(),
+        iconUrl: g.guildIconUrl,
       })),
-    ...(recent.length > 0 ? [{ kind: 'icon' as const, slug: 'recent', name: 'Frequently Used', Icon: Clock }] : []),
+    ...(recent.length > 0
+      ? [{ kind: 'icon' as const, slug: 'recent', name: 'Frequently Used', Icon: Clock }]
+      : []),
     ...categories.map((cat): NavItem => ({ kind: 'icon', slug: cat.slug, name: cat.name, Icon: cat.icon })),
   ]
 
@@ -286,7 +387,7 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
 
       {/* Body: left category sidebar + right emoji grid */}
       <div className="flex" style={{ height: 320 }}>
-        {/* Left category sidebar — scrollable */}
+        {/* Left category sidebar */}
         <div className="flex flex-col gap-0.5 overflow-y-auto border-r border-border p-1.5 shrink-0">
           {navItems.map((item) => {
             const isActive = activeCategory === item.slug && !trimmedSearch
@@ -305,6 +406,12 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
               >
                 {item.kind === 'icon' ? (
                   <item.Icon className="h-4 w-4" strokeWidth={2} />
+                ) : item.iconUrl ? (
+                  <img
+                    src={item.iconUrl}
+                    alt={item.name}
+                    className="h-6 w-6 rounded-md object-cover"
+                  />
                 ) : (
                   <div className="h-5 w-5 rounded-full bg-primary/20 text-primary text-[11px] font-bold flex items-center justify-center">
                     {item.initial}
@@ -319,7 +426,6 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-2">
           {trimmedSearch ? (
             <>
-              {/* Custom emoji search results */}
               {customSearchResults.length > 0 && (
                 <>
                   <div className="py-3 text-xs uppercase tracking-wide text-muted-foreground">
@@ -337,8 +443,6 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
                   </div>
                 </>
               )}
-
-              {/* Unicode search results */}
               <div className="py-3 text-xs uppercase tracking-wide text-muted-foreground">
                 {customSearchResults.length > 0 ? 'Standard Emoji' : 'Search Results'}
               </div>
@@ -361,14 +465,15 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
             </>
           ) : (
             <>
-              {/* Custom emoji sections — above recent */}
               {(customEmojiGroups ?? []).map(({ guildId, guildName, emojis }) =>
                 emojis.length > 0 ? (
-                  <section
+                  <LazySection
                     key={guildId}
-                    ref={(node) => registerSection(node, `guild-${guildId}`)}
-                    data-slug={`guild-${guildId}`}
+                    slug={`guild-${guildId}`}
+                    scrollRef={scrollRef}
+                    registerSection={registerSection}
                     className="pt-3"
+                    estimatedRows={Math.ceil(emojis.length / 8)}
                   >
                     <div className="pb-2 text-xs uppercase tracking-wide text-muted-foreground">
                       {guildName}
@@ -383,15 +488,17 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
                         />
                       ))}
                     </div>
-                  </section>
+                  </LazySection>
                 ) : null,
               )}
 
               {recentEntries.length > 0 && (
-                <section
-                  ref={(node) => registerSection(node, 'recent')}
-                  data-slug="recent"
+                <LazySection
+                  slug="recent"
+                  scrollRef={scrollRef}
+                  registerSection={registerSection}
                   className="pt-3"
+                  estimatedRows={Math.ceil(recentEntries.length / 8)}
                 >
                   <div className="flex items-center justify-between pb-2">
                     <span className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -415,14 +522,17 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
                       />
                     ))}
                   </div>
-                </section>
+                </LazySection>
               )}
+
               {categories.map((cat) => (
-                <section
+                <LazySection
                   key={cat.slug}
-                  ref={(node) => registerSection(node, cat.slug)}
-                  data-slug={cat.slug}
+                  slug={cat.slug}
+                  scrollRef={scrollRef}
+                  registerSection={registerSection}
                   className="pt-3"
+                  estimatedRows={Math.ceil(cat.emojis.length / 8)}
                 >
                   <div className="pb-2 text-xs uppercase tracking-wide text-muted-foreground">
                     {cat.name}
@@ -437,7 +547,7 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
                       />
                     ))}
                   </div>
-                </section>
+                </LazySection>
               ))}
             </>
           )}
@@ -459,9 +569,7 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
                   <div className="truncate text-sm font-medium text-foreground">
                     {previewItem.name}
                   </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    :{previewItem.name}:
-                  </div>
+                  <div className="truncate text-xs text-muted-foreground">:{previewItem.name}:</div>
                 </div>
               </>
             ) : (
@@ -494,7 +602,7 @@ interface EmojiButtonProps {
   onHover: (entry: EmojiEntry) => void
 }
 
-function EmojiButton({ entry, onSelect, onHover }: EmojiButtonProps) {
+const EmojiButton = memo(function EmojiButton({ entry, onSelect, onHover }: EmojiButtonProps) {
   return (
     <button
       type="button"
@@ -506,7 +614,7 @@ function EmojiButton({ entry, onSelect, onHover }: EmojiButtonProps) {
       {entry.emoji}
     </button>
   )
-}
+})
 
 // ── CustomEmojiButton ─────────────────────────────────────────────────────────
 
@@ -516,7 +624,11 @@ interface CustomEmojiButtonProps {
   onHover: (emoji: { id: string; name: string }) => void
 }
 
-function CustomEmojiButton({ emoji, onSelect, onHover }: CustomEmojiButtonProps) {
+const CustomEmojiButton = memo(function CustomEmojiButton({
+  emoji,
+  onSelect,
+  onHover,
+}: CustomEmojiButtonProps) {
   return (
     <button
       type="button"
@@ -528,4 +640,4 @@ function CustomEmojiButton({ emoji, onSelect, onHover }: CustomEmojiButtonProps)
       <img src={emojiUrl(emoji.id, 44)} alt={emoji.name} className="h-6 w-6 object-contain" />
     </button>
   )
-}
+})
