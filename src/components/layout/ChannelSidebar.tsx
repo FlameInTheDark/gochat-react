@@ -146,6 +146,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     visibleRegular.filter((c) => !c.parent_id || !categoryIds.has(String(c.parent_id))),
   )
 
+
   const isDeletingCategory = deletingChannel?.type === ChannelType.ChannelTypeGuildCategory
 
   function toggleCategory(id: string) {
@@ -348,56 +349,40 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
    *   No category above = uncategorized (parent_id = undefined).
    */
   async function applyDrop(dragged: DtoChannel, target: DtoChannel, insertBefore: boolean) {
-    if (isCat(dragged)) {
-      // ── Category reorder ──────────────────────────────────────────────────
-      const catsWithout = categories.filter((c) => String(c.id) !== String(dragged.id))
-      const tIdx = catsWithout.findIndex((c) => String(c.id) === String(target.id))
-      if (tIdx === -1) return
-      catsWithout.splice(insertBefore ? tIdx : tIdx + 1, 0, dragged)
+    // Build flat list in exact position order (matches render), without the dragged channel
+    const flat = sorted([...allRegular, ...allCategories])
+      .filter((c) => String(c.id) !== String(dragged.id))
 
-      // Rebuild: uncategorized → reordered categories (children follow their parent)
-      const globalOrder: DtoChannel[] = [...uncategorized]
-      for (const cat of catsWithout) {
-        globalOrder.push(cat)
-        globalOrder.push(...sorted(allRegular.filter((c) => String(c.parent_id) === String(cat.id))))
-      }
-      await commitOrder(globalOrder)
-      return
-    }
-
-    // ── Channel reorder (same-section OR cross-section) ───────────────────
-    // Build the flat visual order without the dragged channel
-    const flat: DtoChannel[] = [
-      ...uncategorized.filter((c) => String(c.id) !== String(dragged.id)),
-    ]
-    for (const cat of categories) {
-      flat.push(cat)
-      flat.push(
-        ...sorted(
-          allRegular.filter(
-            (c) => String(c.parent_id) === String(cat.id) && String(c.id) !== String(dragged.id),
-          ),
-        ),
-      )
-    }
-
-    // Locate target and insert
     const tIdx = flat.findIndex((c) => String(c.id) === String(target.id))
     if (tIdx === -1) return
-    const insertIdx = insertBefore ? tIdx : tIdx + 1
-    flat.splice(insertIdx, 0, dragged)
 
-    // Determine new parent: last category seen before insertion point
-    let newParentId: number | undefined = undefined
-    for (let i = insertIdx - 1; i >= 0; i--) {
-      if (isCat(flat[i])) {
-        newParentId = flat[i].id as unknown as number
-        break
+    // When inserting after a category header, skip past all its children so the
+    // dragged item lands after the entire category block.
+    let insertIdx: number
+    if (!insertBefore && isCat(target)) {
+      const catId = String(target.id)
+      let lastIdx = tIdx
+      for (let i = tIdx + 1; i < flat.length; i++) {
+        if (flat[i].parent_id && String(flat[i].parent_id) === catId) lastIdx = i
       }
+      insertIdx = lastIdx + 1
+    } else {
+      insertIdx = insertBefore ? tIdx : tIdx + 1
     }
 
-    // Apply updated parent to the dragged channel in the flat list
-    flat[insertIdx] = { ...dragged, parent_id: newParentId }
+    flat.splice(insertIdx, 0, dragged)
+
+    // For regular channels: determine new parent from nearest preceding category header
+    if (!isCat(dragged)) {
+      let newParentId: number | undefined = undefined
+      for (let i = insertIdx - 1; i >= 0; i--) {
+        if (isCat(flat[i])) {
+          newParentId = flat[i].id as unknown as number
+          break
+        }
+      }
+      flat[insertIdx] = { ...dragged, parent_id: newParentId }
+    }
 
     await commitOrder(flat)
   }
@@ -531,41 +516,46 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
           >
             <ScrollArea className="flex-1">
               <div className="p-2 space-y-0.5">
-                {/* Uncategorized channels */}
-                {uncategorized.map((ch) => (
-                  <ChannelItemWithUnread
-                    key={String(ch.id)}
-                    channel={ch}
-                    serverId={serverId}
-                    isActive={String(ch.id) === activeChannelId}
-                    navigate={navigate}
-                    onDelete={setDeletingChannel}
-                    onVoiceJoin={handleVoiceJoin}
-                    onOpenSettings={() => openChannelSettings(serverId, String(ch.id))}
-                    isDragging={draggingId === String(ch.id)}
-                    dropIndicator={
-                      dropIndicator?.id === String(ch.id)
-                        ? dropIndicator.before ? 'top' : 'bottom'
-                        : null
-                    }
-                    onDragStart={(e) => onDragStart(e, ch)}
-                    onDragOver={(e) => onDragOver(e, ch)}
-                    onDrop={(e) => onDrop(e, ch)}
-                    onDragEnd={onDragEnd}
-                    isEditing={editingId === String(ch.id)}
-                    editName={editingName}
-                    onEditChange={setEditingName}
-                    onEditSave={() => saveEdit(ch)}
-                    onEditCancel={cancelEdit}
-                    canManageChannels={canManageChannels}
-                  />
-                ))}
+                {/* All channels in exact API position order */}
+                {sorted([...visibleRegular, ...categories]).map((item) => {
+                  if (!isCat(item)) {
+                    const ch = item
+                    const parentId = ch.parent_id ? String(ch.parent_id) : null
+                    if (parentId && categoryIds.has(parentId) && collapsed.has(parentId)) return null
+                    return (
+                      <ChannelItemWithUnread
+                        key={String(ch.id)}
+                        channel={ch}
+                        serverId={serverId}
+                        isActive={String(ch.id) === activeChannelId}
+                        navigate={navigate}
+                        onDelete={setDeletingChannel}
+                        onVoiceJoin={handleVoiceJoin}
+                        onOpenSettings={() => openChannelSettings(serverId, String(ch.id))}
+                        isDragging={draggingId === String(ch.id)}
+                        dropIndicator={
+                          dropIndicator?.id === String(ch.id)
+                            ? dropIndicator.before ? 'top' : 'bottom'
+                            : null
+                        }
+                        onDragStart={(e) => onDragStart(e, ch)}
+                        onDragOver={(e) => onDragOver(e, ch)}
+                        onDrop={(e) => onDrop(e, ch)}
+                        onDragEnd={onDragEnd}
+                        isEditing={editingId === String(ch.id)}
+                        editName={editingName}
+                        onEditChange={setEditingName}
+                        onEditSave={() => saveEdit(ch)}
+                        onEditCancel={cancelEdit}
+                        canManageChannels={canManageChannels}
+                        members={members}
+                      />
+                    )
+                  }
 
-                {/* Categories with their children */}
-                {categories.map((cat) => {
+                  const cat = item
                   const catId = String(cat.id)
                   const isCollapsed = collapsed.has(catId)
-                  const children = sorted(visibleRegular.filter((c) => String(c.parent_id) === catId))
                   const catIndicator =
                     dropIndicator?.id === catId
                       ? dropIndicator.before ? 'top' : 'bottom'
@@ -658,36 +648,6 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                         </ContextMenuContent>
                       </ContextMenu>
 
-                      {/* Category children */}
-                      {!isCollapsed && children.map((ch) => (
-                        <ChannelItemWithUnread
-                          key={String(ch.id)}
-                          channel={ch}
-                          serverId={serverId}
-                          isActive={String(ch.id) === activeChannelId}
-                          navigate={navigate}
-                          onDelete={setDeletingChannel}
-                          onVoiceJoin={handleVoiceJoin}
-                          onOpenSettings={() => openChannelSettings(serverId, String(ch.id))}
-                          isDragging={draggingId === String(ch.id)}
-                          dropIndicator={
-                            dropIndicator?.id === String(ch.id)
-                              ? dropIndicator.before ? 'top' : 'bottom'
-                              : null
-                          }
-                          onDragStart={(e) => onDragStart(e, ch)}
-                          onDragOver={(e) => onDragOver(e, ch)}
-                          onDrop={(e) => onDrop(e, ch)}
-                          onDragEnd={onDragEnd}
-                          isEditing={editingId === String(ch.id)}
-                          editName={editingName}
-                          onEditChange={setEditingName}
-                          onEditSave={() => saveEdit(ch)}
-                          onEditCancel={cancelEdit}
-                          canManageChannels={canManageChannels}
-                          members={members}
-                        />
-                      ))}
                     </div>
                   )
                 })}
