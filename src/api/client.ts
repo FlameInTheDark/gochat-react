@@ -17,7 +17,6 @@ import { useAuthStore } from '@/stores/authStore'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 const jsonBig = JSONBig({ storeAsString: true, useNativeBigInt: false })
-const jsonBigSerialize = JSONBig({ useNativeBigInt: true })
 
 export const axiosInstance = axios.create({
   // Serialize request bodies with BigInt support so Snowflake IDs don't lose precision
@@ -34,7 +33,9 @@ export const axiosInstance = axios.create({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ;(headers as any)['Content-Type'] ??= 'application/json'
         }
-        return jsonBigSerialize.stringify(data)
+        return JSON.stringify(data, (_, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        )
       }
       return data
     },
