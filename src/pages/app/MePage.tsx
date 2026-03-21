@@ -211,7 +211,7 @@ function PendingRequests() {
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{user.name}</p>
               {user.discriminator && (
-                <p className="text-xs text-muted-foreground">#{user.discriminator}</p>
+                <p className="text-xs text-muted-foreground truncate">@{user.discriminator}</p>
               )}
             </div>
             <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -265,7 +265,7 @@ function AddFriend() {
     <div className="p-6 max-w-xl">
       <h3 className="font-semibold mb-1">{t('friends.addFriendTitle')}</h3>
       <p className="text-sm text-muted-foreground mb-4">
-        {t('friends.addFriendDesc', { example: 'YourFriend#1234' })}
+        {t('friends.addFriendDesc')}
       </p>
       <div className="flex gap-2">
         <Input
