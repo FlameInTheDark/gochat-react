@@ -80,6 +80,7 @@ export interface MessageItemProps {
   pendingAttachmentDrafts?: PendingMessageAttachmentDraft[]
   optimisticCreatedAt?: number
   onRetrySend?: () => void
+  onDismiss?: () => void
   attachmentMaxWidth?: number
   threadPreview?: {
     name: string
@@ -147,6 +148,7 @@ export default function MessageItem({
   pendingAttachmentDrafts,
   optimisticCreatedAt,
   onRetrySend,
+  onDismiss,
   attachmentMaxWidth,
   threadPreview,
   threadBadge,
@@ -346,6 +348,8 @@ export default function MessageItem({
     ? createdAtDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : snowflakeToTime(message.id)
   const fullTimestamp = createdAtDate.toLocaleString()
+  const isEdited = !!message.updated_at &&
+    new Date(message.updated_at).getTime() - createdAtDate.getTime() > 5000
 
   function handleAuthorClick(e: React.MouseEvent) {
     e.stopPropagation()
@@ -593,6 +597,16 @@ export default function MessageItem({
           {t('messageItem.retrySend')}
         </button>
       )}
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="inline-flex items-center justify-center rounded-full p-0.5 text-red-300/70 transition-colors hover:bg-red-500/20 hover:text-red-200"
+          aria-label="Dismiss"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   ) : null
 
@@ -650,6 +664,9 @@ export default function MessageItem({
                   >
                     {timestamp}
                   </span>
+                  {isEdited && (
+                    <span className="text-xs text-muted-foreground">{t('messageItem.edited')}</span>
+                  )}
                 </div>
               )}
 
@@ -745,6 +762,9 @@ export default function MessageItem({
                       >
                         {timestamp}
                       </span>
+                      {isEdited && (
+                        <span className="text-xs text-muted-foreground">{t('messageItem.edited')}</span>
+                      )}
                     </div>
                   )}
                   {/* Parsed message content with inline markdown */}

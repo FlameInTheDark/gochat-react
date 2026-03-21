@@ -4,6 +4,7 @@ import { Hash, Volume2 } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -11,7 +12,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { guildApi } from '@/api/client'
+import { axiosInstance } from '@/api/client'
+import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { useUiStore } from '@/stores/uiStore'
 import { toast } from 'sonner'
 import { ChannelType } from '@/types'
@@ -33,13 +35,11 @@ export default function CreateChannelModal() {
     if (!name.trim() || !serverId) return
     setLoading(true)
     try {
-      await guildApi.guildGuildIdChannelPost({
-        guildId: serverId,
-        request: {
-          name: name.trim(),
-          type: channelType,
-          ...(parentId ? { parent_id: BigInt(parentId) as unknown as number } : {}),
-        },
+      const baseUrl = getApiBaseUrl()
+      await axiosInstance.post(`${baseUrl}/guild/${serverId}/channel`, {
+        name: name.trim(),
+        type: channelType,
+        ...(parentId ? { parent_id: BigInt(parentId) } : {}),
       })
       await queryClient.invalidateQueries({ queryKey: ['channels', serverId] })
       close()
@@ -57,6 +57,7 @@ export default function CreateChannelModal() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('modals.createChannel')}</DialogTitle>
+          <DialogDescription className="sr-only">{t('modals.createChannel')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           {/* Channel type */}

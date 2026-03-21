@@ -9,6 +9,7 @@ import type {
   MessageTimelineRow,
 } from '@/lib/messageJump'
 import { retryPendingChannelMessage } from '@/lib/pendingMessageSend'
+import { useMessageStore } from '@/stores/messageStore'
 import MessageItem, { type MessageItemProps } from '@/components/chat/MessageItem'
 import { GroupedMessageSkeletonRow, MessageSkeletonRow } from './SkeletonRows'
 
@@ -166,6 +167,7 @@ export default function MessageListRow({
   onLoadGap,
 }: Props) {
   const { t } = useTranslation()
+  const removePendingMessage = useMessageStore((s) => s.removePendingMessage)
 
   switch (row.kind) {
     case 'conversation-start':
@@ -223,6 +225,11 @@ export default function MessageListRow({
                         toast.error(t('chat.sendFailed'))
                       })
                     }
+                  : undefined
+              }
+              onDismiss={
+                row.pendingLocalId && row.deliveryState === 'failed'
+                  ? () => removePendingMessage(row.pendingLocalId!)
                   : undefined
               }
             />

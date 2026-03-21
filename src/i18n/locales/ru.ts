@@ -379,6 +379,7 @@ const ru: Translation = {
         save: 'сохранения',
         escTo: ' · Esc для ',
         cancel: 'отмены',
+        edited: '(изменено)',
     },
     joinMessages: [
         'присоединился к вечеринке!',

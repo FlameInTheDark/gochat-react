@@ -376,6 +376,7 @@ const en: Translation = {
         save: 'save',
         escTo: ' · Esc to ',
         cancel: 'cancel',
+        edited: '(edited)',
     },
     joinMessages: [
         'has joined the party!',

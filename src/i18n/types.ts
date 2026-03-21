@@ -354,6 +354,7 @@ export interface Translation {
         save: string
         escTo: string
         cancel: string
+        edited: string
     }
     joinMessages: string[]
     serverSidebar: {
