@@ -11,11 +11,13 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     base,
     resolve: {
+      conditions: ['import', 'browser', 'module', 'default'],
       alias: {
         '@': path.resolve(__dirname, './src'),
         // Ensure axios resolves from our node_modules even when imported
         // from the jsclient symlink (which lives outside this project)
         axios: path.resolve(__dirname, './node_modules/axios'),
+        '@tanstack/react-query': path.resolve(__dirname, './node_modules/@tanstack/react-query'),
       },
     },
     build: { outDir: 'dist' },
