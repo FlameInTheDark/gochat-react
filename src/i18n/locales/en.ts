@@ -468,6 +468,35 @@ const en: Translation = {
         yesterdayAt: 'Yesterday at {{time}}',
         done: 'Done',
     },
+
+    // ── App Settings modal (Electron title-bar ⚙ button) ─────────────────────
+    appSettings: {
+        title: 'App Settings',
+        tabConnection: 'Connection',
+        tabAppearance: 'Appearance',
+        tabInfo: 'About',
+        apiBaseUrl: 'API Base URL',
+        wsUrl: 'WebSocket URL',
+        connectionReloadHint: 'The app will reload after saving to apply the new connection settings.',
+        resetToDefaults: 'Reset to defaults',
+        saveAndReload: 'Save & Reload',
+        chatBackground: 'Chat Background',
+        chatBackgroundDesc: 'Choose a local image to use as the chat area background. It will cover the full chat window without stretching.',
+        changeImage: 'Change Image',
+        chooseImage: 'Choose Image…',
+        appVersion: 'App version',
+        electronVersion: 'Electron',
+        chromiumVersion: 'Chromium',
+        nodeVersion: 'Node.js',
+        platform: 'Platform',
+        versionInfoUnavailable: 'Version info unavailable (web build)',
+        checkForUpdates: 'Check for updates',
+        checking: 'Checking…',
+        upToDate: 'Up to date',
+        checkFailed: 'Check failed — retry',
+        updateReady: 'Update ready — restart to install',
+        restartAndInstall: 'Restart & Install',
+    },
 }
 
 export default en
