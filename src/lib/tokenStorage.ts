@@ -2,10 +2,7 @@
  * Platform-aware token storage.
  *
  * • Electron: OS-encrypted via window.electronAPI.secureStore (safeStorage/DPAPI/Keychain)
- * • Web:      sessionStorage — cleared on tab/browser close, no plaintext on disk
- *
- * Migration: plain-text tokens left in localStorage by older versions are moved
- * to the current backend on first read and the localStorage copies are removed.
+ * • Web:      localStorage — persists across tabs and browser restarts
  */
 export const tokenStorage = {
   get(key: string): string | null {
@@ -21,21 +18,14 @@ export const tokenStorage = {
       }
       return null
     }
-    // Web: migrate from localStorage to sessionStorage
-    const legacy = localStorage.getItem(key)
-    if (legacy) {
-      sessionStorage.setItem(key, legacy)
-      localStorage.removeItem(key)
-      return legacy
-    }
-    return sessionStorage.getItem(key)
+    return localStorage.getItem(key)
   },
 
   set(key: string, value: string): void {
     if (typeof window !== 'undefined' && window.electronAPI?.secureStore) {
       window.electronAPI.secureStore.set(key, value)
     } else {
-      sessionStorage.setItem(key, value)
+      localStorage.setItem(key, value)
     }
   },
 
@@ -43,7 +33,7 @@ export const tokenStorage = {
     if (typeof window !== 'undefined' && window.electronAPI?.secureStore) {
       window.electronAPI.secureStore.delete(key)
     } else {
-      sessionStorage.removeItem(key)
+      localStorage.removeItem(key)
     }
   },
 }
