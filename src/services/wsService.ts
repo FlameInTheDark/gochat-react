@@ -14,9 +14,16 @@ import { ChannelType, type DtoChannel, type DtoMessage } from '@/types'
 import { getWsUrl, getApiBaseUrl } from '@/lib/connectionConfig'
 
 // BigInt-aware serializer for outgoing WS messages that contain Snowflake IDs.
-// The Go backend expects int64 numbers — plain JSON.stringify emits quoted strings
-// for BigInt which Go cannot decode into int64.
-const _bigJsonStringify = JSONBig({ useNativeBigInt: true })
+// The Go backend expects int64 numbers — plain JSON.stringify would either lose
+// precision (Number(bigint)) or emit quoted strings (toString). Instead we use a
+// placeholder swap: BigInt values become unquoted integers in the final JSON.
+function _bigJsonStringify(data: unknown): string {
+  const PLACEHOLDER = '__BIGINT_'
+  const json = JSON.stringify(data, (_, v) =>
+    typeof v === 'bigint' ? `${PLACEHOLDER}${v}__` : v
+  )
+  return json.replace(/"__BIGINT_(\d+)__"/g, '$1')
+}
 
 // BigInt-safe parser for incoming WS messages.
 // storeAsString: true keeps large integers as strings, consistent with the API
@@ -83,7 +90,7 @@ let isRefreshingToken = false
 // values into quoted strings; the Go backend cannot decode those as int64.
 function sendJson(data: unknown) {
   if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(_bigJsonStringify.stringify(data))
+    socket.send(_bigJsonStringify(data))
   }
 }
 
@@ -1090,7 +1097,7 @@ export function sendPresenceStatus(status: UserStatus, customStatusText?: string
 // Send a raw message with BigInt-aware serialization (used by voice service for SFU signalling).
 export function sendRaw(data: unknown) {
   if (socket?.readyState === WebSocket.OPEN) {
-    socket.send(_bigJsonStringify.stringify(data))
+    socket.send(_bigJsonStringify(data))
   }
 }
 
