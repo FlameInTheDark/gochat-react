@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,6 +12,10 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const { t } = useTranslation()
+
+  useEffect(() => {
+    document.title = 'Create Account — GoChat'
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

@@ -25,6 +25,10 @@ export default function LoginPage() {
   const { t } = useTranslation()
 
   useEffect(() => {
+    document.title = 'Sign In — GoChat'
+  }, [])
+
+  useEffect(() => {
     if (!token) {
       setCheckingAuth(false)
       return

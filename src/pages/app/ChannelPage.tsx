@@ -153,6 +153,13 @@ export default function ChannelPage() {
   const queryClient = useQueryClient()
   const { t } = useTranslation()
 
+  useEffect(() => {
+    if (channel?.name) {
+      document.title = `#${channel.name} — GoChat`
+    }
+    return () => { document.title = 'GoChat' }
+  }, [channel?.name])
+
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('members')
   const [rightPanelModeBeforeThreads, setRightPanelModeBeforeThreads] =
     useState<NonThreadRightPanelMode>('members')

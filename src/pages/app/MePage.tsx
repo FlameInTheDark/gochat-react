@@ -21,6 +21,11 @@ export default function MePage() {
   const [tab, setTab] = useState<Tab>('all')
   const { t } = useTranslation()
 
+  useEffect(() => {
+    document.title = 'Friends — GoChat'
+    return () => { document.title = 'GoChat' }
+  }, [])
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Header */}

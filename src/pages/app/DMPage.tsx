@@ -105,6 +105,11 @@ export default function DMPage() {
     return `@${name}`
   }, [isGroupDm, dmChannel?.name, participantUser?.name, channelId])
 
+  useEffect(() => {
+    document.title = `${displayName} — GoChat`
+    return () => { document.title = 'GoChat' }
+  }, [displayName])
+
   // Build a minimal DtoMember list for the "from:" autocomplete
   const dmMembers = useMemo<DtoMember[]>(() => {
     if (!participantUser) return []
