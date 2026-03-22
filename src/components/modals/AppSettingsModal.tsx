@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Camera, LogOut, Trash2, AlertTriangle, RotateCcw, Globe } from 'lucide-react'
+import { X, Camera, LogOut, Trash2, AlertTriangle, RotateCcw, Globe, ChevronLeft, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
@@ -23,6 +23,7 @@ import OutputTest from '@/components/voice/OutputTest'
 import VadSlider from '@/components/voice/VadSlider'
 import { useTranslation } from 'react-i18next'
 import i18n, { SUPPORTED_LANGUAGES } from '@/i18n'
+import { useClientMode } from '@/hooks/useClientMode'
 import ProfileCardBody, { userColor } from '@/components/layout/ProfileCardBody'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 
@@ -89,6 +90,8 @@ export default function AppSettingsModal() {
   const { t } = useTranslation()
 
   const [section, setSection] = useState<Section>('account')
+  const isMobile = useClientMode() === 'mobile'
+  const [mobileShowNav, setMobileShowNav] = useState(true)
 
   // Avatar upload
   const avatarInputRef = useRef<HTMLInputElement>(null)
@@ -327,6 +330,9 @@ export default function AppSettingsModal() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [open, close])
+
+  // Reset mobile nav panel on open
+  useEffect(() => { if (open) setMobileShowNav(true) }, [open])
 
   // Mark voice dirty on any change
   const markVoiceDirty = useCallback(() => setVoiceDirty(true), [])
@@ -571,11 +577,39 @@ export default function AppSettingsModal() {
   return (
     <>
       <div className="fixed inset-0 z-50 flex bg-background/80 backdrop-blur-sm">
-        <div className="flex w-full h-full overflow-hidden">
+        <div className={cn('flex w-full h-full overflow-hidden', isMobile && 'flex-col')}>
+
+          {/* ── Mobile header ── */}
+          {isMobile && (
+            <div className="h-12 flex items-center px-3 border-b border-sidebar-border shrink-0 bg-sidebar">
+              {!mobileShowNav && (
+                <button
+                  onClick={() => setMobileShowNav(true)}
+                  className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors mr-1"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+              )}
+              <span className="font-semibold text-sm flex-1">
+                {mobileShowNav ? t('settings.userSettings') : (NAV.find((n) => n.key === section)?.label ?? '')}
+              </span>
+              <button
+                onClick={close}
+                className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           {/* ── Left sidebar ── */}
-          <div className="flex flex-1 justify-end bg-sidebar border-r border-sidebar-border">
-            <div className="w-52 py-16 px-3 shrink-0">
+          <div className={cn(
+            'bg-sidebar',
+            isMobile
+              ? mobileShowNav ? 'flex flex-col flex-1 min-h-0 overflow-y-auto' : 'hidden'
+              : 'flex flex-1 justify-end border-r border-sidebar-border',
+          )}>
+            <div className={cn('shrink-0', isMobile ? 'w-full py-4 px-3' : 'w-52 py-16 px-3')}>
               <p className="px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-1">
                 {t('settings.userSettings')}
               </p>
@@ -587,9 +621,10 @@ export default function AppSettingsModal() {
                       <div className="my-2 h-px bg-border mx-3" />
                     )}
                     <button
-                      onClick={() => setSection(s.key)}
+                      onClick={() => { setSection(s.key); if (isMobile) setMobileShowNav(false) }}
                       className={cn(
-                        'w-full text-left px-3 py-1.5 rounded text-sm transition-colors',
+                        'w-full text-left px-3 rounded text-sm transition-colors flex items-center justify-between',
+                        isMobile ? 'py-3' : 'py-1.5',
                         s.danger
                           ? section === s.key
                             ? 'bg-destructive/20 text-destructive'
@@ -600,6 +635,7 @@ export default function AppSettingsModal() {
                       )}
                     >
                       {s.label}
+                      {isMobile && <ChevronRight className="w-4 h-4 shrink-0" />}
                     </button>
                   </div>
                 ))}
@@ -608,8 +644,11 @@ export default function AppSettingsModal() {
           </div>
 
           {/* ── Content ── */}
-          <div className="flex flex-1 min-w-0">
-            <div className="flex-1 max-w-2xl py-16 px-10 overflow-y-auto">
+          <div className={cn(
+            'flex flex-1 min-w-0',
+            isMobile && (mobileShowNav ? 'hidden' : 'flex'),
+          )}>
+            <div className={cn('flex-1 max-w-2xl overflow-y-auto', isMobile ? 'py-4 px-4' : 'py-16 px-10')}>
 
               {/* My Account */}
               {section === 'account' && (
@@ -1292,15 +1331,17 @@ export default function AppSettingsModal() {
 
             </div>
 
-            {/* Close button */}
-            <div className="pt-16 pr-6 shrink-0">
-              <button
-                onClick={close}
-                className="w-9 h-9 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+            {/* Close button — desktop only */}
+            {!isMobile && (
+              <div className="pt-16 pr-6 shrink-0">
+                <button
+                  onClick={close}
+                  className="w-9 h-9 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
 
         </div>

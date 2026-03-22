@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -40,6 +41,7 @@ export default function CreateServerModal() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('modals.createServer')}</DialogTitle>
+          <DialogDescription className="sr-only">{t('modals.createServer')}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <Label htmlFor="server-name">{t('modals.serverName')}</Label>

@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
-import { Outlet, useParams } from 'react-router-dom'
+import { Outlet, useParams, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { guildApi } from '@/api/client'
 import type { DtoChannel } from '@/types'
 import ChannelSidebar from '@/components/layout/ChannelSidebar'
 import { subscribeGuilds, addPresenceSubscription } from '@/services/wsService'
+import { useClientMode } from '@/hooks/useClientMode'
 
 export interface ServerOutletContext {
   channels: DtoChannel[]
@@ -12,6 +13,13 @@ export interface ServerOutletContext {
 
 export default function ServerLayout() {
   const { serverId } = useParams<{ serverId: string }>()
+  const isMobile = useClientMode() === 'mobile'
+  const location = useLocation()
+  // On mobile, detect if we're at the channel level by checking URL depth:
+  // /app/:serverId → 2 parts → show channel list
+  // /app/:serverId/:channelId → 3 parts → show chat
+  const parts = location.pathname.split('/').filter(Boolean)
+  const hasChannel = parts.length >= 3
 
   const { data: channels } = useQuery({
     queryKey: ['channels', serverId],
@@ -56,6 +64,17 @@ export default function ServerLayout() {
 
   const resolvedChannels = channels ?? []
 
+  // Mobile: show only one panel at a time based on URL depth
+  if (isMobile) {
+    if (hasChannel) {
+      // Channel selected → full-screen chat, no sidebar
+      return <Outlet context={{ channels: resolvedChannels } satisfies ServerOutletContext} />
+    }
+    // Server selected, no channel → full-screen channel list
+    return <ChannelSidebar channels={resolvedChannels} serverId={serverId!} />
+  }
+
+  // Desktop: both side by side
   return (
     <>
       <ChannelSidebar channels={resolvedChannels} serverId={serverId!} />
