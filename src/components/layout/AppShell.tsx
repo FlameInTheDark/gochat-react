@@ -22,7 +22,7 @@ export default function AppShell({ children }: Props) {
     if (!hasServer) {
       // Root /app → full-screen server list; still render children so modals mount
       return (
-        <div className="h-screen w-screen overflow-hidden bg-sidebar">
+        <div className="h-dvh w-screen overflow-hidden bg-sidebar">
           <MobileServerList />
           <div className="hidden">{children}</div>
         </div>
@@ -31,7 +31,7 @@ export default function AppShell({ children }: Props) {
     // /app/:serverId or deeper → children fill the screen (ChannelSidebar or ChannelPage)
     return (
       <div
-        className="flex flex-col h-screen w-screen overflow-hidden bg-background"
+        className="flex flex-col h-dvh w-screen overflow-hidden bg-background"
         style={backgroundDataUrl ? { backgroundImage: `url(${backgroundDataUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
       >
         {children}
@@ -41,7 +41,7 @@ export default function AppShell({ children }: Props) {
 
   // Desktop layout — unchanged
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background">
+    <div className="flex h-dvh w-screen overflow-hidden bg-background">
       <ServerSidebar />
       <div
         className="flex flex-1 min-w-0 bg-cover bg-center bg-no-repeat"

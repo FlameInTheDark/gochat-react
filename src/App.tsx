@@ -69,7 +69,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <div className="flex flex-col h-screen w-screen overflow-hidden">
+        <div className="flex flex-col h-dvh w-screen overflow-hidden">
           {isElectron && <TitleBar />}
           <div className="flex flex-1 min-h-0 overflow-hidden">
             <RouterProvider router={router} />
