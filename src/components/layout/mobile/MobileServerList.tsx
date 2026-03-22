@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Users, PlusCircle, MessageSquare, ChevronRight, ChevronDown, Folder, Settings, Copy, LogOut, Pencil, Trash2 } from 'lucide-react'
@@ -235,7 +235,7 @@ export default function MobileServerList() {
   const openCreateServer = useUiStore((s) => s.openCreateServer)
   const openJoinServer = useUiStore((s) => s.openJoinServer)
   const openServerSettings = useUiStore((s) => s.openServerSettings)
-  const { folders, itemOrder, deleteFolder, updateFolder } = useFolderStore()
+  const { folders, itemOrder, deleteFolder, updateFolder, syncGuilds, settingsVersion } = useFolderStore()
 
   // ── Leave guild dialog ───────────────────────────────────────────────────
   const [leavingGuild, setLeavingGuild] = useState<DtoGuild | null>(null)
@@ -276,6 +276,15 @@ export default function MobileServerList() {
     queryKey: ['guilds'],
     queryFn: () => userApi.userMeGuildsGet().then((r) => r.data ?? []),
   })
+
+  // Keep folderStore.itemOrder in sync with the live guild list.
+  // ServerSidebar does the same on desktop — on mobile ServerSidebar is never
+  // mounted, so we replicate the sync here to ensure newly created/joined guilds
+  // appear in the list and deleted/left guilds are removed.
+  useEffect(() => {
+    syncGuilds(guilds.map((g) => String(g.id)))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guilds, syncGuilds, settingsVersion])
 
   const guildMap = new Map<string, DtoGuild>(guilds.map((g) => [String(g.id), g]))
 

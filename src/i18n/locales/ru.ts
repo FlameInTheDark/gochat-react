@@ -244,6 +244,7 @@ const ru: Translation = {
         groupDm: 'Групповой чат',
         allServers: 'Все серверы',
         servers: 'Серверы',
+        tabMessages: 'Сообщения',
     },
 
     // Modals

@@ -221,6 +221,7 @@ export interface Translation {
         groupDm: string
         allServers: string
         servers: string
+        tabMessages: string
     }
     // Modals
     modals: {

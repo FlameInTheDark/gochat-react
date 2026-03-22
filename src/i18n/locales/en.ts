@@ -242,6 +242,7 @@ const en: Translation = {
         groupDm: 'Group DM',
         allServers: 'All Servers',
         servers: 'Servers',
+        tabMessages: 'Messages',
     },
 
     modals: {
