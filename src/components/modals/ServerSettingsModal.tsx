@@ -822,12 +822,12 @@ export default function ServerSettingsModal() {
 
         {/* ── Content ── */}
         <div className={cn(
-          'flex flex-1 min-w-0',
+          'flex flex-1 min-w-0 min-h-0',
           isMobile && (mobileShowNav ? 'hidden' : 'flex'),
         )}>
           <div
             className={cn(
-              'flex-1 overflow-y-auto',
+              'flex-1 overflow-y-auto h-full',
               isMobile
                 ? 'py-4 px-4'
                 : section === 'roles' ? 'py-16 px-6' : 'py-16 px-10 max-w-2xl',

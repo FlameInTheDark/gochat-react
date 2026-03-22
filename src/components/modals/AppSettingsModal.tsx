@@ -220,17 +220,26 @@ export default function AppSettingsModal() {
     setVoiceDirty(false)
   }, [settingsData])
 
-  // Enumerate audio/video devices when switching to Voice section
+  // Enumerate audio/video devices when switching to Voice section.
+  // On mobile, device labels/IDs are empty until permission is granted — request
+  // a brief audio stream first so the browser unlocks real device info.
   useEffect(() => {
     if (section !== 'voice') return
-    navigator.mediaDevices
-      .enumerateDevices()
-      .then((devices) => {
+    const run = async () => {
+      let permStream: MediaStream | null = null
+      try {
+        permStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      } catch { /* permission denied — enumerate anyway, may have empty labels */ }
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
         setAudioInputDevices(devices.filter((d) => d.kind === 'audioinput'))
         setAudioOutputDevices(devices.filter((d) => d.kind === 'audiooutput'))
         setVideoDevices(devices.filter((d) => d.kind === 'videoinput'))
-      })
-      .catch(() => { })
+      } catch { /* ignore */ } finally {
+        permStream?.getTracks().forEach((t) => t.stop())
+      }
+    }
+    void run()
   }, [section])
 
   // Stop camera preview when leaving voice section or closing modal
@@ -483,9 +492,17 @@ export default function AppSettingsModal() {
     try {
       const videoConstraint: MediaTrackConstraints | boolean = videoInputDevice
         ? { deviceId: { exact: videoInputDevice } }
-        : true
+        : isMobile ? { facingMode: 'user' } : true
       const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: false })
       setCameraPreviewStream(stream)
+      // Re-enumerate after permission granted so device labels become available
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      setVideoDevices(devices.filter((d) => d.kind === 'videoinput'))
+      if (!videoInputDevice) {
+        const track = stream.getVideoTracks()[0]
+        const settings = track?.getSettings()
+        if (settings?.deviceId) setVideoInputDevice(settings.deviceId)
+      }
     } catch {
       toast.error(t('settings.voiceFailed'))
     }
@@ -645,10 +662,10 @@ export default function AppSettingsModal() {
 
           {/* ── Content ── */}
           <div className={cn(
-            'flex flex-1 min-w-0',
+            'flex flex-1 min-w-0 min-h-0',
             isMobile && (mobileShowNav ? 'hidden' : 'flex'),
           )}>
-            <div className={cn('flex-1 max-w-2xl overflow-y-auto', isMobile ? 'py-4 px-4' : 'py-16 px-10')}>
+            <div className={cn('flex-1 max-w-2xl overflow-y-auto h-full', isMobile ? 'py-4 px-4' : 'py-16 px-10')}>
 
               {/* My Account */}
               {section === 'account' && (
