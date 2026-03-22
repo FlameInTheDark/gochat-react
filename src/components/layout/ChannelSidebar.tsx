@@ -425,7 +425,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
             className="flex items-center gap-2 px-3 h-10 text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 border-b border-sidebar-border"
           >
             <ChevronLeft className="w-4 h-4" />
-            All Servers
+            {t('channelSidebar.allServers')}
           </button>
         )}
         {/* Server name header — left-click opens dropdown, right-click opens context menu */}

@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo, Fragment } from 'react'
+import { useTranslation } from 'react-i18next'
 import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil, Shield, UserMinus, Ban, GripVertical, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
@@ -46,70 +47,20 @@ import { useClientMode } from '@/hooks/useClientMode'
 
 type Section = 'overview' | 'members' | 'roles' | 'invites' | 'emojis' | 'bans' | 'danger'
 
-const NAV: { key: Section; label: string; danger?: boolean }[] = [
-  { key: 'overview', label: 'Overview' },
-  { key: 'members', label: 'Members' },
-  { key: 'roles', label: 'Roles' },
-  { key: 'invites', label: 'Invites' },
-  { key: 'emojis', label: 'Emoji' },
-  { key: 'bans', label: 'Bans' },
-  { key: 'danger', label: 'Danger Zone', danger: true },
+const NAV: { key: Section; danger?: boolean }[] = [
+  { key: 'overview' },
+  { key: 'members' },
+  { key: 'roles' },
+  { key: 'invites' },
+  { key: 'emojis' },
+  { key: 'bans' },
+  { key: 'danger', danger: true },
 ]
 
 // ── Permission definitions (from backend docs) ────────────────────────────────
 
 interface PermDef { bit: number; label: string; desc: string; danger?: boolean }
 interface PermCategory { category: string; perms: PermDef[] }
-
-const PERMISSION_DEFS: PermCategory[] = [
-  {
-    category: 'General Server',
-    perms: [
-      { bit: 26, label: 'Administrator', desc: 'Grants all permissions and bypasses channel overrides. Assign with caution.', danger: true },
-      { bit: 4,  label: 'Manage Server',   desc: 'Change server name, icon, and general settings.' },
-      { bit: 2,  label: 'Manage Roles',    desc: 'Create, edit, and delete roles below this one.' },
-      { bit: 1,  label: 'Manage Channels', desc: 'Create, edit, and delete channels.' },
-      { bit: 3,  label: 'View Audit Log',  desc: 'View a record of all changes made in the server.' },
-      { bit: 5,  label: 'Create Invites',  desc: 'Create invite links for this server.' },
-    ],
-  },
-  {
-    category: 'Membership',
-    perms: [
-      { bit: 8,  label: 'Kick Members',      desc: 'Remove members from the server. They may rejoin with an invite.', danger: true },
-      { bit: 9,  label: 'Ban Members',       desc: 'Permanently ban members from the server.', danger: true },
-      { bit: 10, label: 'Timeout Members',   desc: 'Temporarily restrict members from communicating.' },
-      { bit: 7,  label: 'Manage Nicknames',  desc: "Change other members' nicknames." },
-      { bit: 6,  label: 'Change Nickname',   desc: 'Allow members to change their own nickname.' },
-    ],
-  },
-  {
-    category: 'Text Channels',
-    perms: [
-      { bit: 0,  label: 'View Channels',              desc: 'Allow members to see channels in this server.' },
-      { bit: 19, label: 'Read Message History',       desc: 'Allow members to read past messages in channels.' },
-      { bit: 11, label: 'Send Messages',              desc: 'Allow members to send messages in text channels.' },
-      { bit: 14, label: 'Attach Files',               desc: 'Allow members to upload files and images.' },
-      { bit: 15, label: 'Add Reactions',              desc: 'Allow members to add emoji reactions to messages.' },
-      { bit: 16, label: 'Mention @roles',             desc: 'Allow members to @mention roles in messages.' },
-      { bit: 17, label: 'Manage Messages',            desc: "Allow members to delete others' messages and pin messages." },
-      { bit: 12, label: 'Send Messages in Threads',   desc: 'Allow members to send messages inside threads.' },
-      { bit: 13, label: 'Create Threads',             desc: 'Allow members to create new thread conversations.' },
-      { bit: 18, label: 'Manage Threads',             desc: 'Allow members to modify, archive, and delete threads.' },
-    ],
-  },
-  {
-    category: 'Voice Channels',
-    perms: [
-      { bit: 20, label: 'Connect',         desc: 'Allow members to join voice channels.' },
-      { bit: 21, label: 'Speak',           desc: 'Allow members to transmit audio in voice channels.' },
-      { bit: 22, label: 'Video',           desc: 'Allow members to share video in voice channels.' },
-      { bit: 23, label: 'Mute Members',    desc: 'Allow members to server-mute others in voice channels.' },
-      { bit: 24, label: 'Deafen Members',  desc: 'Allow members to server-deafen others in voice channels.' },
-      { bit: 25, label: 'Move Members',    desc: 'Allow members to move others between voice channels.' },
-    ],
-  },
-]
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -155,11 +106,62 @@ function Toggle({
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ServerSettingsModal() {
+  const { t } = useTranslation()
   const guildId = useUiStore((s) => s.serverSettingsGuildId)
   const close = useUiStore((s) => s.closeServerSettings)
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const open = guildId !== null
+
+  const permissionDefs = useMemo((): PermCategory[] => [
+    {
+      category: t('serverSettings.permCategoryGeneral'),
+      perms: [
+        { bit: 26, label: t('serverSettings.permAdministrator'), desc: t('serverSettings.permAdministratorDesc'), danger: true },
+        { bit: 4,  label: t('serverSettings.permManageServer'),   desc: t('serverSettings.permManageServerDesc') },
+        { bit: 2,  label: t('serverSettings.permManageRoles'),    desc: t('serverSettings.permManageRolesDesc') },
+        { bit: 1,  label: t('serverSettings.permManageChannels'), desc: t('serverSettings.permManageChannelsDesc') },
+        { bit: 3,  label: t('serverSettings.permViewAuditLog'),   desc: t('serverSettings.permViewAuditLogDesc') },
+        { bit: 5,  label: t('serverSettings.permCreateInvites'),  desc: t('serverSettings.permCreateInvitesDesc') },
+      ],
+    },
+    {
+      category: t('serverSettings.permCategoryMembership'),
+      perms: [
+        { bit: 8,  label: t('serverSettings.permKickMembers'),     desc: t('serverSettings.permKickMembersDesc'), danger: true },
+        { bit: 9,  label: t('serverSettings.permBanMembers'),      desc: t('serverSettings.permBanMembersDesc'), danger: true },
+        { bit: 10, label: t('serverSettings.permTimeoutMembers'),  desc: t('serverSettings.permTimeoutMembersDesc') },
+        { bit: 7,  label: t('serverSettings.permManageNicknames'), desc: t('serverSettings.permManageNicknamesDesc') },
+        { bit: 6,  label: t('serverSettings.permChangeNickname'),  desc: t('serverSettings.permChangeNicknameDesc') },
+      ],
+    },
+    {
+      category: t('serverSettings.permCategoryText'),
+      perms: [
+        { bit: 0,  label: t('serverSettings.permViewChannels'),    desc: t('serverSettings.permViewChannelsDesc') },
+        { bit: 19, label: t('serverSettings.permReadHistory'),     desc: t('serverSettings.permReadHistoryDesc') },
+        { bit: 11, label: t('serverSettings.permSendMessages'),    desc: t('serverSettings.permSendMessagesDesc') },
+        { bit: 14, label: t('serverSettings.permAttachFiles'),     desc: t('serverSettings.permAttachFilesDesc') },
+        { bit: 15, label: t('serverSettings.permAddReactions'),    desc: t('serverSettings.permAddReactionsDesc') },
+        { bit: 16, label: t('serverSettings.permMentionRoles'),    desc: t('serverSettings.permMentionRolesDesc') },
+        { bit: 17, label: t('serverSettings.permManageMessages'),  desc: t('serverSettings.permManageMessagesDesc') },
+        { bit: 12, label: t('serverSettings.permSendInThreads'),   desc: t('serverSettings.permSendInThreadsDesc') },
+        { bit: 13, label: t('serverSettings.permCreateThreads'),   desc: t('serverSettings.permCreateThreadsDesc') },
+        { bit: 18, label: t('serverSettings.permManageThreads'),   desc: t('serverSettings.permManageThreadsDesc') },
+      ],
+    },
+    {
+      category: t('serverSettings.permCategoryVoice'),
+      perms: [
+        { bit: 20, label: t('serverSettings.permConnect'),        desc: t('serverSettings.permConnectDesc') },
+        { bit: 21, label: t('serverSettings.permSpeak'),          desc: t('serverSettings.permSpeakDesc') },
+        { bit: 22, label: t('serverSettings.permVideo'),          desc: t('serverSettings.permVideoDesc') },
+        { bit: 23, label: t('serverSettings.permMuteMembers'),    desc: t('serverSettings.permMuteMembersDesc') },
+        { bit: 24, label: t('serverSettings.permDeafenMembers'),  desc: t('serverSettings.permDeafenMembersDesc') },
+        { bit: 25, label: t('serverSettings.permMoveMembers'),    desc: t('serverSettings.permMoveMembersDesc') },
+      ],
+    },
+  ], [t])
 
   const [section, setSection] = useState<Section>('overview')
   const isMobile = useClientMode() === 'mobile'
@@ -172,8 +174,9 @@ export default function ServerSettingsModal() {
   const [isPublic, setIsPublic] = useState(false)
   const [savingOverview, setSavingOverview] = useState(false)
 
-  // Roles — two-panel layout (list + editor)
+  // Roles — two-panel layout (list + editor); on mobile uses two-screen nav
   const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null)
+  const [mobileRoleShowList, setMobileRoleShowList] = useState(true)
   const [editName, setEditName] = useState('')
   const [editColor, setEditColor] = useState('#5865f2')
   const [editPermissions, setEditPermissions] = useState(0)
@@ -210,9 +213,9 @@ export default function ServerSettingsModal() {
           return { ...m, roles: next.map(Number) }
         }),
       )
-      toast.success(currentlyHas ? 'Role removed' : 'Role assigned')
+      toast.success(currentlyHas ? t('memberList.roleRemoved') : t('memberList.roleAssigned'))
     } catch {
-      toast.error(currentlyHas ? 'Failed to remove role' : 'Failed to assign role')
+      toast.error(currentlyHas ? t('memberList.roleRemoveFailed') : t('memberList.roleAssignFailed'))
     } finally {
       setSavingMemberRole(null)
     }
@@ -233,9 +236,9 @@ export default function ServerSettingsModal() {
       queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
         old.filter((m) => String(m.user?.id) !== userId),
       )
-      toast.success('Member kicked')
+      toast.success(t('serverSettings.kickSuccess'))
     } catch {
-      toast.error('Failed to kick member')
+      toast.error(t('serverSettings.kickFailed'))
     } finally {
       setKickingUserId(null)
     }
@@ -250,9 +253,9 @@ export default function ServerSettingsModal() {
       queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
         old.filter((m) => String(m.user?.id) !== userId),
       )
-      toast.success('Member banned')
+      toast.success(t('serverSettings.banSuccess'))
     } catch {
-      toast.error('Failed to ban member')
+      toast.error(t('serverSettings.banFailed'))
     } finally {
       setBanningUserId(null)
       setBanDialogUserId(null)
@@ -266,9 +269,9 @@ export default function ServerSettingsModal() {
     try {
       await guildApi.guildGuildIdMemberUserIdBanDelete({ guildId, userId })
       await refetchBans()
-      toast.success('Member unbanned')
+      toast.success(t('serverSettings.unbanSuccess'))
     } catch {
-      toast.error('Failed to unban member')
+      toast.error(t('serverSettings.unbanFailed'))
     } finally {
       setUnbanningUserId(null)
     }
@@ -392,6 +395,7 @@ export default function ServerSettingsModal() {
     if (section !== 'roles') {
       setSelectedRoleId(null)
       setCreatingRole(false)
+      setMobileRoleShowList(true)
     }
   }, [section])
 
@@ -436,6 +440,7 @@ export default function ServerSettingsModal() {
     setSelectedRoleId(EVERYONE_ID)
     setEditPermissions(Number(guild?.permissions ?? 0))
     setCreatingRole(false)
+    if (isMobile) setMobileRoleShowList(false)
   }
 
   function selectRole(role: DtoRole) {
@@ -444,6 +449,7 @@ export default function ServerSettingsModal() {
     setEditColor(colorToHex(role.color ?? 0))
     setEditPermissions(Number(role.permissions ?? 0))
     setCreatingRole(false)
+    if (isMobile) setMobileRoleShowList(false)
   }
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
@@ -460,9 +466,9 @@ export default function ServerSettingsModal() {
       await guildApi.guildGuildIdPatch({ guildId, request: { name: name.trim(), public: isPublic } })
       await queryClient.invalidateQueries({ queryKey: ['guilds'] })
       await queryClient.invalidateQueries({ queryKey: ['guild', guildId] })
-      toast.success('Server updated')
+      toast.success(t('serverSettings.overviewSaved'))
     } catch {
-      toast.error('Failed to update server')
+      toast.error(t('serverSettings.overviewFailed'))
     } finally {
       setSavingOverview(false)
     }
@@ -481,9 +487,9 @@ export default function ServerSettingsModal() {
       setNewRoleName('')
       setNewRoleColor('#5865f2')
       if (res.data) selectRole(res.data)
-      toast.success('Role created')
+      toast.success(t('serverSettings.roleCreated'))
     } catch {
-      toast.error('Failed to create role')
+      toast.error(t('serverSettings.roleCreateFailed'))
     } finally {
       setSavingRole(false)
     }
@@ -501,7 +507,7 @@ export default function ServerSettingsModal() {
         })
         await queryClient.invalidateQueries({ queryKey: ['guild', guildId] })
         await queryClient.invalidateQueries({ queryKey: ['guilds'] })
-        toast.success('@everyone permissions saved')
+        toast.success(t('serverSettings.roleSaved'))
       } else {
         if (!editName.trim()) return
         await rolesApi.guildGuildIdRolesRoleIdPatch({
@@ -510,10 +516,10 @@ export default function ServerSettingsModal() {
           req: { name: editName.trim(), color: hexToColor(editColor), permissions: editPermissions },
         })
         await queryClient.invalidateQueries({ queryKey: ['roles', guildId] })
-        toast.success('Role saved')
+        toast.success(t('serverSettings.roleSaved'))
       }
     } catch {
-      toast.error('Failed to save')
+      toast.error(t('serverSettings.roleFailed'))
     } finally {
       setSavingRole(false)
     }
@@ -529,9 +535,9 @@ export default function ServerSettingsModal() {
         // Fall back to @everyone after deleting the selected role
         selectEvery()
       }
-      toast.success('Role deleted')
+      toast.success(t('serverSettings.roleDeleted'))
     } catch {
-      toast.error('Failed to delete role')
+      toast.error(t('serverSettings.roleDeleteFailed'))
     } finally {
       setDeletingRoleId(null)
     }
@@ -553,7 +559,7 @@ export default function ServerSettingsModal() {
       )
     } catch {
       setOrderedRoles(sortRoles(roles))
-      toast.error('Failed to save role order')
+      toast.error(t('serverSettings.roleReorderFailed'))
     } finally {
       setSavingOrder(false)
     }
@@ -596,9 +602,9 @@ export default function ServerSettingsModal() {
       // 3. Refresh guild data
       await queryClient.invalidateQueries({ queryKey: ['guild', guildId] })
       await queryClient.invalidateQueries({ queryKey: ['guilds'] })
-      toast.success('Server icon updated!')
+      toast.success(t('serverSettings.iconUploaded'))
     } catch {
-      toast.error('Failed to upload server icon')
+      toast.error(t('serverSettings.iconFailed'))
     } finally {
       setUploadingIcon(false)
       URL.revokeObjectURL(optimisticUrl)
@@ -616,9 +622,9 @@ export default function ServerSettingsModal() {
         request: sec > 0 ? { expires_in_sec: sec } : {},
       })
       await queryClient.invalidateQueries({ queryKey: ['invites', guildId] })
-      toast.success('Invite created')
+      toast.success(t('modals.createNewInvite'))
     } catch {
-      toast.error('Failed to create invite')
+      toast.error(t('modals.createInviteFailed'))
     } finally {
       setCreatingInvite(false)
     }
@@ -629,9 +635,9 @@ export default function ServerSettingsModal() {
     try {
       await inviteApi.guildInvitesGuildIdInviteIdDelete({ guildId, inviteId })
       await queryClient.invalidateQueries({ queryKey: ['invites', guildId] })
-      toast.success('Invite revoked')
+      toast.success(t('serverSettings.revokeInvite'))
     } catch {
-      toast.error('Failed to revoke invite')
+      toast.error(t('serverSettings.inviteRevokeFailed'))
     }
   }
 
@@ -671,13 +677,13 @@ export default function ServerSettingsModal() {
         guild_id: String(guild_id),
       })
       await refetchEmojis()
-      toast.success(`Emoji :${emojiName.trim()}: uploaded`)
+      toast.success(t('serverSettings.emojiUploaded'))
       setEmojiName('')
       setEmojiFile(null)
       if (emojiFileRef.current) emojiFileRef.current.value = ''
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-      toast.error(msg ?? 'Failed to upload emoji')
+      toast.error(msg ?? t('serverSettings.emojiUploadFailed'))
     } finally {
       setUploadingEmoji(false)
     }
@@ -699,9 +705,9 @@ export default function ServerSettingsModal() {
       })
       await refetchEmojis()
       setEditingEmojiId(null)
-      toast.success('Emoji renamed')
+      toast.success(t('serverSettings.emojiNameSaved'))
     } catch {
-      toast.error('Failed to rename emoji')
+      toast.error(t('serverSettings.emojiNameSaveFailed'))
     } finally {
       setSavingEmojiId(null)
     }
@@ -714,9 +720,9 @@ export default function ServerSettingsModal() {
       await guildApi.guildGuildIdEmojisEmojiIdDelete({ guildId, emojiId })
       useEmojiStore.getState().removeEmoji(guildId, emojiId)
       await refetchEmojis()
-      toast.success('Emoji deleted')
+      toast.success(t('serverSettings.emojiDeleted'))
     } catch {
-      toast.error('Failed to delete emoji')
+      toast.error(t('serverSettings.emojiDeleteFailed'))
     } finally {
       setDeletingEmojiId(null)
     }
@@ -728,11 +734,11 @@ export default function ServerSettingsModal() {
     try {
       await guildApi.guildGuildIdDelete({ guildId })
       await queryClient.invalidateQueries({ queryKey: ['guilds'] })
-      toast.success('Server deleted')
+      toast.success(t('serverSettings.deleteServer'))
       close()
       navigate('/app/@me')
     } catch {
-      toast.error('Failed to delete server')
+      toast.error(t('serverSettings.deleteServerFailed'))
     } finally {
       setDeletingServer(false)
       setDeleteConfirmName('')
@@ -761,7 +767,20 @@ export default function ServerSettingsModal() {
                 </button>
               )}
               <span className="font-semibold text-sm flex-1 truncate">
-                {mobileShowNav ? (guild?.name ?? 'Server Settings') : (NAV.find((n) => n.key === section)?.label ?? '')}
+                {mobileShowNav ? (guild?.name ?? t('serverSettings.title')) : (() => {
+                  const navItem = NAV.find((n) => n.key === section)
+                  if (!navItem) return ''
+                  const labelMap: Record<Section, string> = {
+                    overview: t('serverSettings.navOverview'),
+                    members: t('serverSettings.navMembers'),
+                    roles: t('serverSettings.navRoles'),
+                    invites: t('serverSettings.navInvites'),
+                    emojis: t('serverSettings.navEmoji'),
+                    bans: t('serverSettings.navBans'),
+                    danger: t('serverSettings.navDanger'),
+                  }
+                  return labelMap[navItem.key] ?? ''
+                })()}
               </span>
               <button
                 onClick={close}
@@ -781,41 +800,51 @@ export default function ServerSettingsModal() {
         )}>
           <div className={cn('shrink-0', isMobile ? 'w-full py-4 px-3' : 'w-52 py-16 px-3')}>
             <p className="px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-1 truncate">
-              {guild?.name ?? 'Server Settings'}
+              {guild?.name ?? t('serverSettings.title')}
             </p>
             <div className="space-y-0.5">
-              {NAV.map((s, i) => {
-                // Hide danger section for non-owners
-                if (s.danger && !isOwner) return null
-                // Hide bans section for users without ban permission
-                if (s.key === 'bans' && !canBan) return null
-                
-                return (
-                  <>
-                    {s.danger && i > 0 && (
-                      <div key={`sep-${s.key}`} className="my-2 h-px bg-border mx-3" />
-                    )}
-                    <button
-                      key={s.key}
-                      onClick={() => { setSection(s.key); if (isMobile) setMobileShowNav(false) }}
-                      className={cn(
-                        'w-full text-left px-3 rounded text-sm transition-colors flex items-center justify-between',
-                        isMobile ? 'py-3' : 'py-1.5',
-                        s.danger
-                          ? section === s.key
-                            ? 'bg-destructive/20 text-destructive'
-                            : 'text-destructive/70 hover:text-destructive hover:bg-destructive/10'
-                          : section === s.key
-                            ? 'bg-accent text-foreground'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              {(() => {
+                const navLabelMap: Record<Section, string> = {
+                  overview: t('serverSettings.navOverview'),
+                  members: t('serverSettings.navMembers'),
+                  roles: t('serverSettings.navRoles'),
+                  invites: t('serverSettings.navInvites'),
+                  emojis: t('serverSettings.navEmoji'),
+                  bans: t('serverSettings.navBans'),
+                  danger: t('serverSettings.navDanger'),
+                }
+                return NAV.map((s, i) => {
+                  // Hide danger section for non-owners
+                  if (s.danger && !isOwner) return null
+                  // Hide bans section for users without ban permission
+                  if (s.key === 'bans' && !canBan) return null
+
+                  return (
+                    <Fragment key={s.key}>
+                      {s.danger && i > 0 && (
+                        <div className="my-2 h-px bg-border mx-3" />
                       )}
-                    >
-                      {s.label}
-                      {isMobile && <ChevronRight className="w-4 h-4 shrink-0" />}
-                    </button>
-                  </>
-                )
-              })}
+                      <button
+                        onClick={() => { setSection(s.key); if (isMobile) setMobileShowNav(false) }}
+                        className={cn(
+                          'w-full text-left px-3 rounded text-sm transition-colors flex items-center justify-between',
+                          isMobile ? 'py-3' : 'py-1.5',
+                          s.danger
+                            ? section === s.key
+                              ? 'bg-destructive/20 text-destructive'
+                              : 'text-destructive/70 hover:text-destructive hover:bg-destructive/10'
+                            : section === s.key
+                              ? 'bg-accent text-foreground'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                        )}
+                      >
+                        {navLabelMap[s.key]}
+                        {isMobile && <ChevronRight className="w-4 h-4 shrink-0" />}
+                      </button>
+                    </Fragment>
+                  )
+                })
+              })()}
             </div>
           </div>
         </div>
@@ -837,14 +866,14 @@ export default function ServerSettingsModal() {
             {/* ── Overview ── */}
             {section === 'overview' && (
               <div className="space-y-6">
-                <h2 className="text-xl font-bold">Server Overview</h2>
+                <h2 className="text-xl font-bold">{t('serverSettings.overviewTitle')}</h2>
 
                 <div className="flex items-center gap-4">
                   {/* Clickable icon with camera overlay */}
                   <div
                     className="relative shrink-0 group cursor-pointer"
                     onClick={() => !uploadingIcon && iconInputRef.current?.click()}
-                    title="Change server icon"
+                    title={t('serverSettings.changeIcon')}
                   >
                     <div className="w-16 h-16 rounded-2xl overflow-hidden bg-primary flex items-center justify-center text-primary-foreground text-2xl font-bold select-none">
                       {(localIconUrl ?? guild?.icon?.url)
@@ -874,7 +903,7 @@ export default function ServerSettingsModal() {
                   <div>
                     <p className="font-semibold text-lg">{guild?.name}</p>
                     <p className="text-sm text-muted-foreground">
-                      {isPublic ? 'Public server' : 'Private server'}
+                      {isPublic ? t('serverSettings.publicServer') : t('serverSettings.privateServer')}
                     </p>
                   </div>
                 </div>
@@ -882,21 +911,21 @@ export default function ServerSettingsModal() {
                 <Separator />
 
                 <div className="space-y-2">
-                  <Label htmlFor="server-name">Server Name</Label>
+                  <Label htmlFor="server-name">{t('serverSettings.serverNameLabel')}</Label>
                   <Input
                     id="server-name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') void handleSaveOverview() }}
-                    placeholder="Server name"
+                    placeholder={t('serverSettings.serverNamePlaceholder')}
                   />
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium">Public Server</p>
+                    <p className="text-sm font-medium">{t('serverSettings.publicServerLabel')}</p>
                     <p className="text-xs text-muted-foreground">
-                      Allow anyone to discover and join this server
+                      {t('serverSettings.publicServerDesc')}
                     </p>
                   </div>
                   <Toggle value={isPublic} onToggle={() => setIsPublic((v) => !v)} />
@@ -905,23 +934,23 @@ export default function ServerSettingsModal() {
                 <Separator />
 
                 <div className="space-y-2">
-                  <Label>Server ID</Label>
+                  <Label>{t('serverSettings.serverIdLabel')}</Label>
                   <div className="flex gap-2 items-center">
                     <p className="text-sm text-muted-foreground bg-muted px-3 py-2 rounded-md flex-1 font-mono truncate">
                       {guildId}
                     </p>
                     <Button
                       variant="outline" size="sm"
-                      onClick={() => { void navigator.clipboard.writeText(guildId ?? ''); toast.success('Copied!') }}
+                      onClick={() => { void navigator.clipboard.writeText(guildId ?? ''); toast.success(t('serverSettings.copied')) }}
                     >
-                      Copy
+                      {t('serverSettings.copy')}
                     </Button>
                   </div>
                 </div>
 
                 <div className="flex justify-end pt-2">
                   <Button onClick={() => void handleSaveOverview()} disabled={savingOverview || !overviewChanged}>
-                    {savingOverview ? 'Saving…' : 'Save Changes'}
+                    {savingOverview ? t('serverSettings.saving') : t('serverSettings.saveChanges')}
                   </Button>
                 </div>
               </div>
@@ -942,10 +971,10 @@ export default function ServerSettingsModal() {
               return (
               <div className="space-y-4">
                 <h2 className="text-xl font-bold">
-                  Members — {filteredMembers.length}{q && members.length !== filteredMembers.length ? ` of ${members.length}` : ''}
+                  {t('serverSettings.membersTitle')} — {filteredMembers.length}{q && members.length !== filteredMembers.length ? ` ${t('serverSettings.filterOf')} ${members.length}` : ''}
                 </h2>
                 <Input
-                  placeholder="Filter by name or ID…"
+                  placeholder={t('serverSettings.filterPlaceholder')}
                   value={memberFilter}
                   onChange={(e) => setMemberFilter(e.target.value)}
                 />
@@ -997,7 +1026,7 @@ export default function ServerSettingsModal() {
                                   </span>
                                 ))}
                               </div>
-                              {joinDate && <p className="text-xs text-muted-foreground mt-0.5">Joined {joinDate}</p>}
+                              {joinDate && <p className="text-xs text-muted-foreground mt-0.5">{t('serverSettings.joined')} {joinDate}</p>}
                             </div>
                             <p className="text-xs text-muted-foreground font-mono shrink-0 hidden sm:block">{userId}</p>
                           </div>
@@ -1046,7 +1075,7 @@ export default function ServerSettingsModal() {
                               className="gap-2 text-destructive focus:text-destructive"
                             >
                               <UserMinus className="w-4 h-4" />
-                              {kickingUserId === userId ? 'Kicking…' : 'Kick Member'}
+                              {kickingUserId === userId ? `${t('serverSettings.kickMember')}…` : t('serverSettings.kickMember')}
                             </ContextMenuItem>
                           )}
                           {canBanTarget && (
@@ -1055,7 +1084,7 @@ export default function ServerSettingsModal() {
                               className="gap-2 text-destructive focus:text-destructive"
                             >
                               <Ban className="w-4 h-4" />
-                              Ban Member
+                              {t('serverSettings.banMember')}
                             </ContextMenuItem>
                           )}
                         </ContextMenuContent>
@@ -1064,7 +1093,7 @@ export default function ServerSettingsModal() {
                   })}
                   {filteredMembers.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-12">
-                      {q ? `No members match "${memberFilter}"` : 'No members found'}
+                      {q ? t('serverSettings.noMembersMatch', { filter: memberFilter }) : t('serverSettings.noMembers')}
                     </p>
                   )}
                 </div>
@@ -1075,7 +1104,7 @@ export default function ServerSettingsModal() {
             {/* ── Bans ── */}
             {section === 'bans' && (
               <div className="space-y-4">
-                <h2 className="text-xl font-bold">Bans{bans.length > 0 ? ` — ${bans.length}` : ''}</h2>
+                <h2 className="text-xl font-bold">{t('serverSettings.bansTitle')}{bans.length > 0 ? ` — ${bans.length}` : ''}</h2>
                 <div className="space-y-0.5">
                   {bans.map((ban) => {
                     const userId = String(ban.user?.id ?? '')
@@ -1088,7 +1117,7 @@ export default function ServerSettingsModal() {
                         </Avatar>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium">{displayName}</p>
-                          {ban.reason && <p className="text-xs text-muted-foreground mt-0.5">Reason: {ban.reason}</p>}
+                          {ban.reason && <p className="text-xs text-muted-foreground mt-0.5">{t('serverSettings.banReason')}: {ban.reason}</p>}
                         </div>
                         {canBan && (
                           <Button
@@ -1097,14 +1126,14 @@ export default function ServerSettingsModal() {
                             disabled={unbanningUserId === userId}
                             onClick={() => void handleUnban(userId)}
                           >
-                            {unbanningUserId === userId ? 'Unbanning…' : 'Unban'}
+                            {unbanningUserId === userId ? t('serverSettings.unbanning') : t('serverSettings.unban')}
                           </Button>
                         )}
                       </div>
                     )
                   })}
                   {bans.length === 0 && (
-                    <p className="text-sm text-muted-foreground text-center py-12">No bans found</p>
+                    <p className="text-sm text-muted-foreground text-center py-12">{t('serverSettings.noBans')}</p>
                   )}
                 </div>
               </div>
@@ -1112,13 +1141,18 @@ export default function ServerSettingsModal() {
 
             {/* ── Roles ── two-panel layout ── */}
             {section === 'roles' && (
-              <div className="flex gap-0 h-full">
+              <div className={cn('flex gap-0 h-full', isMobile && 'flex-col')}>
 
                 {/* Left: Role list */}
-                <div className="w-48 shrink-0 border-r border-border flex flex-col pr-2 mr-6">
+                <div className={cn(
+                  'shrink-0 flex flex-col',
+                  isMobile
+                    ? cn('w-full', !mobileRoleShowList && 'hidden')
+                    : 'w-48 border-r border-border pr-2 mr-6',
+                )}>
                   <div className="flex items-center justify-between mb-3">
                     <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Roles — {roles.length}
+                      {t('serverSettings.rolesTitle')} — {roles.length}
                     </p>
                   </div>
 
@@ -1139,14 +1173,14 @@ export default function ServerSettingsModal() {
                             if (e.key === 'Enter') void handleCreateRole()
                             if (e.key === 'Escape') setCreatingRole(false)
                           }}
-                          placeholder="Role name"
+                          placeholder={t('serverSettings.roleNamePlaceholder')}
                           autoFocus
                           className="flex-1 h-7 text-xs"
                         />
                       </div>
                       <div className="flex gap-1">
                         <Button size="sm" className="h-6 text-xs flex-1" onClick={() => void handleCreateRole()} disabled={savingRole || !newRoleName.trim()}>
-                          Create
+                          {t('modals.create')}
                         </Button>
                         <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setCreatingRole(false)}>
                           ✕
@@ -1169,10 +1203,11 @@ export default function ServerSettingsModal() {
                       )}
                     >
                       <span className="w-3 h-3 rounded-full shrink-0 bg-zinc-400" />
-                      <span className="truncate flex-1">@everyone</span>
+                      <span className="truncate flex-1">{t('serverSettings.everyoneRole')}</span>
                       <span className="text-[9px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-medium leading-none shrink-0">
-                        default
+                        {t('serverSettings.everyoneBadge')}
                       </span>
+                      {isMobile && <ChevronRight className="w-4 h-4 shrink-0 text-muted-foreground" />}
                     </button>
 
                     {/* Regular roles — drag-and-drop to reorder */}
@@ -1221,13 +1256,14 @@ export default function ServerSettingsModal() {
                               style={{ backgroundColor: colorToHex(role.color ?? 0) }}
                             />
                             <span className="truncate flex-1">{role.name}</span>
+                            {isMobile && <ChevronRight className="w-4 h-4 shrink-0 text-muted-foreground" />}
                           </button>
                         </div>
                       )
                     })}
                     {roles.length === 0 && !creatingRole && (
                       <p className="text-xs text-muted-foreground text-center py-4 opacity-60">
-                        No custom roles yet
+                        {t('serverSettings.noCustomRoles')}
                       </p>
                     )}
                   </div>
@@ -1239,12 +1275,24 @@ export default function ServerSettingsModal() {
                     onClick={() => { setCreatingRole(true); setNewRoleName(''); setNewRoleColor('#5865f2') }}
                   >
                     <Plus className="w-3 h-3" />
-                    Create Role
+                    {t('serverSettings.createRole')}
                   </Button>
                 </div>
 
                 {/* Right: Role editor */}
-                <div className="flex-1 min-w-0 overflow-y-auto">
+                <div className={cn(
+                  'flex-1 min-w-0 overflow-y-auto',
+                  isMobile && mobileRoleShowList && 'hidden',
+                )}>
+                  {isMobile && (
+                    <button
+                      onClick={() => setMobileRoleShowList(true)}
+                      className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-4 transition-colors"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                      {t('serverSettings.backToRoles')}
+                    </button>
+                  )}
                   {selectedRoleId ? (() => {
                     const isEveryoneSelected = selectedRoleId === EVERYONE_ID
                     const selectedRole = isEveryoneSelected ? null : roleMap.get(selectedRoleId)
@@ -1253,12 +1301,12 @@ export default function ServerSettingsModal() {
                         <div className="flex items-start justify-between gap-4">
                           <div>
                             <h2 className="text-xl font-bold">
-                              {isEveryoneSelected ? '@everyone' : 'Edit Role'}
+                              {isEveryoneSelected ? t('serverSettings.everyoneRole') : t('serverSettings.editRole')}
                             </h2>
                             <p className="text-sm text-muted-foreground">
                               {isEveryoneSelected
-                                ? 'Default permissions granted to every member of this server.'
-                                : 'Changes affect all members with this role.'}
+                                ? t('serverSettings.everyoneDesc')
+                                : t('serverSettings.roleEditDesc')}
                             </p>
                           </div>
                           {!isEveryoneSelected && (
@@ -1268,7 +1316,7 @@ export default function ServerSettingsModal() {
                               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive transition-colors shrink-0 mt-1"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
-                              Delete Role
+                              {t('serverSettings.deleteRole')}
                             </button>
                           )}
                         </div>
@@ -1277,22 +1325,22 @@ export default function ServerSettingsModal() {
                         {!isEveryoneSelected && (
                         <div className="flex gap-3 items-end">
                           <div className="space-y-2">
-                            <Label>Color</Label>
+                            <Label>{t('serverSettings.colorLabel')}</Label>
                             <input
                               type="color"
                               value={editColor}
                               onChange={(e) => setEditColor(e.target.value)}
                               className="w-12 h-9 rounded border border-input cursor-pointer p-0.5 bg-background block"
-                              title="Role color"
+                              title={t('serverSettings.roleColorTitle')}
                             />
                           </div>
                           <div className="flex-1 space-y-2">
-                            <Label htmlFor="edit-role-name">Role Name</Label>
+                            <Label htmlFor="edit-role-name">{t('serverSettings.roleNameLabel')}</Label>
                             <Input
                               id="edit-role-name"
                               value={editName}
                               onChange={(e) => setEditName(e.target.value)}
-                              placeholder="Role name"
+                              placeholder={t('serverSettings.roleNamePlaceholder')}
                             />
                           </div>
                         </div>
@@ -1303,14 +1351,13 @@ export default function ServerSettingsModal() {
                           <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-500">
                             <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
                             <p className="text-xs leading-relaxed">
-                              <strong>Administrator is enabled.</strong> This role bypasses all channel
-                              overrides and is granted every permission regardless of the settings below.
+                              <strong>{t('serverSettings.adminWarningTitle')}</strong> {t('serverSettings.adminWarningDesc')}
                             </p>
                           </div>
                         )}
 
                         {/* Permissions */}
-                        {PERMISSION_DEFS.map((cat) => (
+                        {permissionDefs.map((cat) => (
                           <div key={cat.category}>
                             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
                               {cat.category}
@@ -1361,11 +1408,11 @@ export default function ServerSettingsModal() {
                           <div className="text-xs text-muted-foreground">
                             {!isEveryoneSelected && selectedRole && (
                               <>
-                                Role ID:{' '}
+                                {t('serverSettings.roleIdLabel')}{' '}
                                 <button
                                   onClick={() => {
                                     void navigator.clipboard.writeText(selectedRoleId)
-                                    toast.success('Copied!')
+                                    toast.success(t('serverSettings.copied'))
                                   }}
                                   className="font-mono hover:text-foreground hover:underline"
                                 >
@@ -1378,7 +1425,7 @@ export default function ServerSettingsModal() {
                             onClick={() => void handleSaveRole()}
                             disabled={savingRole || (!isEveryoneSelected && !editName.trim())}
                           >
-                            {savingRole ? 'Saving…' : 'Save Changes'}
+                            {savingRole ? t('serverSettings.saving') : t('serverSettings.saveChanges')}
                           </Button>
                         </div>
                       </div>
@@ -1386,7 +1433,7 @@ export default function ServerSettingsModal() {
                   })() : (
                     <div className="flex flex-col items-center justify-center h-64 text-center">
                       <p className="text-muted-foreground text-sm">
-                        Select a role to edit its permissions.
+                        {t('serverSettings.selectRoleHint')}
                       </p>
                     </div>
                   )}
@@ -1399,22 +1446,22 @@ export default function ServerSettingsModal() {
             {section === 'invites' && (
               <div className="space-y-6">
                 <div className="flex items-center justify-between flex-wrap gap-3">
-                  <h2 className="text-xl font-bold">Invites</h2>
+                  <h2 className="text-xl font-bold">{t('serverSettings.invitesTitle')}</h2>
                   <div className="flex gap-2 items-center">
                     <select
                       value={inviteExpiry}
                       onChange={(e) => setInviteExpiry(e.target.value)}
                       className={selectClass}
                     >
-                      <option value="3600">1 hour</option>
-                      <option value="86400">1 day</option>
-                      <option value="604800">7 days</option>
-                      <option value="2592000">30 days</option>
-                      <option value="0">Never expires</option>
+                      <option value="3600">{t('serverSettings.inviteOneHour')}</option>
+                      <option value="86400">{t('serverSettings.inviteOneDay')}</option>
+                      <option value="604800">{t('serverSettings.inviteSevenDays')}</option>
+                      <option value="2592000">{t('serverSettings.inviteThirtyDays')}</option>
+                      <option value="0">{t('serverSettings.inviteNeverExpires')}</option>
                     </select>
                     <Button size="sm" className="gap-1" onClick={() => void handleCreateInvite()} disabled={creatingInvite}>
                       <Plus className="w-3.5 h-3.5" />
-                      Create
+                      {t('modals.create')}
                     </Button>
                   </div>
                 </div>
@@ -1426,8 +1473,8 @@ export default function ServerSettingsModal() {
                     const expiresDate = invite.expires_at ? new Date(invite.expires_at) : null
                     const isExpired = expiresDate ? expiresDate < new Date() : false
                     const expiresLabel = expiresDate
-                      ? isExpired ? 'Expired' : expiresDate.toLocaleDateString()
-                      : 'Never'
+                      ? isExpired ? t('serverSettings.inviteExpired') : expiresDate.toLocaleDateString()
+                      : t('serverSettings.inviteNever')
                     return (
                       <div
                         key={inviteId}
@@ -1441,7 +1488,7 @@ export default function ServerSettingsModal() {
                             {invite.code ?? '—'}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            Created {createdAt} · {isExpired ? 'Expired' : `Expires ${expiresLabel}`}
+                            {t('serverSettings.inviteCreatedAt')} {createdAt} · {isExpired ? t('serverSettings.inviteExpired') : `${t('serverSettings.inviteExpires')} ${expiresLabel}`}
                           </p>
                         </div>
                         {/* Copy full invite URL */}
@@ -1449,11 +1496,11 @@ export default function ServerSettingsModal() {
                           onClick={() => {
                             if (!invite.code) return
                             void navigator.clipboard.writeText(getInviteUrl(invite.code))
-                            toast.success('Invite link copied!')
+                            toast.success(t('serverSettings.inviteCopied'))
                           }}
                           disabled={!invite.code}
                           className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                          title="Copy invite link"
+                          title={t('serverSettings.copyInviteLink')}
                         >
                           <Copy className="w-4 h-4" />
                         </button>
@@ -1461,7 +1508,7 @@ export default function ServerSettingsModal() {
                         <button
                           onClick={() => void handleRevokeInvite(inviteId)}
                           className="p-1.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors shrink-0"
-                          title="Revoke invite"
+                          title={t('serverSettings.revokeInvite')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1470,7 +1517,7 @@ export default function ServerSettingsModal() {
                   })}
                   {invites.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-12">
-                      No active invites. Create one above.
+                      {t('serverSettings.noActiveInvites')}
                     </p>
                   )}
                 </div>
@@ -1482,34 +1529,33 @@ export default function ServerSettingsModal() {
               <div className="space-y-6">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <Smile className="w-5 h-5" />
-                  Emoji
+                  {t('serverSettings.emojiTitle')}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Upload custom emoji for your server. Members can use them in messages with{' '}
-                  <code className="bg-muted px-1 py-0.5 rounded text-xs">:name:</code> completion.
+                  {t('serverSettings.emojiDesc')}
                 </p>
 
                 {/* Upload form */}
                 {isOwner && (
                   <div className="rounded-lg border border-border p-4 space-y-3">
-                    <p className="text-sm font-semibold">Upload New Emoji</p>
+                    <p className="text-sm font-semibold">{t('serverSettings.uploadEmoji')}</p>
                     <p className="text-xs text-muted-foreground">
-                      Max 256 KB · Max 128×128 px · Animated GIF/WebP supported
+                      {t('serverSettings.emojiLimits')}
                     </p>
                     <div className="flex gap-3 flex-wrap items-end">
                       <div className="space-y-1 flex-1 min-w-[140px]">
-                        <Label className="text-xs">Name</Label>
+                        <Label className="text-xs">{t('serverSettings.emojiNameLabel')}</Label>
                         <Input
                           value={emojiName}
                           onChange={(e) => setEmojiName(e.target.value.replace(/[^A-Za-z0-9-]/g, ''))}
-                          placeholder="party-cat"
+                          placeholder={t('serverSettings.emojiNamePlaceholder')}
                           className="h-8 text-sm"
                           maxLength={32}
                         />
-                        <p className="text-[10px] text-muted-foreground">Letters, numbers, hyphens only</p>
+                        <p className="text-[10px] text-muted-foreground">{t('serverSettings.emojiNameHint')}</p>
                       </div>
                       <div className="space-y-1 flex-1 min-w-[140px]">
-                        <Label className="text-xs">Image file</Label>
+                        <Label className="text-xs">{t('serverSettings.emojiFileLabel')}</Label>
                         <input
                           ref={emojiFileRef}
                           type="file"
@@ -1525,7 +1571,7 @@ export default function ServerSettingsModal() {
                         disabled={uploadingEmoji || !emojiName.trim() || !emojiFile}
                       >
                         <Upload className="w-3.5 h-3.5" />
-                        {uploadingEmoji ? 'Uploading…' : 'Upload'}
+                        {uploadingEmoji ? t('serverSettings.uploading') : t('serverSettings.upload')}
                       </Button>
                     </div>
                   </div>
@@ -1568,10 +1614,10 @@ export default function ServerSettingsModal() {
                               }}
                             />
                             <Button size="sm" className="h-7 text-xs" onClick={() => void handleRenameEmoji(eid)} disabled={isSaving || !editingEmojiName.trim()}>
-                              Save
+                              {t('common.save')}
                             </Button>
                             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingEmojiId(null)}>
-                              Cancel
+                              {t('common.cancel')}
                             </Button>
                           </div>
                         ) : (
@@ -1642,16 +1688,16 @@ export default function ServerSettingsModal() {
               <div className="space-y-6">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <AlertTriangle className="w-5 h-5 text-destructive" />
-                  Danger Zone
+                  {t('serverSettings.navDanger')}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  These actions are irreversible. Please proceed with caution.
+                  {t('serverSettings.deleteServerDesc')}
                 </p>
 
                 {/* Delete Server */}
                 <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-5 space-y-4">
                   <div>
-                    <p className="font-semibold text-destructive">Delete this Server</p>
+                    <p className="font-semibold text-destructive">{t('serverSettings.deleteServer')}</p>
                     <p className="text-xs text-muted-foreground mt-1">
                       Permanently deletes <span className="font-medium text-foreground">{guild?.name}</span> and
                       all its channels, messages, and members. This action cannot be undone.
@@ -1676,7 +1722,7 @@ export default function ServerSettingsModal() {
                     onClick={() => void handleDeleteServer()}
                   >
                     <Trash2 className="w-4 h-4" />
-                    {deletingServer ? 'Deleting…' : 'Delete Server'}
+                    {deletingServer ? t('serverSettings.deleteServerConfirm') : t('serverSettings.deleteServer')}
                   </Button>
                 </div>
               </div>
@@ -1704,13 +1750,13 @@ export default function ServerSettingsModal() {
     <Dialog open={banDialogUserId !== null} onOpenChange={(o) => { if (!o) { setBanDialogUserId(null); setBanReason('') } }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Ban Member</DialogTitle>
+          <DialogTitle>{t('serverSettings.banMember')}</DialogTitle>
           <DialogDescription>
             This member will be banned and unable to rejoin unless unbanned.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2 py-2">
-          <label className="text-sm font-medium">Reason (optional)</label>
+          <label className="text-sm font-medium">{t('serverSettings.banReason')} (optional)</label>
           <Input
             placeholder="Enter ban reason…"
             value={banReason}
@@ -1719,13 +1765,13 @@ export default function ServerSettingsModal() {
           />
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => { setBanDialogUserId(null); setBanReason('') }}>Cancel</Button>
+          <Button variant="outline" onClick={() => { setBanDialogUserId(null); setBanReason('') }}>{t('modals.cancel')}</Button>
           <Button
             variant="destructive"
             disabled={banningUserId !== null}
             onClick={() => { if (banDialogUserId) void handleBan(banDialogUserId, banReason) }}
           >
-            {banningUserId !== null ? 'Banning…' : 'Ban Member'}
+            {banningUserId !== null ? `${t('serverSettings.banMember')}…` : t('serverSettings.banMember')}
           </Button>
         </DialogFooter>
       </DialogContent>

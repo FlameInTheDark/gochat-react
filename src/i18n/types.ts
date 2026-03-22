@@ -74,6 +74,8 @@ export interface Translation {
         clickToJoin: string
         joinVoice: string
         you: string
+        searchResults: string
+        membersPanel: string
     }
     threads: {
         title: string
@@ -217,6 +219,8 @@ export interface Translation {
         closeDmFailed: string
         closeConversation: string
         groupDm: string
+        allServers: string
+        servers: string
     }
     // Modals
     modals: {
@@ -268,6 +272,7 @@ export interface Translation {
         fileExceedsLimit: string
         maxFilesError: string
         sendFailed: string
+        send: string
         messagePlaceholder: string
         dropFiles: string
         channels: string
@@ -365,6 +370,7 @@ export interface Translation {
         newFolder: string
         addToFolder: string
         leaveServer: string
+        leaveServerConfirm: string
         removeFromFolder: string
         createFolderTitle: string
         editFolderTitle: string
@@ -395,6 +401,7 @@ export interface Translation {
         deleteCategoryDesc: string
         deleteChannelDesc: string
         volume: string
+        allServers: string
     }
     voicePanel: {
         connecting: string
@@ -436,6 +443,58 @@ export interface Translation {
         todayAt: string
         yesterdayAt: string
         done: string
+    }
+    serverSettings: {
+        title: string
+        navOverview: string; navMembers: string; navRoles: string; navInvites: string; navEmoji: string; navBans: string; navDanger: string
+        overviewTitle: string; changeIcon: string; publicServer: string; privateServer: string
+        serverNameLabel: string; serverNamePlaceholder: string; publicServerLabel: string; publicServerDesc: string; serverIdLabel: string
+        copy: string; copied: string; saving: string; saveChanges: string; overviewSaved: string; overviewFailed: string
+        iconUploaded: string; iconFailed: string; iconFileFailed: string
+        membersTitle: string; filterOf: string; filterPlaceholder: string; joined: string; kickMember: string; banMember: string
+        kickSuccess: string; kickFailed: string; banSuccess: string; banFailed: string; noMembersMatch: string; noMembers: string
+        bansTitle: string; noBans: string; banReason: string; unbanning: string; unban: string; unbanSuccess: string; unbanFailed: string
+        rolesTitle: string; createRole: string; roleNamePlaceholder: string; everyoneRole: string; everyoneBadge: string
+        backToRoles: string; editRole: string; everyoneDesc: string; roleEditDesc: string; deleteRole: string
+        colorLabel: string; roleColorTitle: string; roleNameLabel: string
+        adminWarningTitle: string; adminWarningDesc: string
+        noCustomRoles: string; selectRoleHint: string; roleIdLabel: string
+        roleSaved: string; roleFailed: string; roleCreated: string; roleCreateFailed: string; roleDeleted: string; roleDeleteFailed: string; roleReorderFailed: string
+        invitesTitle: string; inviteOneHour: string; inviteOneDay: string; inviteSevenDays: string; inviteThirtyDays: string; inviteNeverExpires: string
+        inviteCreatedAt: string; inviteExpired: string; inviteExpires: string; inviteNever: string
+        copyInviteLink: string; revokeInvite: string; inviteCopied: string; noActiveInvites: string; inviteRevokeFailed: string
+        emojiTitle: string; emojiDesc: string; uploadEmoji: string; emojiLimits: string
+        emojiNameLabel: string; emojiNamePlaceholder: string; emojiNameHint: string; emojiFileLabel: string
+        uploading: string; upload: string; emojiUploaded: string; emojiUploadFailed: string; emojiNameSaved: string; emojiNameSaveFailed: string; emojiDeleted: string; emojiDeleteFailed: string
+        deleteServer: string; deleteServerDesc: string; deleteServerConfirm: string; deleteServerFailed: string; deleteServerNameMismatch: string
+        permCategoryGeneral: string; permCategoryMembership: string; permCategoryText: string; permCategoryVoice: string
+        permAdministrator: string; permAdministratorDesc: string
+        permManageServer: string; permManageServerDesc: string
+        permManageRoles: string; permManageRolesDesc: string
+        permManageChannels: string; permManageChannelsDesc: string
+        permViewAuditLog: string; permViewAuditLogDesc: string
+        permCreateInvites: string; permCreateInvitesDesc: string
+        permKickMembers: string; permKickMembersDesc: string
+        permBanMembers: string; permBanMembersDesc: string
+        permTimeoutMembers: string; permTimeoutMembersDesc: string
+        permManageNicknames: string; permManageNicknamesDesc: string
+        permChangeNickname: string; permChangeNicknameDesc: string
+        permViewChannels: string; permViewChannelsDesc: string
+        permReadHistory: string; permReadHistoryDesc: string
+        permSendMessages: string; permSendMessagesDesc: string
+        permAttachFiles: string; permAttachFilesDesc: string
+        permAddReactions: string; permAddReactionsDesc: string
+        permMentionRoles: string; permMentionRolesDesc: string
+        permManageMessages: string; permManageMessagesDesc: string
+        permSendInThreads: string; permSendInThreadsDesc: string
+        permCreateThreads: string; permCreateThreadsDesc: string
+        permManageThreads: string; permManageThreadsDesc: string
+        permConnect: string; permConnectDesc: string
+        permSpeak: string; permSpeakDesc: string
+        permVideo: string; permVideoDesc: string
+        permMuteMembers: string; permMuteMembersDesc: string
+        permDeafenMembers: string; permDeafenMembersDesc: string
+        permMoveMembers: string; permMoveMembersDesc: string
     }
     // ── App Settings modal (Electron title-bar ⚙ button) ─────────────────────
     appSettings: {

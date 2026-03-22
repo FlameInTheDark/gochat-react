@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Hash, Shield, Paperclip } from 'lucide-react'
+import { Hash, Shield, Paperclip, SendHorizontal } from 'lucide-react'
 import { guildApi, rolesApi } from '@/api/client'
 import { ChannelType } from '@/types'
 import type { DtoChannel, DtoGuild, DtoMember, DtoRole } from '@/client'
@@ -13,6 +13,7 @@ import EmojiPicker from './EmojiPicker'
 import GifPicker from './GifPicker'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
+import { useClientMode } from '@/hooks/useClientMode'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { emojiUrl } from '@/lib/emoji'
 
@@ -256,6 +257,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
 }: Props, ref) {
   const { serverId } = useParams<{ serverId?: string }>()
   const { t } = useTranslation()
+  const isMobile = useClientMode() === 'mobile'
   const queryClient = useQueryClient()
   const currentUser = useAuthStore((s) => s.user)
 
@@ -564,6 +566,19 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     onTyping()
   }
 
+  function handleSend() {
+    const el = editorRef.current
+    if (!el) return
+    const content = serialize(el).trim()
+    if (!content && !hasAttachments) return
+    onSend(content)
+    while (el.firstChild) {
+      el.removeChild(el.firstChild)
+    }
+    el.classList.add('is-empty')
+    setSuggestions([])
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (disabled) {
       e.preventDefault()
@@ -629,18 +644,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     // Send on Enter (no shift)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      const el = editorRef.current
-      if (!el) return
-      const content = serialize(el).trim()
-      // Allow send with empty text when there are pending attachments
-      if (!content && !hasAttachments) return
-      onSend(content)
-      // Clear editor completely - remove all children to ensure it's empty
-      while (el.firstChild) {
-        el.removeChild(el.firstChild)
-      }
-      el.classList.add('is-empty')
-      setSuggestions([])
+      handleSend()
       return
     }
 
@@ -942,15 +946,30 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
             </PopoverTrigger>
             <PopoverContent
               side="top"
-              align="end"
-              className="w-auto p-0 border-0 bg-transparent shadow-none"
+              align={isMobile ? 'center' : 'end'}
+              className={cn('p-0 border-0 bg-transparent shadow-none', isMobile ? 'w-[calc(100vw-1rem)]' : 'w-auto')}
             >
               <EmojiPicker
                 onSelect={insertEmojiInEditor}
                 customEmojiGroups={customEmojiGroups}
+                isMobile={isMobile}
               />
             </PopoverContent>
           </Popover>
+
+          {/* Send button — mobile only */}
+          {isMobile && (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleSend}
+              disabled={disabled}
+              aria-label={t('chat.send')}
+              className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded text-primary transition-colors hover:text-primary/80 disabled:opacity-40"
+            >
+              <SendHorizontal className="h-5 w-5" />
+            </button>
+          )}
         </div>
       </div>
     </div>

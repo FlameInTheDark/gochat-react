@@ -21,6 +21,7 @@ interface SearchPanelProps {
   onJumpToMessage?: (message: DtoMessage) => void | Promise<void>
   resolver?: MentionResolver
   className?: string
+  isMobile?: boolean
 }
 
 function ResultCard({
@@ -28,11 +29,13 @@ function ResultCard({
   channelName,
   onJump,
   resolver,
+  isMobile,
 }: {
   msg: DtoMessage
   channelName: string | undefined
   onJump: () => void
   resolver?: MentionResolver
+  isMobile?: boolean
 }) {
   const { t } = useTranslation()
 
@@ -46,7 +49,10 @@ function ResultCard({
         </span>
         <button
           onClick={onJump}
-          className="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium text-primary hover:bg-primary/10 transition-all shrink-0 ml-2"
+          className={cn(
+            'flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium text-primary hover:bg-primary/10 transition-all shrink-0 ml-2',
+            isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+          )}
         >
           {t('search.jump')} <ExternalLink className="w-3 h-3" />
         </button>
@@ -72,6 +78,7 @@ export default function SearchPanel({
   onJumpToMessage,
   resolver,
   className,
+  isMobile,
 }: SearchPanelProps) {
   const navigate = useNavigate()
   const { t } = useTranslation()
@@ -158,6 +165,7 @@ export default function SearchPanel({
               channelName={getChannelName(msg.channel_id)}
               onJump={() => { void jumpToMessage(msg) }}
               resolver={resolver}
+              isMobile={isMobile}
             />
           ))}
         </div>

@@ -187,13 +187,14 @@ function LazySection({
 interface EmojiPickerProps {
   onSelect: (emoji: string) => void
   customEmojiGroups?: CustomEmojiGroup[]
+  isMobile?: boolean
 }
 
 // How long (ms) to suppress the scroll-observer's category update after a
 // programmatic nav-click scroll, to prevent it from clobbering the selection.
 const PROGRAMMATIC_SCROLL_GRACE_MS = 600
 
-export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPickerProps) {
+export default function EmojiPicker({ onSelect, customEmojiGroups, isMobile = false }: EmojiPickerProps) {
   const [recent, setRecent] = useState<string[]>(() => loadRecent())
   const [search, setSearch] = useState('')
   const [activeCategory, setActiveCategory] = useState<string>(categories[0]?.slug ?? '')
@@ -369,6 +370,200 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
     ...categories.map((cat): NavItem => ({ kind: 'icon', slug: cat.slug, name: cat.name, Icon: cat.icon })),
   ]
 
+  // Shared emoji grid content (used in both desktop and mobile)
+  const emojiGrid = (
+    <div ref={scrollRef} className="flex-1 overflow-y-auto px-2">
+      {trimmedSearch ? (
+        <>
+          {customSearchResults.length > 0 && (
+            <>
+              <div className="py-3 text-xs uppercase tracking-wide text-muted-foreground">
+                Custom Emoji
+              </div>
+              <div className="grid grid-cols-8 gap-0.5 pb-4">
+                {customSearchResults.map((em) => (
+                  <CustomEmojiButton
+                    key={em.id}
+                    emoji={em}
+                    onSelect={handleCustomSelect}
+                    onHover={(e) => setPreviewItem({ kind: 'custom', id: e.id, name: e.name })}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+          <div className="py-3 text-xs uppercase tracking-wide text-muted-foreground">
+            {customSearchResults.length > 0 ? 'Standard Emoji' : 'Search Results'}
+          </div>
+          {unicodeSearchResults.length === 0 && customSearchResults.length === 0 ? (
+            <div className="pb-6 text-sm text-muted-foreground">
+              No emoji found for &ldquo;{search}&rdquo;.
+            </div>
+          ) : unicodeSearchResults.length > 0 ? (
+            <div className="grid grid-cols-8 gap-0.5 pb-4">
+              {unicodeSearchResults.map((em) => (
+                <EmojiButton
+                  key={em.emoji}
+                  entry={em}
+                  onSelect={handleSelect}
+                  onHover={(e) => setPreviewItem({ kind: 'unicode', entry: e })}
+                />
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          {(customEmojiGroups ?? []).map(({ guildId, guildName, emojis }) =>
+            emojis.length > 0 ? (
+              <LazySection
+                key={guildId}
+                slug={`guild-${guildId}`}
+                scrollRef={scrollRef}
+                registerSection={registerSection}
+                className="pt-3"
+                estimatedRows={Math.ceil(emojis.length / 8)}
+              >
+                <div className="pb-2 text-xs uppercase tracking-wide text-muted-foreground">
+                  {guildName}
+                </div>
+                <div className="grid grid-cols-8 gap-0.5 pb-4">
+                  {emojis.map((em) => (
+                    <CustomEmojiButton
+                      key={em.id}
+                      emoji={em}
+                      onSelect={handleCustomSelect}
+                      onHover={(e) => setPreviewItem({ kind: 'custom', id: e.id, name: e.name })}
+                    />
+                  ))}
+                </div>
+              </LazySection>
+            ) : null,
+          )}
+
+          {recentEntries.length > 0 && (
+            <LazySection
+              slug="recent"
+              scrollRef={scrollRef}
+              registerSection={registerSection}
+              className="pt-3"
+              estimatedRows={Math.ceil(recentEntries.length / 8)}
+            >
+              <div className="flex items-center justify-between pb-2">
+                <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Frequently Used
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRecent([])}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="grid grid-cols-8 gap-0.5 pb-4">
+                {recentEntries.map((em) => (
+                  <EmojiButton
+                    key={em.emoji}
+                    entry={em}
+                    onSelect={handleSelect}
+                    onHover={(e) => setPreviewItem({ kind: 'unicode', entry: e })}
+                  />
+                ))}
+              </div>
+            </LazySection>
+          )}
+
+          {categories.map((cat) => (
+            <LazySection
+              key={cat.slug}
+              slug={cat.slug}
+              scrollRef={scrollRef}
+              registerSection={registerSection}
+              className="pt-3"
+              estimatedRows={Math.ceil(cat.emojis.length / 8)}
+            >
+              <div className="pb-2 text-xs uppercase tracking-wide text-muted-foreground">
+                {cat.name}
+              </div>
+              <div className="grid grid-cols-8 gap-0.5 pb-4">
+                {cat.emojis.map((em) => (
+                  <EmojiButton
+                    key={em.emoji}
+                    entry={em}
+                    onSelect={handleSelect}
+                    onHover={(e) => setPreviewItem({ kind: 'unicode', entry: e })}
+                  />
+                ))}
+              </div>
+            </LazySection>
+          ))}
+        </>
+      )}
+    </div>
+  )
+
+  // Shared category nav buttons
+  const categoryNavButtons = navItems.map((item) => {
+    const isActive = activeCategory === item.slug && !trimmedSearch
+    return (
+      <button
+        key={item.slug}
+        type="button"
+        title={item.name}
+        onClick={() => {
+          setSearch('')
+          scrollToCategory(item.slug)
+        }}
+        className={`grid shrink-0 h-9 w-9 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ${
+          isActive ? 'bg-muted text-foreground' : ''
+        }`}
+      >
+        {item.kind === 'icon' ? (
+          <item.Icon className="h-4 w-4" strokeWidth={2} />
+        ) : item.iconUrl ? (
+          <img src={item.iconUrl} alt={item.name} className="h-6 w-6 rounded-md object-cover" />
+        ) : (
+          <div className="h-5 w-5 rounded-full bg-primary/20 text-primary text-[11px] font-bold flex items-center justify-center">
+            {item.initial}
+          </div>
+        )}
+      </button>
+    )
+  })
+
+  if (isMobile) {
+    return (
+      <div className="w-full rounded-xl border border-border bg-popover text-popover-foreground shadow-xl flex flex-col">
+        {/* Search */}
+        <div className="border-b border-border px-3 py-2 shrink-0">
+          <input
+            ref={searchRef}
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search emoji"
+            aria-label="Search emoji"
+            className="h-9 w-full rounded-md border border-transparent bg-muted px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-border focus:outline-none"
+          />
+        </div>
+
+        {/* Emoji grid */}
+        <div className="flex" style={{ height: 280 }}>
+          {emojiGrid}
+        </div>
+
+        {/* Horizontal category nav */}
+        <div className="border-t border-border shrink-0">
+          <div className="flex gap-0.5 overflow-x-auto p-1.5 scrollbar-none">
+            {categoryNavButtons}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="w-[420px] rounded-xl border border-border bg-popover text-popover-foreground shadow-xl">
       {/* Search */}
@@ -389,169 +584,11 @@ export default function EmojiPicker({ onSelect, customEmojiGroups }: EmojiPicker
       <div className="flex" style={{ height: 320 }}>
         {/* Left category sidebar */}
         <div className="flex flex-col gap-0.5 overflow-y-auto border-r border-border p-1.5 shrink-0">
-          {navItems.map((item) => {
-            const isActive = activeCategory === item.slug && !trimmedSearch
-            return (
-              <button
-                key={item.slug}
-                type="button"
-                title={item.name}
-                onClick={() => {
-                  setSearch('')
-                  scrollToCategory(item.slug)
-                }}
-                className={`grid h-9 w-9 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground ${
-                  isActive ? 'bg-muted text-foreground' : ''
-                }`}
-              >
-                {item.kind === 'icon' ? (
-                  <item.Icon className="h-4 w-4" strokeWidth={2} />
-                ) : item.iconUrl ? (
-                  <img
-                    src={item.iconUrl}
-                    alt={item.name}
-                    className="h-6 w-6 rounded-md object-cover"
-                  />
-                ) : (
-                  <div className="h-5 w-5 rounded-full bg-primary/20 text-primary text-[11px] font-bold flex items-center justify-center">
-                    {item.initial}
-                  </div>
-                )}
-              </button>
-            )
-          })}
+          {categoryNavButtons}
         </div>
 
         {/* Right emoji grid — scrollable */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-2">
-          {trimmedSearch ? (
-            <>
-              {customSearchResults.length > 0 && (
-                <>
-                  <div className="py-3 text-xs uppercase tracking-wide text-muted-foreground">
-                    Custom Emoji
-                  </div>
-                  <div className="grid grid-cols-8 gap-0.5 pb-4">
-                    {customSearchResults.map((em) => (
-                      <CustomEmojiButton
-                        key={em.id}
-                        emoji={em}
-                        onSelect={handleCustomSelect}
-                        onHover={(e) => setPreviewItem({ kind: 'custom', id: e.id, name: e.name })}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-              <div className="py-3 text-xs uppercase tracking-wide text-muted-foreground">
-                {customSearchResults.length > 0 ? 'Standard Emoji' : 'Search Results'}
-              </div>
-              {unicodeSearchResults.length === 0 && customSearchResults.length === 0 ? (
-                <div className="pb-6 text-sm text-muted-foreground">
-                  No emoji found for &ldquo;{search}&rdquo;.
-                </div>
-              ) : unicodeSearchResults.length > 0 ? (
-                <div className="grid grid-cols-8 gap-0.5 pb-4">
-                  {unicodeSearchResults.map((em) => (
-                    <EmojiButton
-                      key={em.emoji}
-                      entry={em}
-                      onSelect={handleSelect}
-                      onHover={(e) => setPreviewItem({ kind: 'unicode', entry: e })}
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <>
-              {(customEmojiGroups ?? []).map(({ guildId, guildName, emojis }) =>
-                emojis.length > 0 ? (
-                  <LazySection
-                    key={guildId}
-                    slug={`guild-${guildId}`}
-                    scrollRef={scrollRef}
-                    registerSection={registerSection}
-                    className="pt-3"
-                    estimatedRows={Math.ceil(emojis.length / 8)}
-                  >
-                    <div className="pb-2 text-xs uppercase tracking-wide text-muted-foreground">
-                      {guildName}
-                    </div>
-                    <div className="grid grid-cols-8 gap-0.5 pb-4">
-                      {emojis.map((em) => (
-                        <CustomEmojiButton
-                          key={em.id}
-                          emoji={em}
-                          onSelect={handleCustomSelect}
-                          onHover={(e) => setPreviewItem({ kind: 'custom', id: e.id, name: e.name })}
-                        />
-                      ))}
-                    </div>
-                  </LazySection>
-                ) : null,
-              )}
-
-              {recentEntries.length > 0 && (
-                <LazySection
-                  slug="recent"
-                  scrollRef={scrollRef}
-                  registerSection={registerSection}
-                  className="pt-3"
-                  estimatedRows={Math.ceil(recentEntries.length / 8)}
-                >
-                  <div className="flex items-center justify-between pb-2">
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Frequently Used
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setRecent([])}
-                      className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-8 gap-0.5 pb-4">
-                    {recentEntries.map((em) => (
-                      <EmojiButton
-                        key={em.emoji}
-                        entry={em}
-                        onSelect={handleSelect}
-                        onHover={(e) => setPreviewItem({ kind: 'unicode', entry: e })}
-                      />
-                    ))}
-                  </div>
-                </LazySection>
-              )}
-
-              {categories.map((cat) => (
-                <LazySection
-                  key={cat.slug}
-                  slug={cat.slug}
-                  scrollRef={scrollRef}
-                  registerSection={registerSection}
-                  className="pt-3"
-                  estimatedRows={Math.ceil(cat.emojis.length / 8)}
-                >
-                  <div className="pb-2 text-xs uppercase tracking-wide text-muted-foreground">
-                    {cat.name}
-                  </div>
-                  <div className="grid grid-cols-8 gap-0.5 pb-4">
-                    {cat.emojis.map((em) => (
-                      <EmojiButton
-                        key={em.emoji}
-                        entry={em}
-                        onSelect={handleSelect}
-                        onHover={(e) => setPreviewItem({ kind: 'unicode', entry: e })}
-                      />
-                    ))}
-                  </div>
-                </LazySection>
-              ))}
-            </>
-          )}
-        </div>
+        {emojiGrid}
       </div>
 
       {/* Preview strip */}

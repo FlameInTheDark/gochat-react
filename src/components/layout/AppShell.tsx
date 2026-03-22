@@ -20,11 +20,12 @@ export default function AppShell({ children }: Props) {
 
   if (isMobile) {
     if (!hasServer) {
-      // Root /app → full-screen server list; still render children so modals mount
+      // Root /app → full-screen server list; render children alongside (outlet is
+      // empty here; modals mount via portals and need to be in the DOM to open)
       return (
         <div className="h-dvh w-screen overflow-hidden bg-sidebar">
           <MobileServerList />
-          <div className="hidden">{children}</div>
+          {children}
         </div>
       )
     }

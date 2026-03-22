@@ -858,6 +858,10 @@ export default function ChannelPage() {
       jumpBehavior: 'direct-scroll',
       jumpPosition: msg.position ?? null,
     })
+    if (isMobile) {
+      clearSearch()
+      setMobileSearchOpen(false)
+    }
   }
 
   useEffect(() => {
@@ -1451,10 +1455,10 @@ export default function ChannelPage() {
                   <div className="h-11 flex items-center px-4 border-b border-sidebar-border shrink-0">
                     <span className="text-sm font-semibold flex-1">
                       {hasSearched
-                        ? t('channel.searchResults', { defaultValue: 'Search Results' })
+                        ? t('channel.searchResults')
                         : rightPanelMode === 'members'
-                          ? t('channel.members', { defaultValue: 'Members' })
-                          : t('threads.threads', { defaultValue: 'Threads' })}
+                          ? t('channel.membersPanel')
+                          : t('threads.title')}
                     </span>
                     <button
                       onClick={() => {
@@ -1480,6 +1484,7 @@ export default function ChannelPage() {
                     onJumpToMessage={handleSearchJump}
                     resolver={mentionResolver}
                     className="flex-1 min-h-0"
+                    isMobile={isMobile}
                   />
                 ) : rightPanelMode === 'thread' && activeThread ? (
                   <ThreadPanel

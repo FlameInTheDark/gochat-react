@@ -72,7 +72,7 @@ export default function DmSidebar() {
           className="flex items-center gap-2 px-3 h-10 text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 border-b border-sidebar-border"
         >
           <ChevronLeft className="w-4 h-4" />
-          All Servers
+          {t('dm.allServers')}
         </button>
       )}
       {/* Header */}
