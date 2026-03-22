@@ -1,4 +1,5 @@
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
+import { useClientMode } from '@/hooks/useClientMode'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
@@ -22,6 +23,13 @@ import CreateCategoryModal from '@/components/modals/CreateCategoryModal'
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 
+// On desktop, /app redirects to /app/@me. On mobile, /app shows the server list.
+function AppIndexRedirect() {
+  const isMobile = useClientMode() === 'mobile'
+  if (isMobile) return null
+  return <Navigate to="@me" replace />
+}
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } },
 })
@@ -37,7 +45,7 @@ const router = createBrowserRouter([
     path: '/app',
     element: <AppLayout />,
     children: [
-      { index: true, element: <Navigate to="@me" replace /> },
+      { index: true, element: <AppIndexRedirect /> },
       {
         path: '@me',
         element: <MeLayout />,

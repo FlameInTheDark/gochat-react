@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye } from 'lucide-react'
+import { ChevronDown, ChevronLeft, ChevronRight, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -46,6 +46,7 @@ import { joinVoice } from '@/services/voiceService'
 import UserArea from './UserArea'
 import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import type { DtoRole, DtoMember } from '@/client'
+import { useClientMode } from '@/hooks/useClientMode'
 
 interface Props {
   channels: DtoChannel[]
@@ -56,6 +57,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   const navigate = useNavigate()
   const { channelId: activeChannelId } = useParams<{ channelId?: string }>()
   const queryClient = useQueryClient()
+  const isMobile = useClientMode() === 'mobile'
 
   // Resolve server name from the already-cached guilds list (no extra request)
   const serverName =
@@ -415,7 +417,17 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
 
   return (
     <>
-      <div className="flex flex-col w-60 bg-sidebar border-r border-sidebar-border shrink-0">
+      <div className={cn('flex flex-col bg-sidebar border-r border-sidebar-border', isMobile ? 'w-full flex-1 min-h-0' : 'w-60 shrink-0')}>
+        {/* Mobile: back button to server list */}
+        {isMobile && (
+          <button
+            onClick={() => navigate('/app')}
+            className="flex items-center gap-2 px-3 h-10 text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 border-b border-sidebar-border"
+          >
+            <ChevronLeft className="w-4 h-4" />
+            All Servers
+          </button>
+        )}
         {/* Server name header — left-click opens dropdown, right-click opens context menu */}
         <ContextMenu>
           <DropdownMenu>

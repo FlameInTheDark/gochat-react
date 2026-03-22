@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil, Shield, UserMinus, Ban, GripVertical } from 'lucide-react'
+import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil, Shield, UserMinus, Ban, GripVertical, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -38,6 +38,7 @@ import ImageCropDialog from '@/components/modals/ImageCropDialog'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { emojiUrl } from '@/lib/emoji'
 import { getApiBaseUrl, getInviteUrl } from '@/lib/connectionConfig'
+import { useClientMode } from '@/hooks/useClientMode'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -161,6 +162,8 @@ export default function ServerSettingsModal() {
   const open = guildId !== null
 
   const [section, setSection] = useState<Section>('overview')
+  const isMobile = useClientMode() === 'mobile'
+  const [mobileShowNav, setMobileShowNav] = useState(true)
   const [deletingServer, setDeletingServer] = useState(false)
   const [deleteConfirmName, setDeleteConfirmName] = useState('')
 
@@ -408,6 +411,9 @@ export default function ServerSettingsModal() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [open, close])
+
+  // Reset mobile nav panel on open
+  useEffect(() => { if (open) setMobileShowNav(true) }, [open])
 
   if (!open) return null
 
@@ -741,11 +747,39 @@ export default function ServerSettingsModal() {
   return (
     <>
     <div className="fixed inset-0 z-50 flex bg-background/80 backdrop-blur-sm">
-      <div className="flex w-full h-full overflow-hidden">
+      <div className={cn('flex w-full h-full overflow-hidden', isMobile && 'flex-col')}>
+
+          {/* ── Mobile header ── */}
+          {isMobile && (
+            <div className="h-12 flex items-center px-3 border-b border-sidebar-border shrink-0 bg-sidebar">
+              {!mobileShowNav && (
+                <button
+                  onClick={() => setMobileShowNav(true)}
+                  className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors mr-1"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
+              )}
+              <span className="font-semibold text-sm flex-1 truncate">
+                {mobileShowNav ? (guild?.name ?? 'Server Settings') : (NAV.find((n) => n.key === section)?.label ?? '')}
+              </span>
+              <button
+                onClick={close}
+                className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
         {/* ── Left nav ── */}
-        <div className="flex flex-1 justify-end bg-sidebar border-r border-sidebar-border">
-          <div className="w-52 py-16 px-3 shrink-0">
+        <div className={cn(
+          'bg-sidebar',
+          isMobile
+            ? mobileShowNav ? 'flex flex-col flex-1 min-h-0 overflow-y-auto' : 'hidden'
+            : 'flex flex-1 justify-end border-r border-sidebar-border',
+        )}>
+          <div className={cn('shrink-0', isMobile ? 'w-full py-4 px-3' : 'w-52 py-16 px-3')}>
             <p className="px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-1 truncate">
               {guild?.name ?? 'Server Settings'}
             </p>
@@ -763,9 +797,10 @@ export default function ServerSettingsModal() {
                     )}
                     <button
                       key={s.key}
-                      onClick={() => setSection(s.key)}
+                      onClick={() => { setSection(s.key); if (isMobile) setMobileShowNav(false) }}
                       className={cn(
-                        'w-full text-left px-3 py-1.5 rounded text-sm transition-colors',
+                        'w-full text-left px-3 rounded text-sm transition-colors flex items-center justify-between',
+                        isMobile ? 'py-3' : 'py-1.5',
                         s.danger
                           ? section === s.key
                             ? 'bg-destructive/20 text-destructive'
@@ -776,6 +811,7 @@ export default function ServerSettingsModal() {
                       )}
                     >
                       {s.label}
+                      {isMobile && <ChevronRight className="w-4 h-4 shrink-0" />}
                     </button>
                   </>
                 )
@@ -785,11 +821,16 @@ export default function ServerSettingsModal() {
         </div>
 
         {/* ── Content ── */}
-        <div className="flex flex-1 min-w-0">
+        <div className={cn(
+          'flex flex-1 min-w-0',
+          isMobile && (mobileShowNav ? 'hidden' : 'flex'),
+        )}>
           <div
             className={cn(
-              'flex-1 py-16 overflow-y-auto',
-              section === 'roles' ? 'px-6' : 'px-10 max-w-2xl',
+              'flex-1 overflow-y-auto',
+              isMobile
+                ? 'py-4 px-4'
+                : section === 'roles' ? 'py-16 px-6' : 'py-16 px-10 max-w-2xl',
             )}
           >
 
@@ -1643,15 +1684,17 @@ export default function ServerSettingsModal() {
 
           </div>
 
-          {/* Close button */}
-          <div className="pt-16 pr-6 shrink-0">
-            <button
-              onClick={close}
-              className="w-9 h-9 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
+          {/* Close button — desktop only */}
+          {!isMobile && (
+            <div className="pt-16 pr-6 shrink-0">
+              <button
+                onClick={close}
+                className="w-9 h-9 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
 
       </div>

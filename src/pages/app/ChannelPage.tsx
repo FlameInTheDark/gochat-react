@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { Hash, Spool, Volume2, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users } from 'lucide-react'
+import { Hash, Spool, Volume2, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, Search, X } from 'lucide-react'
 import axios from 'axios'
 import { Separator } from '@/components/ui/separator'
 import { guildApi, messageApi, rolesApi, searchApi } from '@/api/client'
@@ -39,6 +39,7 @@ import { getTopRoleColor } from '@/lib/memberColors'
 import { createJumpRequest, type JumpBehavior, type JumpRequest } from '@/lib/messageJump'
 import { isAutoThreadFollowup, isThreadChannel, sortThreadsByActivity } from '@/lib/threads'
 import { buildMessagePreviewText } from '@/lib/messagePreview'
+import { useClientMode } from '@/hooks/useClientMode'
 
 type RightPanelMode = 'members' | 'none' | 'threads' | 'thread' | 'thread-create'
 type NonThreadRightPanelMode = Exclude<RightPanelMode, 'threads' | 'thread' | 'thread-create'>
@@ -152,6 +153,7 @@ export default function ChannelPage() {
   const location = useLocation()
   const queryClient = useQueryClient()
   const { t } = useTranslation()
+  const isMobile = useClientMode() === 'mobile'
 
   useEffect(() => {
     if (channel?.name) {
@@ -160,7 +162,7 @@ export default function ChannelPage() {
     return () => { document.title = 'GoChat' }
   }, [channel?.name])
 
-  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('members')
+  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(() => isMobile ? 'none' : 'members')
   const [rightPanelModeBeforeThreads, setRightPanelModeBeforeThreads] =
     useState<NonThreadRightPanelMode>('members')
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null)
@@ -177,6 +179,7 @@ export default function ChannelPage() {
   const [searchPage, setSearchPage] = useState(0)
   const [isSearching, setIsSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
   const lastSearchParamsRef = useRef<{ chips: AppliedFilter[]; text: string } | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
   const messageInputRef = useRef<MessageInputHandle | null>(null)
@@ -611,7 +614,7 @@ export default function ChannelPage() {
   // Clear search when navigating to a different channel
   useEffect(() => {
     clearSearch()
-    setRightPanelMode('members')
+    setRightPanelMode(isMobile ? 'none' : 'members')
     setRightPanelModeBeforeThreads('members')
     setJumpRequest(null)
     setActiveThreadId(null)
@@ -1115,9 +1118,18 @@ export default function ChannelPage() {
     return (
       <div className="flex flex-col flex-1 min-h-0">
         <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
+          {isMobile && (
+            <button
+              onClick={() => navigate(`/app/${serverId}`)}
+              className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 -ml-1"
+              title="Back to channels"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          )}
           <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
           <span className="font-semibold">{channel?.name ?? channelId}</span>
-          {channel?.topic && (
+          {!isMobile && channel?.topic && (
             <>
               <Separator orientation="vertical" className="h-5 mx-1" />
               <span className="text-sm text-muted-foreground truncate">{channel.topic}</span>
@@ -1248,55 +1260,136 @@ export default function ChannelPage() {
     <>
       <div className="flex flex-col flex-1 min-h-0">
         <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
+          {isMobile && (
+            <button
+              onClick={() => navigate(`/app/${serverId}`)}
+              className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 -ml-1"
+              title="Back to channels"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          )}
           <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
           <span className="font-semibold">{channel?.name ?? channelId}</span>
-          {channel?.topic && (
+          {!isMobile && channel?.topic && (
             <>
               <Separator orientation="vertical" className="h-5 mx-1" />
               <span className="text-sm text-muted-foreground truncate">{channel.topic}</span>
             </>
           )}
 
-          <div className="ml-auto flex items-center gap-2">
-            {isTextChannel && (
+          {/* Mobile top-right icon buttons */}
+          {isMobile && (
+            <div className="ml-auto flex items-center gap-1">
+              {isTextChannel && (
+                <button
+                  onClick={() => {
+                    const opening = !mobileSearchOpen
+                    setMobileSearchOpen(opening)
+                    if (opening) {
+                      setTimeout(() => searchBarRef.current?.focus(), 50)
+                    } else {
+                      clearSearch()
+                    }
+                  }}
+                  title="Search"
+                  className={cn(
+                    'w-9 h-9 flex items-center justify-center rounded transition-colors',
+                    mobileSearchOpen || hasSearched
+                      ? 'text-foreground bg-accent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                  )}
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              )}
+              {isTextChannel && (
+                <button
+                  onClick={handleThreadButtonClick}
+                  title={threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}
+                  className={cn(
+                    'w-9 h-9 flex items-center justify-center rounded transition-colors',
+                    threadButtonActive
+                      ? 'text-foreground bg-accent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                  )}
+                >
+                  <Spool className="w-4 h-4" />
+                </button>
+              )}
               <button
-                onClick={handleThreadButtonClick}
-                title={threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}
+                onClick={handleMembersButtonClick}
+                title={rightPanelMode === 'members' ? t('channel.hideMemberList') : t('channel.showMemberList')}
                 className={cn(
-                  'w-8 h-8 flex items-center justify-center rounded transition-colors',
-                  threadButtonActive
+                  'w-9 h-9 flex items-center justify-center rounded transition-colors',
+                  rightPanelMode === 'members'
                     ? 'text-foreground bg-accent'
                     : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
                 )}
               >
-                <Spool className="w-4 h-4" />
+                <Users className="w-4 h-4" />
               </button>
-            )}
-            <button
-              onClick={handleMembersButtonClick}
-              title={rightPanelMode === 'members' ? t('channel.hideMemberList') : t('channel.showMemberList')}
-              className={cn(
-                'w-8 h-8 flex items-center justify-center rounded transition-colors',
-                rightPanelMode === 'members'
-                  ? 'text-foreground bg-accent'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+            </div>
+          )}
+
+          {/* Desktop top-right controls */}
+          {!isMobile && (
+            <div className="ml-auto flex items-center gap-2">
+              {isTextChannel && (
+                <button
+                  onClick={handleThreadButtonClick}
+                  title={threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}
+                  className={cn(
+                    'w-8 h-8 flex items-center justify-center rounded transition-colors',
+                    threadButtonActive
+                      ? 'text-foreground bg-accent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                  )}
+                >
+                  <Spool className="w-4 h-4" />
+                </button>
               )}
-            >
-              <Users className="w-4 h-4" />
-            </button>
+              <button
+                onClick={handleMembersButtonClick}
+                title={rightPanelMode === 'members' ? t('channel.hideMemberList') : t('channel.showMemberList')}
+                className={cn(
+                  'w-8 h-8 flex items-center justify-center rounded transition-colors',
+                  rightPanelMode === 'members'
+                    ? 'text-foreground bg-accent'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                )}
+              >
+                <Users className="w-4 h-4" />
+              </button>
+              <SearchBar
+                ref={searchBarRef}
+                className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
+                members={members}
+                channels={channels}
+                onSearch={(params) => void doSearch(params, 0)}
+                onClear={clearSearch}
+                hasResults={hasSearched}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Mobile search bar — shown below header when search icon is active */}
+        {isMobile && mobileSearchOpen && (
+          <div className="border-b border-sidebar-border bg-background px-3 py-2 shrink-0">
             <SearchBar
               ref={searchBarRef}
-              className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
+              className="w-full h-8 rounded-md border border-input bg-muted/30 px-2"
               members={members}
               channels={channels}
               onSearch={(params) => void doSearch(params, 0)}
-              onClear={clearSearch}
+              onClear={() => { clearSearch(); setMobileSearchOpen(false) }}
               hasResults={hasSearched}
             />
           </div>
-        </div>
+        )}
 
-        <div className="flex flex-1 min-h-0">
+        <div className="relative flex flex-1 min-h-0">
           <ChatAttachmentDropZone
             className="flex-1 min-w-0"
             onFileDrop={(files) => {
@@ -1333,7 +1426,7 @@ export default function ChannelPage() {
 
           {(hasSearched || rightPanelMode !== 'none') && serverId && (
             <>
-              {isThreadSidePanelVisible && (
+              {!isMobile && isThreadSidePanelVisible && (
                 <div
                   className="group relative w-1.5 shrink-0 cursor-col-resize bg-transparent touch-none"
                   onPointerDown={handleRightPanelResizeStart}
@@ -1344,14 +1437,36 @@ export default function ChannelPage() {
               <div
                 className={cn(
                   'flex min-h-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar shrink-0',
-                  hasSearched
-                    ? 'w-80'
-                    : isThreadSidePanelVisible
-                      ? ''
-                      : 'w-60',
+                  isMobile
+                    ? 'absolute inset-0 z-40'
+                    : hasSearched
+                      ? 'w-80'
+                      : isThreadSidePanelVisible
+                        ? ''
+                        : 'w-60',
                 )}
-                style={isThreadSidePanelVisible ? { width: `${activeRightPanelWidth}px` } : undefined}
+                style={!isMobile && isThreadSidePanelVisible ? { width: `${activeRightPanelWidth}px` } : undefined}
               >
+                {isMobile && (
+                  <div className="h-11 flex items-center px-4 border-b border-sidebar-border shrink-0">
+                    <span className="text-sm font-semibold flex-1">
+                      {hasSearched
+                        ? t('channel.searchResults', { defaultValue: 'Search Results' })
+                        : rightPanelMode === 'members'
+                          ? t('channel.members', { defaultValue: 'Members' })
+                          : t('threads.threads', { defaultValue: 'Threads' })}
+                    </span>
+                    <button
+                      onClick={() => {
+                        if (hasSearched) { clearSearch(); setMobileSearchOpen(false) }
+                        else setRightPanelMode('none')
+                      }}
+                      className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
                 {hasSearched ? (
                   <SearchPanel
                     serverId={serverId}

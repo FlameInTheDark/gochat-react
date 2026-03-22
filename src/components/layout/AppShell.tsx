@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react'
+import { useLocation } from 'react-router-dom'
 import ServerSidebar from './ServerSidebar'
+import MobileServerList from './mobile/MobileServerList'
 import { useBackgroundStore } from '@/stores/backgroundStore'
+import { useClientMode } from '@/hooks/useClientMode'
 
 interface Props {
   children: ReactNode
@@ -8,7 +11,35 @@ interface Props {
 
 export default function AppShell({ children }: Props) {
   const backgroundDataUrl = useBackgroundStore((s) => s.backgroundDataUrl)
+  const isMobile = useClientMode() === 'mobile'
+  const location = useLocation()
 
+  // Determine route depth: /app → 1 part, /app/:serverId → 2 parts, etc.
+  const parts = location.pathname.split('/').filter(Boolean)
+  const hasServer = parts.length >= 2 // has serverId or @me segment
+
+  if (isMobile) {
+    if (!hasServer) {
+      // Root /app → full-screen server list; still render children so modals mount
+      return (
+        <div className="h-screen w-screen overflow-hidden bg-sidebar">
+          <MobileServerList />
+          <div className="hidden">{children}</div>
+        </div>
+      )
+    }
+    // /app/:serverId or deeper → children fill the screen (ChannelSidebar or ChannelPage)
+    return (
+      <div
+        className="flex flex-col h-screen w-screen overflow-hidden bg-background"
+        style={backgroundDataUrl ? { backgroundImage: `url(${backgroundDataUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : undefined}
+      >
+        {children}
+      </div>
+    )
+  }
+
+  // Desktop layout — unchanged
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background">
       <ServerSidebar />

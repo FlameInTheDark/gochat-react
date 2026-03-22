@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Users, MessageSquare, X, XCircle } from 'lucide-react'
+import { Users, MessageSquare, X, XCircle, ChevronLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -22,12 +22,14 @@ import { usePresenceStore } from '@/stores/presenceStore'
 import { addPresenceSubscription } from '@/services/wsService'
 import UserArea from './UserArea'
 import { useTranslation } from 'react-i18next'
+import { useClientMode } from '@/hooks/useClientMode'
 
 export default function DmSidebar() {
   const navigate = useNavigate()
   const { userId: activeChannelId } = useParams<{ userId?: string }>()
   const queryClient = useQueryClient()
   const { t } = useTranslation()
+  const isMobile = useClientMode() === 'mobile'
 
   const { data: dmChannels = [] } = useQuery({
     queryKey: ['dm-channels'],
@@ -62,7 +64,17 @@ export default function DmSidebar() {
   }
 
   return (
-    <div className="flex flex-col w-60 bg-sidebar border-r border-sidebar-border shrink-0">
+    <div className={cn('flex flex-col bg-sidebar border-r border-sidebar-border', isMobile ? 'w-full flex-1 min-h-0' : 'w-60 shrink-0')}>
+      {/* Mobile: back to server list */}
+      {isMobile && (
+        <button
+          onClick={() => navigate('/app')}
+          className="flex items-center gap-2 px-3 h-10 text-sm text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 border-b border-sidebar-border"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          All Servers
+        </button>
+      )}
       {/* Header */}
       <div className="h-12 flex items-center px-3 font-semibold border-b border-sidebar-border shrink-0">
         <span className="text-sm">{t('dm.title')}</span>

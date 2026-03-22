@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Users } from 'lucide-react'
+import { Users, ChevronLeft, Search, X } from 'lucide-react'
 import { activateChannel, deactivateChannel } from '@/services/wsService'
 import ChatAttachmentDropZone from '@/components/chat/ChatAttachmentDropZone'
 import MessageList from '@/components/chat/MessageList'
@@ -16,6 +16,7 @@ import { ChannelType } from '@/types'
 import type { DtoMember, DtoMessage } from '@/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { useClientMode } from '@/hooks/useClientMode'
 
 interface DMPageLocationState {
   jumpToMessageId?: string
@@ -122,8 +123,10 @@ export default function DMPage() {
   const [searchPage, setSearchPage] = useState(0)
   const [isSearching, setIsSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
   const lastSearchParamsRef = useRef<{ chips: AppliedFilter[]; text: string } | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
+  const isMobile = useClientMode() === 'mobile'
   const messageInputRef = useRef<MessageInputHandle | null>(null)
 
   const clearSearch = useCallback(() => {
@@ -213,6 +216,15 @@ export default function DMPage() {
     <div className="flex flex-col flex-1 min-h-0">
       {/* DM Header */}
       <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
+        {isMobile && (
+          <button
+            onClick={() => navigate('/app/@me')}
+            className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 -ml-1"
+            title="Back to DMs"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+        )}
         {isGroupDm ? (
           <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center shrink-0">
             <Users className="w-3.5 h-3.5 text-muted-foreground" />
@@ -225,21 +237,63 @@ export default function DMPage() {
         )}
         <span className="font-semibold truncate">{displayName}</span>
 
-        <div className="ml-auto flex items-center gap-2">
+        {isMobile && (
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={() => {
+                const opening = !mobileSearchOpen
+                setMobileSearchOpen(opening)
+                if (opening) {
+                  setTimeout(() => searchBarRef.current?.focus(), 50)
+                } else {
+                  clearSearch()
+                }
+              }}
+              title="Search"
+              className={cn(
+                'w-9 h-9 flex items-center justify-center rounded transition-colors',
+                mobileSearchOpen || hasSearched
+                  ? 'text-foreground bg-accent'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              )}
+            >
+              <Search className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {!isMobile && (
+          <div className="ml-auto flex items-center gap-2">
+            <SearchBar
+              ref={searchBarRef}
+              className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
+              members={dmMembers}
+              allowedFilters={['from', 'has']}
+              onSearch={(p) => void doSearch(p, 0)}
+              onClear={clearSearch}
+              hasResults={hasSearched}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Mobile search bar row */}
+      {isMobile && mobileSearchOpen && (
+        <div className="border-b border-sidebar-border bg-background px-3 py-2 shrink-0">
           <SearchBar
             ref={searchBarRef}
-            className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
+            className="w-full h-8 rounded-md border border-input bg-muted/30 px-2"
             members={dmMembers}
             allowedFilters={['from', 'has']}
             onSearch={(p) => void doSearch(p, 0)}
-            onClear={clearSearch}
+            onClear={() => { clearSearch(); setMobileSearchOpen(false) }}
             hasResults={hasSearched}
           />
         </div>
-      </div>
+      )}
 
       {/* Content row */}
-      <div className="flex flex-1 min-h-0">
+      <div className="relative flex flex-1 min-h-0">
         <ChatAttachmentDropZone
           className="flex-1 min-w-0"
           onFileDrop={(files) => {
@@ -263,9 +317,23 @@ export default function DMPage() {
           <MessageInput ref={messageInputRef} channelId={channelId} channelName={displayName} />
         </ChatAttachmentDropZone>
 
-        {/* Search results panel */}
+        {/* Search results panel — full-screen overlay on mobile, side panel on desktop */}
         {hasSearched && (
-          <div className={cn('flex min-h-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar shrink-0 w-80')}>
+          <div className={cn(
+            'flex min-h-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar shrink-0',
+            isMobile ? 'absolute inset-0 z-40' : 'w-80',
+          )}>
+            {isMobile && (
+              <div className="h-11 flex items-center px-4 border-b border-sidebar-border shrink-0">
+                <span className="text-sm font-semibold flex-1">Search Results</span>
+                <button
+                  onClick={() => { clearSearch(); setMobileSearchOpen(false) }}
+                  className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
             <SearchPanel
               serverId=""
               results={searchResults}
