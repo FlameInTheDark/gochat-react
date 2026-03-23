@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize, Star } from 'lucide-react'
+import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize, Star, ZoomIn, ZoomOut } from 'lucide-react'
 import { getFileExtension, isSvgFileLike } from '@/lib/fileTypes'
 import { cn } from '@/lib/utils'
 import PendingAttachmentBar from '@/components/chat/PendingAttachmentBar'
@@ -142,8 +142,19 @@ function Lightbox({
   onClose: () => void
 }) {
   const [index, setIndex] = useState(startIndex)
+  const [zoom, setZoom] = useState(1)
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
+  const dragStart = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null)
+  const hasDragged = useRef(false)
   const item = items[index]!
   const { meta } = item
+
+  // Reset zoom/pan when navigating to a different image
+  useEffect(() => {
+    setZoom(1)
+    setOffset({ x: 0, y: 0 })
+  }, [index])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -155,13 +166,75 @@ function Lightbox({
     return () => window.removeEventListener('keydown', onKey)
   }, [items.length, onClose])
 
+  function resetZoom() {
+    setZoom(1)
+    setOffset({ x: 0, y: 0 })
+  }
+
+  function handleImageClick(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (hasDragged.current) return
+    if (zoom > 1) {
+      resetZoom()
+    } else {
+      setZoom(2)
+    }
+  }
+
+  function handleWheel(e: React.WheelEvent) {
+    e.stopPropagation()
+    e.preventDefault()
+    setZoom((z) => {
+      const next = z - e.deltaY * 0.005
+      const clamped = Math.min(4, Math.max(1, next))
+      if (clamped === 1) setOffset({ x: 0, y: 0 })
+      return clamped
+    })
+  }
+
+  function handleMouseDown(e: React.MouseEvent) {
+    if (zoom <= 1) return
+    e.preventDefault()
+    hasDragged.current = false
+    setDragging(true)
+    dragStart.current = { mx: e.clientX, my: e.clientY, ox: offset.x, oy: offset.y }
+  }
+
+  function handleMouseMove(e: React.MouseEvent) {
+    if (!dragging || !dragStart.current) return
+    const dx = e.clientX - dragStart.current.mx
+    const dy = e.clientY - dragStart.current.my
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) hasDragged.current = true
+    setOffset({ x: dragStart.current.ox + dx, y: dragStart.current.oy + dy })
+  }
+
+  function handleMouseUp() {
+    setDragging(false)
+    dragStart.current = null
+  }
+
+  const imageCursor = zoom > 1
+    ? (dragging ? 'cursor-grabbing' : 'cursor-grab')
+    : 'cursor-zoom-in'
+
   return (
     <div
-      className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center cursor-zoom-out"
+      className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center"
       onClick={onClose}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
     >
-      {/* Toolbar: download + close */}
+      {/* Toolbar: zoom reset + download + close */}
       <div className="absolute top-4 right-4 flex items-center gap-2">
+        {zoom > 1 && (
+          <button
+            className="flex items-center justify-center w-9 h-9 rounded-full bg-black/50 text-white/70 hover:text-white hover:bg-black/70 transition-colors"
+            onClick={(e) => { e.stopPropagation(); resetZoom() }}
+            aria-label="Reset zoom"
+          >
+            <ZoomOut className="w-4 h-4" />
+          </button>
+        )}
         {meta.url && (
           <a
             href={meta.url}
@@ -185,7 +258,7 @@ function Lightbox({
       {/* Prev arrow */}
       {items.length > 1 && index > 0 && (
         <button
-          className="absolute left-4 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 text-white/70 hover:text-white hover:bg-black/70 transition-colors"
+          className="absolute left-4 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 text-white/70 hover:text-white hover:bg-black/70 transition-colors z-10"
           onClick={(e) => {
             e.stopPropagation()
             setIndex((i) => i - 1)
@@ -196,20 +269,27 @@ function Lightbox({
         </button>
       )}
 
-      {/* Full-size image — key forces remount so browser re-fetches cleanly */}
+      {/* Full-size image */}
       <img
         key={index}
         src={meta.url ?? meta.previewUrl ?? ''}
         alt={meta.name}
-        className="max-w-[90vw] max-h-[85vh] object-contain rounded shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
+        className={cn('max-w-[90vw] max-h-[85vh] object-contain rounded shadow-2xl select-none', imageCursor)}
+        style={{
+          transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)`,
+          transition: dragging ? 'none' : 'transform 0.15s ease',
+        }}
+        onClick={handleImageClick}
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseLeave={handleMouseUp}
         draggable={false}
       />
 
       {/* Next arrow */}
       {items.length > 1 && index < items.length - 1 && (
         <button
-          className="absolute right-4 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 text-white/70 hover:text-white hover:bg-black/70 transition-colors"
+          className="absolute right-4 flex items-center justify-center w-10 h-10 rounded-full bg-black/50 text-white/70 hover:text-white hover:bg-black/70 transition-colors z-10"
           onClick={(e) => {
             e.stopPropagation()
             setIndex((i) => i + 1)
@@ -218,6 +298,14 @@ function Lightbox({
         >
           <ChevronRight className="w-5 h-5" />
         </button>
+      )}
+
+      {/* Zoom level indicator */}
+      {zoom > 1 && (
+        <div className="absolute top-4 left-4 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 text-white/70 text-xs pointer-events-none select-none">
+          <ZoomIn className="w-3 h-3" />
+          {Math.round(zoom * 100)}%
+        </div>
       )}
 
       {/* Caption */}

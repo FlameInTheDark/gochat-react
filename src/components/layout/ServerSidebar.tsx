@@ -10,6 +10,8 @@ import {
   FolderMinus,
   FolderPlus,
   Folder,
+  Plus,
+  ArrowRight,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -1372,9 +1374,9 @@ export default function ServerSidebar() {
             <TooltipTrigger asChild>
               <button
                 onClick={openCreateServer}
-                className="w-12 h-12 squircle transition-all bg-muted flex items-center justify-center text-2xl text-muted-foreground hover:text-foreground hover:bg-primary shrink-0"
+                className="w-12 h-12 squircle transition-all bg-muted flex items-center justify-center text-muted-foreground hover:text-white hover:bg-indigo-500 shrink-0"
               >
-                +
+                <Plus className="w-5 h-5" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Create a Server</TooltipContent>
@@ -1384,9 +1386,9 @@ export default function ServerSidebar() {
             <TooltipTrigger asChild>
               <button
                 onClick={openJoinServer}
-                className="w-12 h-12 squircle transition-all bg-muted flex items-center justify-center text-xl text-muted-foreground hover:text-foreground hover:bg-green-600 shrink-0"
+                className="w-12 h-12 squircle transition-all bg-muted flex items-center justify-center text-muted-foreground hover:text-white hover:bg-green-600 shrink-0"
               >
-                ⇢
+                <ArrowRight className="w-5 h-5" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Join a Server</TooltipContent>

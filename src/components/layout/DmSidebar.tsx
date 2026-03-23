@@ -149,6 +149,11 @@ export default function DmSidebar() {
                   ch.type === ChannelType.ChannelTypeDM ||
                   ch.type === ChannelType.ChannelTypeGroupDM,
               )
+              .sort((a, b) => {
+                const aId = a.last_message_id ? BigInt(String(a.last_message_id)) : 0n
+                const bId = b.last_message_id ? BigInt(String(b.last_message_id)) : 0n
+                return bId > aId ? 1 : bId < aId ? -1 : 0
+              })
               .map((ch) => (
                 <DmItem
                   key={String(ch.id)}
