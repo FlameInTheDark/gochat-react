@@ -69,6 +69,8 @@ import { cn } from '@/lib/utils'
 import type { DtoGuild } from '@/types'
 import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import type { DtoRole, DtoMember } from '@/client'
+import { useNotificationSettings } from '@/hooks/useNotificationSettings'
+import { NotificationsSubmenu } from './NotificationsSubmenu'
 
 // ── Detect if a dragged guild is overlapping an icon enough to "merge" ────────
 // Returns true when the dragged item's centre is within ±20% of the target's
@@ -427,6 +429,7 @@ function SortableGuildIcon({
   isOwner,
 }: SortableGuildIconProps) {
   const { t } = useTranslation()
+  const { getGuildNotifications, setGuildNotifications } = useNotificationSettings()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: itemId,
   })
@@ -495,6 +498,11 @@ function SortableGuildIcon({
             <Copy className="w-4 h-4" />
             {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
+          <ContextMenuSeparator />
+          <NotificationsSubmenu
+            current={getGuildNotifications(String(guild.id))}
+            onUpdate={(patch) => void setGuildNotifications(String(guild.id), patch)}
+          />
           {canManageServer && (
             <>
               <ContextMenuSeparator />
@@ -566,6 +574,7 @@ function SortableGuildInPanel({
   isOwner,
 }: SortableGuildInPanelProps) {
   const { t } = useTranslation()
+  const { getGuildNotifications, setGuildNotifications } = useNotificationSettings()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: itemId,
   })
@@ -634,6 +643,11 @@ function SortableGuildInPanel({
             <Copy className="w-4 h-4" />
             {t('serverSidebar.copyServerId')}
           </ContextMenuItem>
+          <ContextMenuSeparator />
+          <NotificationsSubmenu
+            current={getGuildNotifications(String(guild.id))}
+            onUpdate={(patch) => void setGuildNotifications(String(guild.id), patch)}
+          />
           {canManageServer && (
             <>
               <ContextMenuSeparator />

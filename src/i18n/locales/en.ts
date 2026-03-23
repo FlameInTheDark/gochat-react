@@ -558,6 +558,17 @@ const en: Translation = {
         updateReady: 'Update ready — restart to install',
         restartAndInstall: 'Restart & Install',
     },
+    notifications: {
+        title: 'Notification Settings',
+        allMessages: 'All Messages',
+        onlyMentions: 'Only Mentions',
+        nothing: 'Nothing',
+        suppressEveryone: 'Suppress @everyone',
+        suppressHere: 'Suppress @here',
+        suppressRole: 'Suppress @role mentions',
+        suppressUser: 'Suppress @user mentions',
+        saveFailed: 'Failed to save notification settings',
+    },
 }
 
 export default en

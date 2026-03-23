@@ -561,6 +561,17 @@ const ru: Translation = {
         updateReady: 'Обновление готово — перезапустите для установки',
         restartAndInstall: 'Перезапустить и установить',
     },
+    notifications: {
+        title: 'Настройки уведомлений',
+        allMessages: 'Все сообщения',
+        onlyMentions: 'Только упоминания',
+        nothing: 'Ничего',
+        suppressEveryone: 'Скрыть @everyone',
+        suppressHere: 'Скрыть @here',
+        suppressRole: 'Скрыть упоминания @role',
+        suppressUser: 'Скрыть упоминания @user',
+        saveFailed: 'Не удалось сохранить настройки уведомлений',
+    },
 }
 
 export default ru

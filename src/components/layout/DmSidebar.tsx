@@ -13,7 +13,10 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
+  ContextMenuSeparator,
 } from '@/components/ui/context-menu'
+import { useNotificationSettings } from '@/hooks/useNotificationSettings'
+import { NotificationsSubmenu } from './NotificationsSubmenu'
 import StatusDot from '@/components/ui/StatusDot'
 import { userApi } from '@/api/client'
 import { ChannelType } from '@/types'
@@ -446,11 +449,24 @@ function DmItem({
   onClose: (e: React.MouseEvent) => void
 }) {
   const { t } = useTranslation()
+  const notifHook = useNotificationSettings()
   const isGroup = channel.type === ChannelType.ChannelTypeGroupDM
 
   const participantId = !isGroup && channel.participant_id !== undefined
     ? String(channel.participant_id)
     : null
+
+  const currentNotif = participantId
+    ? notifHook.getUserNotifications(participantId)
+    : notifHook.getChannelNotifications(String(channel.id))
+
+  function handleUpdateNotif(patch: Parameters<typeof notifHook.setUserNotifications>[1]) {
+    if (participantId) {
+      void notifHook.setUserNotifications(participantId, patch)
+    } else {
+      void notifHook.setChannelNotifications(String(channel.id), patch)
+    }
+  }
 
   const { data: participantUser } = useQuery({
     queryKey: ['user', participantId],
@@ -526,6 +542,11 @@ function DmItem({
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
+        <NotificationsSubmenu
+          current={currentNotif}
+          onUpdate={handleUpdateNotif}
+        />
+        <ContextMenuSeparator />
         <ContextMenuItem
           onClick={(e) => onClose(e as unknown as React.MouseEvent)}
           className="gap-2"

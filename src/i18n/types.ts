@@ -525,4 +525,15 @@ export interface Translation {
         updateReady: string
         restartAndInstall: string
     }
+    notifications: {
+        title: string
+        allMessages: string
+        onlyMentions: string
+        nothing: string
+        suppressEveryone: string
+        suppressHere: string
+        suppressRole: string
+        suppressUser: string
+        saveFailed: string
+    }
 }

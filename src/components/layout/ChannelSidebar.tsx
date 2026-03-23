@@ -12,6 +12,9 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
 } from '@/components/ui/context-menu'
 import {
   DropdownMenu,
@@ -48,6 +51,8 @@ import UserArea from './UserArea'
 import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import type { DtoRole, DtoMember } from '@/client'
 import { useClientMode } from '@/hooks/useClientMode'
+import { useNotificationSettings } from '@/hooks/useNotificationSettings'
+import { NotificationsSubmenu } from './NotificationsSubmenu'
 
 interface Props {
   channels: DtoChannel[]
@@ -66,6 +71,8 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     ?? 'Server'
 
   const { t } = useTranslation()
+
+  const { getGuildNotifications, setGuildNotifications } = useNotificationSettings()
 
   const openCreateChannel = useUiStore((s) => s.openCreateChannel)
   const openCreateCategory = useUiStore((s) => s.openCreateCategory)
@@ -514,6 +521,11 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
               </>
             )}
             {(canManageServer || canManageChannels || canCreateInvites) && <ContextMenuSeparator />}
+            <NotificationsSubmenu
+              current={getGuildNotifications(serverId)}
+              onUpdate={(patch) => void setGuildNotifications(serverId, patch)}
+            />
+            <ContextMenuSeparator />
             <ContextMenuItem onClick={() => { void navigator.clipboard.writeText(serverId) }} className="gap-2">
               <Copy className="w-4 h-4" />
               {t('channelSidebar.copyServerId')}
@@ -843,6 +855,7 @@ function ChannelItem({
   members,
 }: ChannelItemProps) {
   const { t } = useTranslation()
+  const { getChannelNotifications, setChannelNotifications } = useNotificationSettings()
   const isVoice = channel.type === ChannelType.ChannelTypeGuildVoice
   const Icon = isVoice ? Volume2 : Hash
   const hasVoiceUsers = isVoice && voiceUsers && voiceUsers.length > 0
@@ -954,6 +967,11 @@ function ChannelItem({
               <ContextMenuSeparator />
             </>
           )}
+          <NotificationsSubmenu
+            current={getChannelNotifications(String(channel.id))}
+            onUpdate={(patch) => void setChannelNotifications(String(channel.id), patch)}
+          />
+          <ContextMenuSeparator />
           <ContextMenuItem
             onClick={() => { void navigator.clipboard.writeText(String(channel.id)) }}
             className="gap-2"
