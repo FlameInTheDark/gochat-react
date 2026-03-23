@@ -583,7 +583,7 @@ export default function EmojiPicker({ onSelect, customEmojiGroups, isMobile = fa
       {/* Body: left category sidebar + right emoji grid */}
       <div className="flex" style={{ height: 320 }}>
         {/* Left category sidebar */}
-        <div className="flex flex-col gap-0.5 overflow-y-auto border-r border-border p-1.5 shrink-0">
+        <div className="flex flex-col gap-0.5 overflow-y-auto scrollbar-none border-r border-border p-1.5 shrink-0">
           {categoryNavButtons}
         </div>
 
