@@ -1,4 +1,6 @@
 import { cn } from '@/lib/utils'
+import StatusDot from '@/components/ui/StatusDot'
+import type { UserStatus } from '@/stores/presenceStore'
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -52,6 +54,8 @@ export interface ProfileCardBodyProps {
   bannerColor: string | null
   /** Fallback avatar / banner tint colour (e.g. from userColor()). */
   accent: string
+  /** Online presence status — shows a dot badge on the avatar when set */
+  status?: UserStatus
   /** Additional sections rendered inside the padded content area (member since, roles, actions…) */
   children?: React.ReactNode
 }
@@ -71,6 +75,7 @@ export default function ProfileCardBody({
   panelColor,
   bannerColor,
   accent,
+  status,
   children,
 }: ProfileCardBodyProps) {
   const bannerBg = bannerColor ?? (accent + '44')
@@ -83,20 +88,29 @@ export default function ProfileCardBody({
 
       {/* Avatar — overlaps the banner */}
       <div className="-mt-8 px-4 pb-0">
-        {avatarUrl ? (
-          <img
-            src={avatarUrl}
-            alt={displayName}
-            className="w-16 h-16 rounded-full object-cover"
-          />
-        ) : (
-          <div
-            className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold text-white select-none"
-            style={{ backgroundColor: accent }}
-          >
-            {displayName.charAt(0).toUpperCase()}
-          </div>
-        )}
+        <div className="relative inline-block">
+          {avatarUrl ? (
+            <img
+              src={avatarUrl}
+              alt={displayName}
+              className="w-16 h-16 rounded-full object-cover"
+            />
+          ) : (
+            <div
+              className="w-16 h-16 rounded-full flex items-center justify-center text-2xl font-bold text-white select-none"
+              style={{ backgroundColor: accent }}
+            >
+              {displayName.charAt(0).toUpperCase()}
+            </div>
+          )}
+          {status && (
+            <StatusDot
+              status={status}
+              className="absolute bottom-0.5 right-0.5 w-4 h-4 ring-popover"
+              style={panelColor ? { '--tw-ring-color': panelColor } as React.CSSProperties : undefined}
+            />
+          )}
+        </div>
       </div>
 
       {/* Content */}
@@ -119,7 +133,7 @@ export default function ProfileCardBody({
               className={cn('text-xs', !mutedColor && 'text-muted-foreground')}
               style={{ color: mutedColor }}
             >
-              #{discriminator}
+              @{discriminator}
             </p>
           )}
         </div>
@@ -127,9 +141,6 @@ export default function ProfileCardBody({
         {/* Bio */}
         {bio && (
           <div>
-            {dividerColor
-              ? <div className="h-px mb-2" style={{ backgroundColor: dividerColor }} />
-              : <div className="h-px mb-2 bg-border" />}
             <p
               className={cn('text-xs whitespace-pre-wrap break-words', !textColor && 'text-foreground')}
               style={{ color: textColor }}

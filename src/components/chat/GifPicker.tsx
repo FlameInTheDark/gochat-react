@@ -116,9 +116,10 @@ function GifThumbnail({ url, mediaUrl, isVideo, onSelect, onRemove }: GifThumbna
 
 interface GifPickerProps {
   onSelect: (url: string) => void
+  isMobile?: boolean
 }
 
-export default function GifPicker({ onSelect }: GifPickerProps) {
+export default function GifPicker({ onSelect, isMobile }: GifPickerProps) {
   const favoriteGifs = useGifStore((s) => s.favoriteGifs)
   const removeFavorite = useGifStore((s) => s.removeFavorite)
   const contentHosts = useGifStore((s) => s.contentHosts)
@@ -131,7 +132,7 @@ export default function GifPicker({ onSelect }: GifPickerProps) {
   })
 
   return (
-    <div className="w-[320px] rounded-xl border border-border bg-popover text-popover-foreground shadow-xl">
+    <div className={isMobile ? 'w-full rounded-xl border border-border bg-popover text-popover-foreground shadow-xl' : 'w-[320px] rounded-xl border border-border bg-popover text-popover-foreground shadow-xl'}>
       <div className="border-b border-border px-3 py-2">
         <span className="text-sm font-semibold text-foreground">Favorite GIFs</span>
       </div>

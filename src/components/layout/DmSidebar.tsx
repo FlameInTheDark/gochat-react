@@ -8,7 +8,6 @@ import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -483,57 +482,49 @@ function DmItem({
 
   return (
     <ContextMenu>
-      <Tooltip>
-        <ContextMenuTrigger asChild>
-          <TooltipTrigger asChild>
-            <button
-              onClick={onNavigate}
-              className={cn(
-                'w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors group text-left',
-                isActive
-                  ? 'bg-accent text-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-              )}
-            >
-              <div className="relative shrink-0">
-              <Avatar className="w-8 h-8">
-                  {!isGroup && participantUser?.avatar?.url ? (
-                    <AvatarImage src={participantUser.avatar.url} alt={displayName} className="object-cover" />
-                  ) : null}
-                  <AvatarFallback className="text-xs">
-                    {isGroup ? <MessageSquare className="w-4 h-4" /> : initials}
-                  </AvatarFallback>
-                </Avatar>
-                {status !== null && (
-                  <StatusDot status={status} className="absolute -bottom-0.5 -right-0.5 w-3 h-3" />
-                )}
-              </div>
+      <ContextMenuTrigger asChild>
+        <button
+          onClick={onNavigate}
+          className={cn(
+            'w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors group text-left',
+            isActive
+              ? 'bg-accent text-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+          )}
+        >
+          <div className="relative shrink-0">
+            <Avatar className="w-8 h-8">
+              {!isGroup && participantUser?.avatar?.url ? (
+                <AvatarImage src={participantUser.avatar.url} alt={displayName} className="object-cover" />
+              ) : null}
+              <AvatarFallback className="text-xs">
+                {isGroup ? <MessageSquare className="w-4 h-4" /> : initials}
+              </AvatarFallback>
+            </Avatar>
+            {status !== null && (
+              <StatusDot status={status} className="absolute -bottom-0.5 -right-0.5 w-3 h-3" />
+            )}
+          </div>
 
-              <div className="flex-1 min-w-0">
-                <span className="block truncate">{displayName}</span>
-                {customStatus && (
-                  <span className="block text-xs text-muted-foreground italic truncate">
-                    {customStatus}
-                  </span>
-                )}
-              </div>
-              <span
-                role="button"
-                tabIndex={-1}
-                onClick={onClose}
-                onKeyDown={(e) => e.key === 'Enter' && onClose(e as unknown as React.MouseEvent)}
-                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-accent/80 hover:text-foreground transition-opacity shrink-0"
-              >
-                <X className="w-3 h-3" />
+          <div className="flex-1 min-w-0">
+            <span className="block truncate">{displayName}</span>
+            {customStatus && (
+              <span className="block text-xs text-muted-foreground italic truncate">
+                {customStatus}
               </span>
-            </button>
-          </TooltipTrigger>
-        </ContextMenuTrigger>
-        <TooltipContent side="right">
-          <p>{displayName}</p>
-          {customStatus && <p className="text-xs italic">{customStatus}</p>}
-        </TooltipContent>
-      </Tooltip>
+            )}
+          </div>
+          <span
+            role="button"
+            tabIndex={-1}
+            onClick={onClose}
+            onKeyDown={(e) => e.key === 'Enter' && onClose(e as unknown as React.MouseEvent)}
+            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-accent/80 hover:text-foreground transition-opacity shrink-0"
+          >
+            <X className="w-3 h-3" />
+          </span>
+        </button>
+      </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem
           onClick={(e) => onClose(e as unknown as React.MouseEvent)}
@@ -546,6 +537,7 @@ function DmItem({
     </ContextMenu>
   )
 }
+
 
 export function useDmChannels() {
   return useQuery({

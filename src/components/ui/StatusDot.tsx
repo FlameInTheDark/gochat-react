@@ -5,13 +5,14 @@ interface StatusDotProps {
   status: UserStatus
   /** Extra classes to position the dot (e.g. "absolute bottom-0 right-0") */
   className?: string
+  style?: React.CSSProperties
 }
 
 /**
  * A small coloured circle indicating a user's online status.
  * Renders nothing when status is "offline" so it can be unconditionally placed.
  */
-export default function StatusDot({ status, className }: StatusDotProps) {
+export default function StatusDot({ status, className, style }: StatusDotProps) {
   if (status === 'offline') return null
   const { color } = STATUS_META[status]
   return (
@@ -21,6 +22,7 @@ export default function StatusDot({ status, className }: StatusDotProps) {
         color,
         className,
       )}
+      style={style}
       aria-label={STATUS_META[status].label}
     />
   )

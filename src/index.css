@@ -29,6 +29,11 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+html,
+body {
+  overscroll-behavior: none;
+}
+
 @keyframes msg-highlight-fade {
   0% {
     background-color: oklch(0.78 0.12 85 / 0);
