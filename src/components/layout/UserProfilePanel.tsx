@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { motion, AnimatePresence, useDragControls } from 'motion/react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
@@ -7,12 +9,14 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
+import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { guildApi, rolesApi, userApi } from '@/api/client'
 import type { DtoMember, DtoGuild } from '@/types'
 import type { DtoRole } from '@/client'
 import { cn } from '@/lib/utils'
 import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
-import ProfileCardBody, { userColor, colorToHex, panelTextColors } from './ProfileCardBody'
+import ProfileCardBody, { userColor, colorToHex, panelTextColors, isDark } from './ProfileCardBody'
+import { useClientMode } from '@/hooks/useClientMode'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -26,19 +30,28 @@ export default function UserProfilePanel() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const panelRef = useRef<HTMLDivElement>(null)
+
+  // Keep last non-null profile so content stays correct during exit animation
+  const lastProfileRef = useRef(profile)
+  if (profile) lastProfileRef.current = profile
+  const activeProfile = lastProfileRef.current
+
   const { t } = useTranslation()
 
   const [editingRoles, setEditingRoles] = useState(false)
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null)
+  const [sheetAtTop, setSheetAtTop] = useState(true)
+  const sheetScrollRef = useRef<HTMLDivElement>(null)
+  const dragControls = useDragControls()
 
   // Derive stable primitives BEFORE any early return so hooks order is invariant
-  const userId = profile?.userId ?? ''
-  const guildId = profile?.guildId ?? null
+  const userId = activeProfile?.userId ?? ''
+  const guildId = activeProfile?.guildId ?? null
 
   // Reset role editor whenever the panel target changes
-  useEffect(() => { setEditingRoles(false) }, [profile?.userId, profile?.guildId])
+  useEffect(() => { setEditingRoles(false) }, [activeProfile?.userId, activeProfile?.guildId])
 
-  // Close on outside click (delay to avoid closing on the same click that opened)
+  // Close on outside click (desktop only — mobile uses backdrop)
   useEffect(() => {
     if (!profile) return
     let alive = true
@@ -68,8 +81,10 @@ export default function UserProfilePanel() {
 
   // ── Hooks — MUST be before any early return (Rules of Hooks) ───────────────
 
-  // Get current user for permission check
   const currentUser = useAuthStore((s) => s.user)
+  const userStatus = usePresenceStore(
+    (s) => (userId ? ((s.statuses[userId] ?? 'offline') as UserStatus) : 'offline'),
+  )
 
   const { data: allRoles = [] } = useQuery<DtoRole[]>({
     queryKey: ['roles', guildId],
@@ -87,7 +102,6 @@ export default function UserProfilePanel() {
     staleTime: 15_000,
   })
 
-  // Fetch the single member's fresh profile (bio, colors, roles) when the panel opens
   useQuery<DtoMember>({
     queryKey: ['member', guildId, userId],
     queryFn: async () => {
@@ -95,7 +109,6 @@ export default function UserProfilePanel() {
         guildId: guildId!,
         userId: userId as unknown as number,
       })
-      // Upsert into the members list cache so the rest of the component reads fresh data
       queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) => {
         const idx = old.findIndex((m) => String(m.user?.id) === userId)
         if (idx >= 0) {
@@ -111,31 +124,19 @@ export default function UserProfilePanel() {
     staleTime: 0,
   })
 
-  // Get friends list to check if user is already a friend
   const { data: friends = [] } = useQuery({
     queryKey: ['friends'],
     queryFn: () => userApi.userMeFriendsGet().then((r) => r.data ?? []),
     staleTime: 30_000,
   })
 
-  // ── Early return — after ALL hooks ────────────────────────────────────────
-
-  if (!profile) return null
-
-  const { x, y, fallbackName } = profile
-
-  // ── Positioning ───────────────────────────────────────────────────────────
-
-  const panelX = x > window.innerWidth / 2 ? x - PANEL_W - 12 : x + 12
-  const panelY = Math.max(8, Math.min(y, window.innerHeight - 540))
+  const isMobile = useClientMode() === 'mobile'
 
   // ── Data from query cache ─────────────────────────────────────────────────
 
   const members = queryClient.getQueryData<DtoMember[]>(['members', guildId]) ?? []
   const member = members.find((m) => String(m.user?.id) === userId)
 
-  // ── Permission check for role editing ─────────────────────────────────────
-  // Resolve guild data for owner check
   const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === guildId)
   const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
 
@@ -146,7 +147,7 @@ export default function UserProfilePanel() {
   const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
   const canManageRoles = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_ROLES)
 
-  const displayName = member?.username ?? member?.user?.name ?? fallbackName ?? t('common.unknown')
+  const displayName = member?.username ?? member?.user?.name ?? activeProfile?.fallbackName ?? t('common.unknown')
   const globalName = member?.user?.name
   const discriminator = member?.user?.discriminator
   const joinDate = member?.join_at
@@ -155,7 +156,6 @@ export default function UserProfilePanel() {
     })
     : null
 
-  // Member's current role IDs (from member cache; typed as number[] but string at runtime)
   const memberRoleIds = new Set((member?.roles ?? []).map((id) => String(id)))
   const assignedRoles = allRoles.filter((r) => memberRoleIds.has(String(r.id)))
 
@@ -202,7 +202,6 @@ export default function UserProfilePanel() {
       } else {
         await rolesApi.guildGuildIdMemberUserIdRolesRoleIdPut({ guildId, userId, roleId })
       }
-      // Optimistically update member cache
       queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
         old.map((m) => {
           if (String(m.user?.id) !== userId) return m
@@ -225,138 +224,383 @@ export default function UserProfilePanel() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   const accent = userColor(userId)
-  // 0 means "not set" (Go zero value) — treat as null so fallback accent/popover colors are used
-  const rawPanelColor = member?.user?.panel_color ? colorToHex(member.user.panel_color) : null
-  const rawBannerColor = member?.user?.banner_color ? colorToHex(member.user.banner_color) : null
+  const rawPanelColor = activeProfile && member?.user?.panel_color ? colorToHex(member.user.panel_color) : null
+  const rawBannerColor = activeProfile && member?.user?.banner_color ? colorToHex(member.user.banner_color) : null
   const { textColor, mutedColor } = panelTextColors(rawPanelColor)
 
-  return (
-    <div
-      ref={panelRef}
-      className={cn(
-        'fixed z-[60] rounded-lg border border-border shadow-2xl overflow-hidden flex flex-col',
-        !rawPanelColor && 'bg-popover',
-      )}
-      style={{ left: panelX, top: panelY, width: PANEL_W, ...(rawPanelColor ? { backgroundColor: rawPanelColor } : {}) }}
-    >
+  // ── Shared inner content ───────────────────────────────────────────────────
+
+  function renderContent(mobile = false) {
+    if (!activeProfile) return null
+
+    // Semi-transparent block background for mobile grouped sections
+    const blockBg = rawPanelColor
+      ? (isDark(rawPanelColor) ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)')
+      : 'rgba(255,255,255,0.07)'
+
+    const roleChips = (
+      <div className="flex flex-wrap gap-1.5">
+        {assignedRoles.map((role) => {
+          const hex = colorToHex(role.color ?? 0)
+          return (
+            <span
+              key={String(role.id)}
+              className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded font-medium leading-none"
+              style={{ backgroundColor: hex + '22', color: hex, border: `1px solid ${hex}55` }}
+            >
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
+              {role.name}
+            </span>
+          )
+        })}
+        {assignedRoles.length === 0 && (
+          <p className="text-xs italic" style={{ color: mutedColor ?? undefined }}
+            {...(!mutedColor ? { className: 'text-xs text-muted-foreground italic' } : {})}
+          >{t('userProfile.noRoles')}</p>
+        )}
+      </div>
+    )
+
+    return (
       <ProfileCardBody
         userId={userId}
         displayName={displayName}
         globalName={globalName}
         discriminator={discriminator}
         avatarUrl={member?.user?.avatar?.url}
-        bio={member?.user?.bio}
+        bio={mobile ? undefined : member?.user?.bio}
         panelColor={rawPanelColor}
         bannerColor={rawBannerColor}
         accent={accent}
+        status={userStatus}
       >
-        {/* Member since */}
-        {joinDate && (
-          <div>
-            <p
-              className={cn('text-[10px] font-semibold uppercase tracking-wider mb-0.5', !mutedColor && 'text-muted-foreground')}
-              style={{ color: mutedColor }}
-            >
-              {t('userProfile.memberSince')}
-            </p>
-            <p className="text-sm" style={{ color: textColor }}>{joinDate}</p>
-          </div>
-        )}
-
-        {/* Roles */}
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <p
-              className={cn('text-[10px] font-semibold uppercase tracking-wider', !mutedColor && 'text-muted-foreground')}
-              style={{ color: mutedColor }}
-            >
-              {assignedRoles.length > 0 ? t('userProfile.rolesWithCount', { count: assignedRoles.length }) : t('userProfile.roles')}
-            </p>
-            {canManageRoles && guildId && (
-              <button
-                onClick={() => setEditingRoles((v) => !v)}
-                className={cn('text-[10px] transition-colors', !mutedColor && 'text-muted-foreground hover:text-foreground')}
-                style={{ color: mutedColor }}
-              >
-                {editingRoles ? t('common.done') : t('common.edit')}
-              </button>
-            )}
-          </div>
-
-          {!editingRoles ? (
-            <div className="flex flex-wrap gap-1 min-h-[22px]">
-              {assignedRoles.map((role) => {
-                const hex = colorToHex(role.color ?? 0)
-                return (
-                  <span
-                    key={String(role.id)}
-                    className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded font-medium leading-none"
-                    style={{ backgroundColor: hex + '22', color: hex, border: `1px solid ${hex}55` }}
-                  >
-                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
-                    {role.name}
-                  </span>
-                )
-              })}
-              {assignedRoles.length === 0 && (
-                <p className="text-xs text-muted-foreground italic">{t('userProfile.noRoles')}</p>
-              )}
-            </div>
-          ) : (
-            <div className="max-h-52 overflow-y-auto rounded-md border border-border">
-              {allRoles.length === 0 && (
-                <p className="text-xs text-muted-foreground text-center py-3">{t('userProfile.noServerRoles')}</p>
-              )}
-              {allRoles.map((role) => {
-                const rid = String(role.id)
-                const currentlyHas = activeRoleIds.has(rid)
-                const isSaving = savingRoleId === rid
-                const hex = colorToHex(role.color ?? 0)
-                return (
-                  <button
-                    key={rid}
-                    onClick={() => void toggleRole(rid, currentlyHas)}
-                    disabled={isSaving}
-                    className={cn(
-                      'w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors',
-                      isSaving ? 'opacity-50 cursor-wait' : 'hover:bg-accent/60',
-                    )}
-                  >
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: hex }} />
-                    <span className="flex-1 truncate">{role.name}</span>
-                    <span
-                      className={cn(
-                        'w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors',
-                        currentlyHas ? 'bg-primary border-primary' : 'border-border',
-                      )}
+        {mobile ? (
+          // ── Mobile: grouped semi-transparent blocks ────────────────────────
+          <>
+            {/* Block 1: Bio + Member Since */}
+            {(member?.user?.bio || joinDate) && (
+              <div className="rounded-2xl p-3 space-y-2.5" style={{ backgroundColor: blockBg }}>
+                {member?.user?.bio && (
+                  <div>
+                    <p
+                      className={cn('text-[10px] font-semibold uppercase tracking-wider mb-0.5', !mutedColor && 'text-muted-foreground')}
+                      style={{ color: mutedColor }}
                     >
-                      {currentlyHas && (
-                        <svg className="w-3 h-3 text-primary-foreground" viewBox="0 0 12 12" fill="none">
-                          <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      )}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
+                      {t('userProfile.bio')}
+                    </p>
+                    <p
+                      className={cn('text-sm whitespace-pre-wrap break-words', !textColor && 'text-foreground')}
+                      style={{ color: textColor }}
+                    >
+                      {member.user.bio}
+                    </p>
+                  </div>
+                )}
+                {member?.user?.bio && joinDate && (
+                  <div className="h-px" style={{ backgroundColor: rawPanelColor ? (isDark(rawPanelColor) ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)') : 'rgba(255,255,255,0.1)' }} />
+                )}
+                {joinDate && (
+                  <div>
+                    <p
+                      className={cn('text-[10px] font-semibold uppercase tracking-wider mb-0.5', !mutedColor && 'text-muted-foreground')}
+                      style={{ color: mutedColor }}
+                    >
+                      {t('userProfile.memberSince')}
+                    </p>
+                    <p className={cn('text-sm', !textColor && 'text-foreground')} style={{ color: textColor }}>{joinDate}</p>
+                  </div>
+                )}
+              </div>
+            )}
 
-        {/* Actions */}
-        <div className="border-t border-border pt-3 space-y-2">
-          {!isSelf && !isFriend && memberDiscriminator && (
-            <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleSendFriendRequest()}>
-              <UserPlus className="w-4 h-4" />
-              {t('userProfile.addFriend')}
-            </Button>
-          )}
-          <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleMessage()}>
-            <MessageSquare className="w-4 h-4" />
-            {t('userProfile.sendMessage')}
-          </Button>
-        </div>
+            {/* Block 2: Roles */}
+            {guildId && (
+              <div className="rounded-2xl p-3" style={{ backgroundColor: blockBg }}>
+                <div className="flex items-center justify-between mb-2">
+                  <p
+                    className={cn('text-[10px] font-semibold uppercase tracking-wider', !mutedColor && 'text-muted-foreground')}
+                    style={{ color: mutedColor }}
+                  >
+                    {assignedRoles.length > 0 ? t('userProfile.rolesWithCount', { count: assignedRoles.length }) : t('userProfile.roles')}
+                  </p>
+                  {canManageRoles && (
+                    <button
+                      onClick={() => setEditingRoles((v) => !v)}
+                      className={cn('text-[10px] transition-colors', !mutedColor && 'text-muted-foreground hover:text-foreground')}
+                      style={{ color: mutedColor }}
+                    >
+                      {editingRoles ? t('common.done') : t('common.edit')}
+                    </button>
+                  )}
+                </div>
+                {!editingRoles ? roleChips : (
+                  <div className="rounded-md border border-border overflow-hidden">
+                    {allRoles.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-3">{t('userProfile.noServerRoles')}</p>
+                    )}
+                    {allRoles.map((role) => {
+                      const rid = String(role.id)
+                      const currentlyHas = activeRoleIds.has(rid)
+                      const isSaving = savingRoleId === rid
+                      const hex = colorToHex(role.color ?? 0)
+                      return (
+                        <button
+                          key={rid}
+                          onClick={() => void toggleRole(rid, currentlyHas)}
+                          disabled={isSaving}
+                          className={cn(
+                            'w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors',
+                            isSaving ? 'opacity-50 cursor-wait' : 'hover:bg-accent/60',
+                          )}
+                        >
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: hex }} />
+                          <span className="flex-1 truncate">{role.name}</span>
+                          <span
+                            className={cn(
+                              'w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors',
+                              currentlyHas ? 'bg-primary border-primary' : 'border-border',
+                            )}
+                          >
+                            {currentlyHas && (
+                              <svg className="w-3 h-3 text-primary-foreground" viewBox="0 0 12 12" fill="none">
+                                <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            )}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Block 3: Actions */}
+            {!isSelf && (
+              <div className="rounded-2xl p-3 space-y-2" style={{ backgroundColor: blockBg }}>
+                {!isFriend && memberDiscriminator && (
+                  <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleSendFriendRequest()}>
+                    <UserPlus className="w-4 h-4" />
+                    {t('userProfile.addFriend')}
+                  </Button>
+                )}
+                <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleMessage()}>
+                  <MessageSquare className="w-4 h-4" />
+                  {t('userProfile.sendMessage')}
+                </Button>
+              </div>
+            )}
+          </>
+        ) : (
+          // ── Desktop: original flat layout ──────────────────────────────────
+          <>
+            {/* Member since */}
+            {joinDate && (
+              <div>
+                <p
+                  className={cn('text-[10px] font-semibold uppercase tracking-wider mb-0.5', !mutedColor && 'text-muted-foreground')}
+                  style={{ color: mutedColor }}
+                >
+                  {t('userProfile.memberSince')}
+                </p>
+                <p className="text-sm" style={{ color: textColor }}>{joinDate}</p>
+              </div>
+            )}
+
+            {/* Roles */}
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <p
+                  className={cn('text-[10px] font-semibold uppercase tracking-wider', !mutedColor && 'text-muted-foreground')}
+                  style={{ color: mutedColor }}
+                >
+                  {assignedRoles.length > 0 ? t('userProfile.rolesWithCount', { count: assignedRoles.length }) : t('userProfile.roles')}
+                </p>
+                {canManageRoles && guildId && (
+                  <button
+                    onClick={() => setEditingRoles((v) => !v)}
+                    className={cn('text-[10px] transition-colors', !mutedColor && 'text-muted-foreground hover:text-foreground')}
+                    style={{ color: mutedColor }}
+                  >
+                    {editingRoles ? t('common.done') : t('common.edit')}
+                  </button>
+                )}
+              </div>
+
+              {!editingRoles ? (
+                <div className="flex flex-wrap gap-1 min-h-[22px]">
+                  {assignedRoles.map((role) => {
+                    const hex = colorToHex(role.color ?? 0)
+                    return (
+                      <span
+                        key={String(role.id)}
+                        className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded font-medium leading-none"
+                        style={{ backgroundColor: hex + '22', color: hex, border: `1px solid ${hex}55` }}
+                      >
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: hex }} />
+                        {role.name}
+                      </span>
+                    )
+                  })}
+                  {assignedRoles.length === 0 && (
+                    <p className="text-xs text-muted-foreground italic">{t('userProfile.noRoles')}</p>
+                  )}
+                </div>
+              ) : (
+                <div className="max-h-52 overflow-y-auto rounded-md border border-border">
+                  {allRoles.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-3">{t('userProfile.noServerRoles')}</p>
+                  )}
+                  {allRoles.map((role) => {
+                    const rid = String(role.id)
+                    const currentlyHas = activeRoleIds.has(rid)
+                    const isSaving = savingRoleId === rid
+                    const hex = colorToHex(role.color ?? 0)
+                    return (
+                      <button
+                        key={rid}
+                        onClick={() => void toggleRole(rid, currentlyHas)}
+                        disabled={isSaving}
+                        className={cn(
+                          'w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left transition-colors',
+                          isSaving ? 'opacity-50 cursor-wait' : 'hover:bg-accent/60',
+                        )}
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: hex }} />
+                        <span className="flex-1 truncate">{role.name}</span>
+                        <span
+                          className={cn(
+                            'w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors',
+                            currentlyHas ? 'bg-primary border-primary' : 'border-border',
+                          )}
+                        >
+                          {currentlyHas && (
+                            <svg className="w-3 h-3 text-primary-foreground" viewBox="0 0 12 12" fill="none">
+                              <path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="space-y-2">
+              {!isSelf && !isFriend && memberDiscriminator && (
+                <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleSendFriendRequest()}>
+                  <UserPlus className="w-4 h-4" />
+                  {t('userProfile.addFriend')}
+                </Button>
+              )}
+              {!isSelf && (
+                <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleMessage()}>
+                  <MessageSquare className="w-4 h-4" />
+                  {t('userProfile.sendMessage')}
+                </Button>
+              )}
+            </div>
+          </>
+        )}
       </ProfileCardBody>
-    </div>
+    )
+  }
+
+  // ── Mobile: full-width bottom sheet via portal ─────────────────────────────
+  if (isMobile) {
+    return createPortal(
+      <AnimatePresence>
+        {profile && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              key="backdrop"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-[200] bg-black/50"
+              onClick={close}
+            />
+            {/* Bottom sheet */}
+            <motion.div
+              key="sheet"
+              ref={panelRef}
+              drag="y"
+              dragControls={dragControls}
+              dragListener={false}
+              dragConstraints={{ top: 0, bottom: 0 }}
+              dragElastic={{ top: 0, bottom: 0.4 }}
+              onDragEnd={(_, { offset, velocity }) => {
+                if (offset.y > 80 || velocity.y > 400) close()
+              }}
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+              className={cn(
+                'fixed bottom-0 left-0 right-0 z-[201] rounded-t-2xl border-t border-x border-border shadow-2xl flex flex-col overflow-hidden',
+                !rawPanelColor && 'bg-popover',
+              )}
+              style={{ height: '75dvh', ...(rawPanelColor ? { backgroundColor: rawPanelColor } : {}) }}
+            >
+              {/* Drag handle — absolutely overlaid on top of the banner */}
+              <div
+                className="absolute top-0 left-0 right-0 z-10 flex justify-center pt-2.5 cursor-grab active:cursor-grabbing"
+                onPointerDown={(e) => dragControls.start(e)}
+                style={{ touchAction: 'none' }}
+              >
+                <div className="w-10 h-1 rounded-full bg-white/40" />
+              </div>
+              <div
+                ref={sheetScrollRef}
+                className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
+                onScroll={() => setSheetAtTop((sheetScrollRef.current?.scrollTop ?? 0) === 0)}
+                onPointerDown={(e) => { if (sheetAtTop) dragControls.start(e) }}
+                style={{ touchAction: sheetAtTop ? 'none' : 'pan-y' }}
+              >
+                {renderContent(true)}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>,
+      document.body,
+    )
+  }
+
+  // ── Desktop: fixed panel with directional slide ─────────────────────────────
+
+  const panelX = activeProfile
+    ? (activeProfile.x > window.innerWidth / 2 ? activeProfile.x - PANEL_W - 12 : activeProfile.x + 12)
+    : 0
+  const panelY = activeProfile
+    ? Math.max(8, Math.min(activeProfile.y, window.innerHeight - 540))
+    : 0
+  const slideX = activeProfile
+    ? (activeProfile.x > window.innerWidth / 2 ? -24 : 24)
+    : 0
+
+  return (
+    <AnimatePresence>
+      {profile && activeProfile && (
+        <motion.div
+          ref={panelRef}
+          initial={{ opacity: 0, x: slideX }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: slideX }}
+          transition={{ type: 'spring', damping: 26, stiffness: 340 }}
+          className={cn(
+            'fixed z-[60] rounded-lg border border-border shadow-2xl overflow-hidden flex flex-col',
+            !rawPanelColor && 'bg-popover',
+          )}
+          style={{ left: panelX, top: panelY, width: PANEL_W, ...(rawPanelColor ? { backgroundColor: rawPanelColor } : {}) }}
+        >
+          {renderContent()}
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }

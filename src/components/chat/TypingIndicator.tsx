@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
+import { motion, AnimatePresence } from 'motion/react'
 import { guildApi } from '@/api/client'
 import { useTypingStore, type TypingUser } from '@/stores/typingStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -37,14 +38,12 @@ export default function TypingIndicator({ channelId, serverId }: Props) {
     (u) => u.userId !== currentUserId && u.expiresAt > now,
   )
 
-  if (others.length === 0) return null
-
   function resolveName(userId: string): string {
     const member = members?.find((m) => String(m.user?.id) === userId)
     return member?.username ?? member?.user?.name ?? userId
   }
 
-  let text: string
+  let text = ''
   if (others.length === 1) {
     text = t('chat.typingOne', { name: resolveName(others[0].userId) })
   } else if (others.length === 2) {
@@ -52,19 +51,39 @@ export default function TypingIndicator({ channelId, serverId }: Props) {
       name1: resolveName(others[0].userId),
       name2: resolveName(others[1].userId),
     })
-  } else {
+  } else if (others.length > 2) {
     text = t('chat.typingSeveral')
   }
 
   return (
-    <div className="flex items-center gap-1 px-4 pb-1 h-5 shrink-0">
-      {/* Animated dots */}
-      <span className="flex gap-0.5 items-end shrink-0">
-        <span className="w-1 h-1 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
-        <span className="w-1 h-1 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
-        <span className="w-1 h-1 rounded-full bg-muted-foreground animate-bounce [animation-delay:300ms]" />
-      </span>
-      <span className="text-xs text-muted-foreground truncate">{text}</span>
-    </div>
+    <AnimatePresence>
+      {others.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 4 }}
+          transition={{ duration: 0.15, ease: 'easeOut' }}
+          className="flex items-center gap-1 px-4 pb-1 h-5 shrink-0"
+        >
+          {/* Animated dots */}
+          <span className="flex gap-0.5 items-end shrink-0">
+            {[0, 1, 2].map((i) => (
+              <motion.span
+                key={i}
+                className="w-1 h-1 rounded-full bg-muted-foreground block"
+                animate={{ y: [0, -3, 0] }}
+                transition={{
+                  duration: 0.7,
+                  repeat: Infinity,
+                  delay: i * 0.15,
+                  ease: 'easeInOut',
+                }}
+              />
+            ))}
+          </span>
+          <span className="text-xs text-muted-foreground truncate">{text}</span>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }

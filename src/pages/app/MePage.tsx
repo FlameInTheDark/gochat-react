@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { UserPlus, MessageSquare, UserMinus, Check, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { motion, AnimatePresence } from 'motion/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,28 +34,47 @@ export default function MePage() {
         <span className="font-semibold text-sm">{t('friends.title')}</span>
         <Separator orientation="vertical" className="h-5" />
         <nav className="flex gap-1">
-          {(['all', 'pending', 'add'] as const).map((tab) => (
+          {(['all', 'pending', 'add'] as const).map((tabKey) => (
             <button
-              key={tab}
-              onClick={() => setTab(tab)}
+              key={tabKey}
+              onClick={() => setTab(tabKey)}
               className={cn(
-                'px-3 py-1 rounded text-sm transition-colors',
-                tab === tab
-                  ? 'bg-accent text-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                'relative px-3 py-1 rounded text-sm transition-colors z-10',
+                tabKey === tab
+                  ? 'text-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              {tab === 'add' ? t('friends.tabAdd') : tab === 'all' ? t('friends.tabAll') : t('friends.tabPending')}
+              {tabKey === tab && (
+                <motion.div
+                  layoutId="friends-tab-bg"
+                  className="absolute inset-0 bg-accent rounded"
+                  transition={{ type: 'spring', damping: 22, stiffness: 300 }}
+                />
+              )}
+              <span className="relative z-10">
+                {tabKey === 'add' ? t('friends.tabAdd') : tabKey === 'all' ? t('friends.tabAll') : t('friends.tabPending')}
+              </span>
             </button>
           ))}
         </nav>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
-        {tab === 'all' && <FriendList />}
-        {tab === 'pending' && <PendingRequests />}
-        {tab === 'add' && <AddFriend />}
+      <div className="flex-1 overflow-y-auto relative">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+          >
+            {tab === 'all' && <FriendList />}
+            {tab === 'pending' && <PendingRequests />}
+            {tab === 'add' && <AddFriend />}
+          </motion.div>
+        </AnimatePresence>
       </div>
     </div>
   )

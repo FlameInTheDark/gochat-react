@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { motion, AnimatePresence } from 'motion/react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { Hash, Spool, Volume2, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, Search, X } from 'lucide-react'
@@ -1428,6 +1429,7 @@ export default function ChannelPage() {
             />
           </ChatAttachmentDropZone>
 
+          <AnimatePresence>
           {(hasSearched || rightPanelMode !== 'none') && serverId && (
             <>
               {!isMobile && isThreadSidePanelVisible && (
@@ -1438,7 +1440,12 @@ export default function ChannelPage() {
                   <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-sidebar-border/80 transition-colors group-hover:bg-foreground/30" />
                 </div>
               )}
-              <div
+              <motion.div
+                key="right-panel"
+                initial={{ opacity: 0, x: 32 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 32 }}
+                transition={{ type: 'spring', damping: 26, stiffness: 320 }}
                 className={cn(
                   'flex min-h-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar shrink-0',
                   isMobile
@@ -1533,9 +1540,10 @@ export default function ChannelPage() {
                 ) : (
                   <MemberList serverId={serverId} channel={channel} />
                 )}
-              </div>
+              </motion.div>
             </>
           )}
+          </AnimatePresence>
         </div>
       </div>
     </>

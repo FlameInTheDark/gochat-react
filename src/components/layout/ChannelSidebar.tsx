@@ -1,7 +1,8 @@
 import { useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronLeft, ChevronRight, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye } from 'lucide-react'
+import { motion, AnimatePresence } from 'motion/react'
+import { ChevronDown, ChevronLeft, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -528,12 +529,13 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
           >
             <ScrollArea className="flex-1">
               <div className="p-2 space-y-0.5">
-                {/* All channels in exact API position order */}
+                {/* Pre-group children by category for reliable group animation */}
                 {sorted([...visibleRegular, ...categories]).map((item) => {
+                  // Uncategorized regular channel — render directly
                   if (!isCat(item)) {
                     const ch = item
                     const parentId = ch.parent_id ? String(ch.parent_id) : null
-                    if (parentId && categoryIds.has(parentId) && collapsed.has(parentId)) return null
+                    if (parentId && categoryIds.has(parentId)) return null // handled in category block
                     return (
                       <ChannelItemWithUnread
                         key={String(ch.id)}
@@ -567,6 +569,10 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
 
                   const cat = item
                   const catId = String(cat.id)
+                  // Pre-compute this category's children once
+                  const catChildren = sorted(
+                    visibleRegular.filter((ch) => ch.parent_id && String(ch.parent_id) === catId)
+                  )
                   const isCollapsed = collapsed.has(catId)
                   const catIndicator =
                     dropIndicator?.id === catId
@@ -578,6 +584,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                     <div key={catId}>
                       {/* Category header */}
                       <ContextMenu>
+
                         <ContextMenuTrigger asChild>
                           <button
                             draggable={!isCatEditing}
@@ -596,9 +603,14 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                             <span className="cursor-grab active:cursor-grabbing shrink-0">
                               <GripVertical className="w-3 h-3 opacity-0 group-hover/cat:opacity-40 -ml-1" />
                             </span>
-                            {isCollapsed
-                              ? <ChevronRight className="w-3 h-3 shrink-0" />
-                              : <ChevronDown className="w-3 h-3 shrink-0" />}
+                            <motion.span
+                              animate={{ rotate: isCollapsed ? -90 : 0 }}
+                              transition={{ type: 'spring', damping: 20, stiffness: 260 }}
+                              style={{ display: 'flex', transformOrigin: 'center' }}
+                              className="shrink-0"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                            </motion.span>
                             {isCatEditing ? (
                               <input
                                 autoFocus
@@ -660,6 +672,49 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                         </ContextMenuContent>
                       </ContextMenu>
 
+                      {/* Animate ALL children as one group — avoids per-item race conditions */}
+                      <AnimatePresence initial={false}>
+                        {!isCollapsed && catChildren.length > 0 && (
+                          <motion.div
+                            key={catId + '-children'}
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                            style={{ overflow: 'hidden' }}
+                          >
+                            {catChildren.map((ch) => (
+                              <ChannelItemWithUnread
+                                key={String(ch.id)}
+                                channel={ch}
+                                serverId={serverId}
+                                isActive={String(ch.id) === activeChannelId}
+                                navigate={navigate}
+                                onDelete={setDeletingChannel}
+                                onVoiceJoin={handleVoiceJoin}
+                                onOpenSettings={() => openChannelSettings(serverId, String(ch.id))}
+                                isDragging={draggingId === String(ch.id)}
+                                dropIndicator={
+                                  dropIndicator?.id === String(ch.id)
+                                    ? dropIndicator.before ? 'top' : 'bottom'
+                                    : null
+                                }
+                                onDragStart={(e) => onDragStart(e, ch)}
+                                onDragOver={(e) => onDragOver(e, ch)}
+                                onDrop={(e) => onDrop(e, ch)}
+                                onDragEnd={onDragEnd}
+                                isEditing={editingId === String(ch.id)}
+                                editName={editingName}
+                                onEditChange={setEditingName}
+                                onEditSave={() => saveEdit(ch)}
+                                onEditCancel={cancelEdit}
+                                canManageChannels={canManageChannels}
+                                members={members}
+                              />
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
                   )
                 })}

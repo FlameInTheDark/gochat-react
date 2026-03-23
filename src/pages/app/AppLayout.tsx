@@ -14,6 +14,7 @@ import ChannelSettingsModal from '@/components/modals/ChannelSettingsModal'
 import UserProfilePanel from '@/components/layout/UserProfilePanel'
 import type { DtoUser } from '@/types'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
+
 import { useVoiceStore } from '@/stores/voiceStore'
 import { sendPresenceStatus } from '@/services/wsService'
 import { useFolderStore } from '@/stores/folderStore'
@@ -37,7 +38,6 @@ function AuthenticatedApp() {
   useWebSocket()
   useIdlePresence()
   useDeepLink()
-
   // Keep authStore user in sync with WS t=406 profile update events
   useEffect(() => {
     const handler = (e: Event) => {
