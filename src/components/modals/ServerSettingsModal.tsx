@@ -619,7 +619,7 @@ export default function ServerSettingsModal() {
       const sec = Number(inviteExpiry)
       await inviteApi.guildInvitesGuildIdPost({
         guildId,
-        request: sec > 0 ? { expires_in_sec: sec } : {},
+        request: { expires_in_sec: sec },
       })
       await queryClient.invalidateQueries({ queryKey: ['invites', guildId] })
       toast.success(t('modals.createNewInvite'))
@@ -1472,9 +1472,11 @@ export default function ServerSettingsModal() {
                     const createdAt = invite.created_at ? new Date(invite.created_at).toLocaleDateString() : '—'
                     const expiresDate = invite.expires_at ? new Date(invite.expires_at) : null
                     const isExpired = expiresDate ? expiresDate < new Date() : false
-                    const expiresLabel = expiresDate
-                      ? isExpired ? t('serverSettings.inviteExpired') : expiresDate.toLocaleDateString()
-                      : t('serverSettings.inviteNever')
+                    const oneYearFromNow = new Date(); oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1)
+                    const isNever = !expiresDate || expiresDate > oneYearFromNow
+                    const expiresLabel = isNever
+                      ? t('serverSettings.inviteNeverExpires')
+                      : isExpired ? t('serverSettings.inviteExpired') : expiresDate.toLocaleDateString()
                     return (
                       <div
                         key={inviteId}
@@ -1488,7 +1490,7 @@ export default function ServerSettingsModal() {
                             {invite.code ?? '—'}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            {t('serverSettings.inviteCreatedAt')} {createdAt} · {isExpired ? t('serverSettings.inviteExpired') : `${t('serverSettings.inviteExpires')} ${expiresLabel}`}
+                            {t('serverSettings.inviteCreatedAt')} {createdAt} · {isExpired ? t('serverSettings.inviteExpired') : isNever ? expiresLabel : `${t('serverSettings.inviteExpires')} ${expiresLabel}`}
                           </p>
                         </div>
                         {/* Copy full invite URL */}
