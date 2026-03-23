@@ -571,6 +571,15 @@ const ru: Translation = {
         suppressRole: 'Скрыть упоминания @role',
         suppressUser: 'Скрыть упоминания @user',
         saveFailed: 'Не удалось сохранить настройки уведомлений',
+        mute: 'Заглушить уведомления',
+        muteFor15min: 'Заглушить на 15 минут',
+        muteFor1hour: 'Заглушить на 1 час',
+        muteFor8hours: 'Заглушить на 8 часов',
+        muteFor24hours: 'Заглушить на 24 часа',
+        muteIndefinite: 'Заглушить навсегда',
+        unmute: 'Включить уведомления',
+        mutedUntil: 'Заглушено до {{time}}',
+        mutedIndefinite: 'Заглушено навсегда',
     },
 }
 

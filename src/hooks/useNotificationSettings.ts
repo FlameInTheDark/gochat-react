@@ -1,8 +1,10 @@
+import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { userApi } from '@/api/client'
 import type { ModelUserSettingsData, ModelUserSettingsNotifications } from '@/client'
+import { useNotificationSettingsStore } from '@/stores/notificationSettingsStore'
 
 export function useNotificationSettings() {
   const queryClient = useQueryClient()
@@ -13,6 +15,12 @@ export function useNotificationSettings() {
     queryFn: () => userApi.userMeSettingsGet().then((r) => r.data?.settings ?? {}),
     staleTime: 60_000,
   })
+
+  useEffect(() => {
+    if (settings) {
+      useNotificationSettingsStore.getState().setSettings(settings)
+    }
+  }, [settings])
 
   function getGuildNotifications(guildId: string): ModelUserSettingsNotifications | undefined {
     return settings?.guilds?.find((g) => String(g.guild_id) === guildId)?.notifications

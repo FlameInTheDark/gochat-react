@@ -8,7 +8,6 @@ import { motion, AnimatePresence } from "motion/react"
 import { cn } from "@/lib/utils"
 
 const ContextMenuOpenContext = React.createContext(false)
-const ContextMenuSubOpenContext = React.createContext(false)
 
 function ContextMenu({
   onOpenChange,
@@ -54,21 +53,10 @@ function ContextMenuPortal({
 }
 
 function ContextMenuSub({
-  onOpenChange,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Sub>) {
-  const [open, setOpen] = React.useState(false)
   return (
-    <ContextMenuSubOpenContext.Provider value={open}>
-      <ContextMenuPrimitive.Sub
-        data-slot="context-menu-sub"
-        onOpenChange={(o) => {
-          setOpen(o)
-          onOpenChange?.(o)
-        }}
-        {...props}
-      />
-    </ContextMenuSubOpenContext.Provider>
+    <ContextMenuPrimitive.Sub data-slot="context-menu-sub" {...props} />
   )
 }
 
@@ -109,35 +97,19 @@ function ContextMenuSubTrigger({
 
 function ContextMenuSubContent({
   className,
-  children,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.SubContent>) {
-  const open = React.useContext(ContextMenuSubOpenContext)
   return (
-    <AnimatePresence>
-      {open && (
-        <ContextMenuPrimitive.SubContent
-          forceMount
-          data-slot="context-menu-sub-content"
-          className={cn(
-            "bg-popover text-popover-foreground z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 shadow-lg",
-            className
-          )}
-          {...props}
-          asChild
-        >
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, x: -4 }}
-            animate={{ opacity: 1, scale: 1, x: 0 }}
-            exit={{ opacity: 0, scale: 0.95, x: -4 }}
-            transition={{ type: "spring", damping: 22, stiffness: 340 }}
-            style={{ transformOrigin: 'var(--radix-context-menu-sub-content-transform-origin)' }}
-          >
-            {children}
-          </motion.div>
-        </ContextMenuPrimitive.SubContent>
+    <ContextMenuPrimitive.SubContent
+      data-slot="context-menu-sub-content"
+      className={cn(
+        "bg-popover text-popover-foreground z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 shadow-lg",
+        "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+        "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:pointer-events-none",
+        className
       )}
-    </AnimatePresence>
+      {...props}
+    />
   )
 }
 

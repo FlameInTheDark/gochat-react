@@ -535,5 +535,14 @@ export interface Translation {
         suppressRole: string
         suppressUser: string
         saveFailed: string
+        mute: string
+        muteFor15min: string
+        muteFor1hour: string
+        muteFor8hours: string
+        muteFor24hours: string
+        muteIndefinite: string
+        unmute: string
+        mutedUntil: string
+        mutedIndefinite: string
     }
 }

@@ -12,6 +12,9 @@ import { playMentionSound } from '@/lib/sounds'
 import { axiosInstance } from '@/api/client'
 import { ChannelType, type DtoChannel, type DtoMessage } from '@/types'
 import { getWsUrl, getApiBaseUrl } from '@/lib/connectionConfig'
+import { useNotificationSettingsStore } from '@/stores/notificationSettingsStore'
+import { ModelNotificationsType } from '@/client'
+import type { ModelUserSettingsNotifications } from '@/client'
 
 // BigInt-aware serializer for outgoing WS messages that contain Snowflake IDs.
 // The Go backend expects int64 numbers — plain JSON.stringify would either lose
@@ -158,6 +161,35 @@ function getSubscribedChannelIds(): string[] {
 
 function isChannelVisible(channelId: string): boolean {
   return (visibleChannelCounts.get(channelId) ?? 0) > 0
+}
+
+// Mention type constants matching the backend enum in mention.go
+const MentionType = { User: 0, Role: 1, Everyone: 2, Here: 3 } as const
+
+function getEffectiveNotif(
+  guildId: string | null,
+  channelId: string,
+): ModelUserSettingsNotifications | undefined {
+  const store = useNotificationSettingsStore.getState()
+  return store.getChannelNotif(channelId) ?? (guildId ? store.getGuildNotif(guildId) : undefined)
+}
+
+function isEffectivelyMuted(notif: ModelUserSettingsNotifications | undefined): boolean {
+  if (!notif?.muted) return false
+  if (!notif.muted_until) return true
+  return new Date(notif.muted_until) > new Date()
+}
+
+function isMentionSuppressed(
+  notif: ModelUserSettingsNotifications | undefined,
+  mentionType: number | undefined,
+): boolean {
+  if (!notif || mentionType == null) return false
+  if (mentionType === MentionType.Everyone && notif.suppress_everyone_mentions) return true
+  if (mentionType === MentionType.Here && notif.suppress_here_mentions) return true
+  if (mentionType === MentionType.Role && notif.suppress_role_mentions) return true
+  if (mentionType === MentionType.User && notif.suppress_user_mentions) return true
+  return false
 }
 
 function syncChannelSubscriptions() {
@@ -500,9 +532,14 @@ function handleMessage(event: MessageEvent) {
         const channelId = String(notif.channel_id)
         const guildId = notif.guild_id != null ? String(notif.guild_id) : null
         if (!isChannelVisible(channelId)) {
-          useUnreadStore.getState().markUnread(channelId, guildId)
+          const notifSettings = getEffectiveNotif(guildId, channelId)
+          const level = notifSettings?.notifications ?? ModelNotificationsType.NotificationsAll
+          // Only show unread dot for "All Messages" level when not muted
+          if (!isEffectivelyMuted(notifSettings) && level === ModelNotificationsType.NotificationsAll) {
+            useUnreadStore.getState().markUnread(channelId, guildId)
+          }
         }
-        // Update the latest-known message ID so unread detection stays accurate
+        // Always track latest message ID for accurate read-state detection
         if (notif.message_id != null) {
           useReadStateStore.getState().updateLastMessage(channelId, String(notif.message_id))
         }
@@ -541,9 +578,15 @@ function handleMessage(event: MessageEvent) {
         const channelId = String(mention.channel_id)
         // Only track & notify if user is NOT currently viewing that channel
         if (!isChannelVisible(channelId)) {
-          useMentionStore.getState().addMention(guildId, channelId, String(mention.message_id))
-          playMentionSound()
-          window.electronAPI?.notify({ title: 'GoChat', body: 'You have a new mention' })
+          const notifSettings = getEffectiveNotif(guildId, channelId)
+          const level = notifSettings?.notifications ?? ModelNotificationsType.NotificationsAll
+          const muted = isEffectivelyMuted(notifSettings)
+          const suppressed = isMentionSuppressed(notifSettings, mention.type)
+          if (!suppressed && !muted && level !== ModelNotificationsType.NotificationsNone) {
+            useMentionStore.getState().addMention(guildId, channelId, String(mention.message_id))
+            playMentionSound()
+            window.electronAPI?.notify({ title: 'GoChat', body: 'You have a new mention' })
+          }
         }
       }
       window.dispatchEvent(new CustomEvent('ws:mention', { detail: d }))
