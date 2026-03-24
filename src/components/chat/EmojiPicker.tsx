@@ -565,7 +565,7 @@ export default function EmojiPicker({ onSelect, customEmojiGroups, isMobile = fa
   }
 
   return (
-    <div className="w-[420px] rounded-xl border border-border bg-popover text-popover-foreground shadow-xl">
+    <div className="w-[min(420px,calc(100vw-16px))] rounded-xl border border-border bg-popover text-popover-foreground shadow-xl">
       {/* Search */}
       <div className="border-b border-border px-3 py-2">
         <input

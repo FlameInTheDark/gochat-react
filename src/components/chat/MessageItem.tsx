@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
@@ -11,6 +12,8 @@ import {
   Pencil,
   Reply as ReplyIcon,
   RotateCcw,
+  Smile,
+  SmilePlus,
   Spool,
   Trash2,
   X,
@@ -46,6 +49,8 @@ import { cn } from '@/lib/utils'
 import { parseMessageContent, parseInlineMessageContent, isEmojiOnlyMessage, type MentionResolver } from '@/lib/messageParser'
 import { buildMessagePreviewText } from '@/lib/messagePreview'
 import MessageAttachments from '@/components/chat/MessageAttachments'
+import MessageReactions from '@/components/chat/MessageReactions'
+import EmojiPicker, { type CustomEmojiGroup } from '@/components/chat/EmojiPicker'
 import InviteEmbed from '@/components/chat/InviteEmbed'
 import MessageEmbed from '@/components/chat/MessageEmbed'
 import GifEmbed from '@/components/chat/GifEmbed'
@@ -53,6 +58,7 @@ import { extractGifUrls, isGifOnlyMessage } from '@/lib/gifUrls'
 import { useGifStore } from '@/stores/gifStore'
 import { subscribeChannel, unsubscribeChannel } from '@/services/wsService'
 import type { DtoMessage, DtoMember, DtoGuild } from '@/types'
+import { useEmojiStore } from '@/stores/emojiStore'
 import { MessageChannelChannelIdGetDirectionEnum, type DtoRole } from '@/client'
 
 /** Extract unique invite codes from a message string.
@@ -174,7 +180,28 @@ export default function MessageItem({
   const [suppressEmbedsLoading, setSuppressEmbedsLoading] = useState(false)
   const [editContent, setEditContent] = useState('')
   const [editLoading, setEditLoading] = useState(false)
+  const [reactionPickerOpen, setReactionPickerOpen] = useState(false)
+  const [reactionPickerRect, setReactionPickerRect] = useState<DOMRect | null>(null)
+  const [reactionPickerRightOf, setReactionPickerRightOf] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const reactionButtonRef = useRef<HTMLButtonElement>(null)
+  const messageContainerRef = useRef<HTMLDivElement>(null)
+
+  const guildEmojiMap = useEmojiStore((s) => s.guildEmojis)
+  const customEmojiGroups = useMemo<CustomEmojiGroup[]>(() => {
+    const guilds = queryClient.getQueryData<DtoGuild[]>(['guilds'])
+    return Object.entries(guildEmojiMap)
+      .filter(([, emojis]) => emojis.length > 0)
+      .map(([guildId, emojis]) => {
+        const g = guilds?.find((guild) => String(guild.id) === guildId)
+        return {
+          guildId,
+          guildName: g?.name ?? guildId,
+          guildIconUrl: g?.icon?.url,
+          emojis,
+        }
+      })
+  }, [guildEmojiMap, queryClient])
 
   // Fetch roles and current user's member data for permission checking
   const { data: roles = [] } = useQuery<DtoRole[]>({
@@ -503,6 +530,34 @@ export default function MessageItem({
     }
   }
 
+  function handleOpenReactionPicker() {
+    if (reactionPickerOpen) {
+      setReactionPickerOpen(false)
+      return
+    }
+    const rect = reactionButtonRef.current?.getBoundingClientRect()
+    if (rect) setReactionPickerRect(rect)
+    setReactionPickerRightOf(false)
+    setReactionPickerOpen(true)
+  }
+
+  async function handleReactionEmojiSelect(emojiStr: string) {
+    setReactionPickerOpen(false)
+    if (!hasRealMessageId) return
+    // Custom emoji: "<:name:id>" → "name:id"; unicode: pass raw character
+    const customMatch = emojiStr.match(/^<:([^:]+):(\d+)>$/)
+    const reactionName = customMatch ? `${customMatch[1]}:${customMatch[2]}` : emojiStr
+    try {
+      await messageApi.messageChannelChannelIdMessageIdReactionsReactionNamePut({
+        channelId: channelId as unknown as number,
+        messageId: messageId as unknown as number,
+        reactionName,
+      })
+    } catch {
+      toast.error(t('messageItem.reactionFailed'))
+    }
+  }
+
   // Check if this is a join message
   const isJoinMessage = message.type === JOIN_MESSAGE_TYPE
   const isThreadCreatedMessage = message.type === THREAD_CREATED_MESSAGE_TYPE
@@ -614,14 +669,43 @@ export default function MessageItem({
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className={cn(
-            'flex items-start gap-3 rounded px-2 group',
+          <div ref={messageContainerRef} className={cn(
+            'relative flex items-start gap-3 rounded px-2 group',
             isGrouped ? 'py-0.5' : 'py-1',
             deliveryState === 'sending' && 'opacity-70',
             deliveryState === 'failed' && 'bg-red-500/8 hover:bg-red-500/12',
             deliveryState == null && 'hover:bg-accent/40',
             isMentioned && 'bg-yellow-500/10 hover:bg-yellow-500/15 border-l-2 border-yellow-500/60 pl-[6px]',
           )}>
+            {/* Hover action buttons — reply + add reaction */}
+            {!isPendingMessage && !isInformationalMessage && hasRealMessageId && (
+              <div className={cn(
+                'absolute -top-3 right-2 z-10 flex items-center gap-0.5 rounded border border-border bg-background shadow-sm',
+                reactionPickerOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+              )}>
+                <button
+                  ref={reactionButtonRef}
+                  type="button"
+                  onClick={handleOpenReactionPicker}
+                  aria-label={t('messageItem.addReaction')}
+                  title={t('messageItem.addReaction')}
+                  className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <Smile className="h-4 w-4" />
+                </button>
+                {replyAction && (
+                  <button
+                    type="button"
+                    onClick={replyAction.onClick}
+                    aria-label={replyAction.label}
+                    title={replyAction.label}
+                    className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <ReplyIcon className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            )}
             {isGrouped ? (
               /* Compact grouped row: no avatar — hover reveals timestamp in left gutter */
               <div className="w-9 shrink-0 flex items-center justify-end mt-0.5">
@@ -877,6 +961,19 @@ export default function MessageItem({
                       </span>
                     )
                   )}
+                  {/* Reactions */}
+                  {!isPendingMessage && !informationalContent && hasRealMessageId && (message.reactions?.length ?? 0) > 0 && (
+                    <MessageReactions
+                      reactions={message.reactions!}
+                      channelId={channelId}
+                      messageId={messageId}
+                      onAddReaction={(rect) => {
+                        setReactionPickerRect(rect)
+                        setReactionPickerRightOf(true)
+                        setReactionPickerOpen(true)
+                      }}
+                    />
+                  )}
                   {deliveryStateContent}
                 </>
               )}
@@ -885,6 +982,22 @@ export default function MessageItem({
         </ContextMenuTrigger>
 
         <ContextMenuContent>
+          {hasRealMessageId && (
+            <ContextMenuItem
+              onClick={() => {
+                const rect = messageContainerRef.current?.getBoundingClientRect()
+                if (rect) {
+                  setReactionPickerRect(rect)
+                  setReactionPickerRightOf(false)
+                  setReactionPickerOpen(true)
+                }
+              }}
+              className="gap-2"
+            >
+              <SmilePlus className="w-4 h-4" />
+              {t('messageItem.addReaction')}
+            </ContextMenuItem>
+          )}
           <ContextMenuItem onClick={handleCopy} className="gap-2">
             <Copy className="w-4 h-4" />
             {t('messageItem.copyText')}
@@ -964,6 +1077,47 @@ export default function MessageItem({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {reactionPickerOpen && reactionPickerRect && createPortal(
+        <>
+          <div className="fixed inset-0 z-[99]" onClick={() => setReactionPickerOpen(false)} />
+          <div
+            className="fixed z-[100]"
+            style={(() => {
+              const r = reactionPickerRect
+              const vw = window.innerWidth
+              const vh = window.innerHeight
+              const pickerW = Math.min(420, vw - 16)
+              const pickerH = 450
+              const gap = 4
+              // Horizontal: right-of-button or right-aligned to button
+              let left: number
+              if (reactionPickerRightOf) {
+                left = r.right + gap
+                if (left + pickerW > vw - 8) left = r.left - pickerW - gap
+              } else {
+                left = r.right - pickerW
+              }
+              left = Math.max(8, Math.min(left, vw - pickerW - 8))
+              // Vertical: above or below
+              let top: number
+              if (r.top > vh / 2) {
+                top = r.top - pickerH - gap
+              } else {
+                top = r.bottom + gap
+              }
+              top = Math.max(8, Math.min(top, vh - pickerH - 8))
+              return { top, left }
+            })()}
+          >
+            <EmojiPicker
+              onSelect={(e) => { void handleReactionEmojiSelect(e) }}
+              customEmojiGroups={customEmojiGroups}
+            />
+          </div>
+        </>,
+        document.body,
+      )}
 
       <Dialog open={deleteOpen} onOpenChange={(o) => !o && setDeleteOpen(false)}>
         <DialogContent>

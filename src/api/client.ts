@@ -1,6 +1,7 @@
 import {
   Configuration,
   AuthApi,
+  EmojiApi,
   GuildApi,
   GuildInvitesApi,
   GuildRolesApi,
@@ -152,6 +153,7 @@ const config = () =>
   })
 
 export const authApi = new AuthApi(config(), undefined, axiosInstance)
+export const emojiApi = new EmojiApi(config(), undefined, axiosInstance)
 export const guildApi = new GuildApi(config(), undefined, axiosInstance)
 export const inviteApi = new GuildInvitesApi(config(), undefined, axiosInstance)
 export const rolesApi = new GuildRolesApi(config(), undefined, axiosInstance)

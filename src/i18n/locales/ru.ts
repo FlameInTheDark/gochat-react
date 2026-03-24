@@ -359,6 +359,18 @@ const ru: Translation = {
         roleRemoveFailed: 'Не удалось снять роль',
         dmFailed: 'Не удалось открыть ЛС',
     },
+    emojiDetail: {
+        serverPrivate: 'Сервер закрыт или недоступен',
+        loadFailed: 'Не удалось загрузить информацию об эмодзи',
+        clickToSeeDetails: 'Нажмите для подробностей',
+        emojiIsFrom: 'Этот эмодзи с сервера',
+    },
+    reactions: {
+        dialogTitle: 'Реакции',
+        clickToSeeWhoReacted: 'Нажмите, чтобы увидеть реакции',
+        noReactions: 'Нет реакций',
+        loadMore: 'Загрузить ещё',
+    },
     messageItem: {
         copyText: 'Скопировать текст',
         copyMessageId: 'Скопировать ID',
@@ -386,6 +398,7 @@ const ru: Translation = {
         escTo: ' · Esc для ',
         cancel: 'отмены',
         edited: '(изменено)',
+        addReaction: 'Добавить реакцию',
     },
     joinMessages: [
         'присоединился к вечеринке!',

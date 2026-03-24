@@ -4,6 +4,7 @@ export type {
   DtoGuild,
   DtoChannel,
   DtoMessage,
+  DtoMessageReaction,
   DtoMember,
   DtoGuildInvite,
   DtoAttachment,

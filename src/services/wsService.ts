@@ -10,7 +10,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { playMentionSound } from '@/lib/sounds'
 import { axiosInstance } from '@/api/client'
-import { ChannelType, type DtoChannel, type DtoMessage } from '@/types'
+import { ChannelType, type DtoChannel, type DtoMessage, type DtoMessageReaction } from '@/types'
 import { getWsUrl, getApiBaseUrl } from '@/lib/connectionConfig'
 import { useNotificationSettingsStore } from '@/stores/notificationSettingsStore'
 import { ModelNotificationsType } from '@/client'
@@ -295,6 +295,14 @@ interface WsDeletedMessage {
   channel_id?: string | number
   id?: string | number
   message_id?: string | number
+}
+
+// t=103/104: reaction event — d = { guild_id, channel_id, message_id, reaction }
+interface WsReactionEvent {
+  guild_id?: string | number
+  channel_id?: string | number
+  message_id?: string | number
+  reaction?: DtoMessageReaction
 }
 
 // t=100: actual message event — d = { guild_id, message: DtoMessage }
@@ -612,48 +620,74 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
+    // t=103: Message Reaction Add
+    if (t === 103) {
+      const ev = d as WsReactionEvent | undefined
+      if (ev?.channel_id != null && ev?.message_id != null && ev?.reaction?.emoji?.name) {
+        useMessageStore.getState().updateMessageReaction(
+          String(ev.channel_id),
+          String(ev.message_id),
+          ev.reaction,
+        )
+      }
+      return
+    }
+
+    // t=104: Message Reaction Remove
+    if (t === 104) {
+      const ev = d as WsReactionEvent | undefined
+      if (ev?.channel_id != null && ev?.message_id != null && ev?.reaction?.emoji?.name) {
+        useMessageStore.getState().updateMessageReaction(
+          String(ev.channel_id),
+          String(ev.message_id),
+          ev.reaction,
+        )
+      }
+      return
+    }
+
     // ── Guild events ─────────────────────────────────────────────────────────
 
-    // t=103: Guild Create
-    if (t === 103) {
+    // t=105: Guild Create
+    if (t === 105) {
       window.dispatchEvent(new CustomEvent('ws:guild_create', { detail: d }))
       return
     }
 
-    // t=104: Guild Update
-    if (t === 104) {
+    // t=106: Guild Update
+    if (t === 106) {
       window.dispatchEvent(new CustomEvent('ws:guild_update', { detail: d }))
       return
     }
 
-    // t=105: Guild Delete
-    if (t === 105) {
+    // t=107: Guild Delete
+    if (t === 107) {
       window.dispatchEvent(new CustomEvent('ws:guild_delete', { detail: d }))
       return
     }
 
     // ── Channel events ───────────────────────────────────────────────────────
 
-    // t=106: Channel Create
-    if (t === 106) {
+    // t=108: Channel Create
+    if (t === 108) {
       window.dispatchEvent(new CustomEvent('ws:channel_create', { detail: d }))
       return
     }
 
-    // t=107: Channel Update
-    if (t === 107) {
+    // t=109: Channel Update
+    if (t === 109) {
       window.dispatchEvent(new CustomEvent('ws:channel_update', { detail: d }))
       return
     }
 
-    // t=108: Channel Order changed
-    if (t === 108) {
+    // t=110: Channel Order changed
+    if (t === 110) {
       window.dispatchEvent(new CustomEvent('ws:channel_order', { detail: d }))
       return
     }
 
-    // t=109: Channel Delete
-    if (t === 109) {
+    // t=111: Channel Delete
+    if (t === 111) {
       window.dispatchEvent(new CustomEvent('ws:channel_delete', { detail: d }))
       return
     }
@@ -661,28 +695,28 @@ function handleMessage(event: MessageEvent) {
     // ── Guild role events ────────────────────────────────────────────────────
     // d = { guild_id, role: DtoRole }
 
-    // t=110: Role Create
-    if (t === 110) {
+    // t=112: Role Create
+    if (t === 112) {
       window.dispatchEvent(new CustomEvent('ws:role_create', { detail: d }))
       return
     }
 
-    // t=111: Role Update (includes position changes from order reorder)
-    if (t === 111) {
+    // t=113: Role Update (includes position changes from order reorder)
+    if (t === 113) {
       window.dispatchEvent(new CustomEvent('ws:role_update', { detail: d }))
       return
     }
 
-    // t=112: Role Delete
-    if (t === 112) {
+    // t=114: Role Delete
+    if (t === 114) {
       window.dispatchEvent(new CustomEvent('ws:role_delete', { detail: d }))
       return
     }
 
     // ── Thread lifecycle events ───────────────────────────────────────────────
 
-    // t=113: Thread Create
-    if (t === 113) {
+    // t=115: Thread Create
+    if (t === 115) {
       const eventData = d as WsThreadEvent | undefined
       if (isThreadChannel(eventData?.thread)) {
         useMessageStore.getState().syncThreadMetadata(eventData.thread)
@@ -691,8 +725,8 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
-    // t=114: Thread Update
-    if (t === 114) {
+    // t=116: Thread Update
+    if (t === 116) {
       const eventData = d as WsThreadEvent | undefined
       if (isThreadChannel(eventData?.thread)) {
         useMessageStore.getState().syncThreadMetadata(eventData.thread)
@@ -701,8 +735,8 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
-    // t=115: Thread Delete
-    if (t === 115) {
+    // t=117: Thread Delete
+    if (t === 117) {
       const eventData = d as WsThreadDeleteEvent | undefined
       if (eventData?.thread_id != null) {
         const threadId = String(eventData.thread_id)
@@ -718,9 +752,9 @@ function handleMessage(event: MessageEvent) {
 
     // ── Guild emoji events ───────────────────────────────────────────────────
 
-    // t=116: Guild Emoji Create — emoji upload finalized and ready
+    // t=118: Guild Emoji Create — emoji upload finalized and ready
     //   d = { emoji: { id, guild_id, name, animated } }
-    if (t === 116) {
+    if (t === 118) {
       const data = d as { emoji?: { id?: string; guild_id?: string; name?: string; animated?: boolean } } | undefined
       if (data?.emoji?.id && data.emoji.guild_id && data.emoji.name) {
         useEmojiStore.getState().addEmoji({
@@ -734,9 +768,9 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
-    // t=117: Guild Emoji Update — emoji renamed
+    // t=119: Guild Emoji Update — emoji renamed
     //   d = { emoji: { id, guild_id, name, animated } }
-    if (t === 117) {
+    if (t === 119) {
       const data = d as { emoji?: { id?: string; guild_id?: string; name?: string; animated?: boolean } } | undefined
       if (data?.emoji?.id && data.emoji.guild_id && data.emoji.name) {
         useEmojiStore.getState().updateEmoji({
@@ -750,9 +784,9 @@ function handleMessage(event: MessageEvent) {
       return
     }
 
-    // t=118: Guild Emoji Delete — emoji removed
+    // t=120: Guild Emoji Delete — emoji removed
     //   d = { guild_id, emoji_id }
-    if (t === 118) {
+    if (t === 120) {
       const data = d as { guild_id?: string | number; emoji_id?: string | number } | undefined
       if (data?.guild_id != null && data?.emoji_id != null) {
         useEmojiStore.getState().removeEmoji(String(data.guild_id), String(data.emoji_id))

@@ -66,7 +66,7 @@ function TooltipContent({
             data-slot="tooltip-content"
             sideOffset={sideOffset}
             className={cn(
-              "bg-foreground text-background z-50 w-fit rounded-md px-3 py-1.5 text-xs text-balance",
+              "bg-popover text-popover-foreground border z-50 w-fit rounded-md px-3 py-1.5 text-xs text-balance shadow-md",
               className
             )}
             {...props}
@@ -80,7 +80,7 @@ function TooltipContent({
               style={{ transformOrigin: 'var(--radix-tooltip-content-transform-origin)' }}
             >
               {children}
-              <TooltipPrimitive.Arrow className="bg-foreground fill-foreground z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]" />
+              <TooltipPrimitive.Arrow className="fill-popover z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]" />
             </motion.div>
           </TooltipPrimitive.Content>
         )}
