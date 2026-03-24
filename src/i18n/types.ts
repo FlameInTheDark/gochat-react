@@ -334,6 +334,18 @@ export interface Translation {
         roleRemoveFailed: string
         dmFailed: string
     }
+    emojiDetail: {
+        serverPrivate: string
+        loadFailed: string
+        clickToSeeDetails: string
+        emojiIsFrom: string
+    }
+    reactions: {
+        dialogTitle: string
+        clickToSeeWhoReacted: string
+        noReactions: string
+        loadMore: string
+    }
     messageItem: {
         copyText: string
         copyMessageId: string
@@ -361,6 +373,7 @@ export interface Translation {
         escTo: string
         cancel: string
         edited: string
+        addReaction: string
     }
     joinMessages: string[]
     serverSidebar: {

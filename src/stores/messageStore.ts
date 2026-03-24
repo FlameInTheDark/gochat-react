@@ -3,7 +3,7 @@ import {
   revokePendingUploadAttachmentUrls,
   type PendingUploadAttachment,
 } from '@/lib/pendingAttachments'
-import type { DtoAttachment, DtoChannel, DtoMessage } from '@/types'
+import type { DtoAttachment, DtoChannel, DtoMessage, DtoMessageReaction } from '@/types'
 
 export type PendingMessageStatus = 'sending' | 'failed' | 'confirmed'
 
@@ -47,6 +47,7 @@ interface MessageState {
   findPendingMessage: (localId: string) => PendingMessage | null
   removeMessage: (channelId: string, msgId: string) => void
   updateMessage: (channelId: string, msg: DtoMessage) => void
+  updateMessageReaction: (channelId: string, messageId: string, reaction: DtoMessageReaction) => void
   syncThreadMetadata: (thread: DtoChannel) => void
   removeThreadMetadata: (threadId: string) => void
   removeChannelMessages: (channelId: string) => void
@@ -336,6 +337,31 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         ),
       },
     })),
+
+  updateMessageReaction: (channelId, messageId, reaction) =>
+    set((state) => {
+      const messages = state.messages[channelId]
+      if (!messages) return state
+      const emojiName = reaction.emoji?.name
+      const updated = messages.map((m) => {
+        if (String(m.id) !== messageId) return m
+        const existing = m.reactions ?? []
+        let matched = false
+        let next: DtoMessageReaction[]
+        if ((reaction.count ?? 0) === 0) {
+          next = existing.filter((r) => r.emoji?.name !== emojiName)
+        } else {
+          next = existing.map((r) => {
+            if (r.emoji?.name !== emojiName) return r
+            matched = true
+            return reaction
+          })
+          if (!matched) next = [...next, reaction]
+        }
+        return { ...m, reactions: next }
+      })
+      return { messages: { ...state.messages, [channelId]: updated } }
+    }),
 
   syncThreadMetadata: (thread) =>
     set((state) => {

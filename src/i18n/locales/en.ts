@@ -356,6 +356,18 @@ const en: Translation = {
         roleRemoveFailed: 'Failed to remove role',
         dmFailed: 'Failed to open DM',
     },
+    emojiDetail: {
+        serverPrivate: 'Server is private or unavailable',
+        loadFailed: 'Failed to load emoji info',
+        clickToSeeDetails: 'Click to see details',
+        emojiIsFrom: 'This emoji is from',
+    },
+    reactions: {
+        dialogTitle: 'Reactions',
+        clickToSeeWhoReacted: 'Click to see who reacted',
+        noReactions: 'No reactions yet',
+        loadMore: 'Load more',
+    },
     messageItem: {
         copyText: 'Copy Text',
         copyMessageId: 'Copy Message ID',
@@ -383,6 +395,7 @@ const en: Translation = {
         escTo: ' · Esc to ',
         cancel: 'cancel',
         edited: '(edited)',
+        addReaction: 'Add Reaction',
     },
     joinMessages: [
         'has joined the party!',

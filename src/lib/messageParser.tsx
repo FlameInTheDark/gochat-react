@@ -2,6 +2,7 @@ import React from 'react'
 import CodeBlock from '@/components/chat/CodeBlock'
 import { emojiUrl } from '@/lib/emoji'
 import AnimatedImage from '@/components/ui/AnimatedImage'
+import CustomEmojiImage from '@/components/chat/CustomEmojiImage'
 
 // ── Resolver ─────────────────────────────────────────────────────────────────
 
@@ -133,14 +134,11 @@ function parseInline(
       // Custom emoji <:name:id>
       const emojiName = match[11]
       const emojiId = match[12]
-      const emojiSrc = emojiUrl(emojiId, 44)
       nodes.push(
-        <AnimatedImage
+        <CustomEmojiImage
           key={k}
-          src={emojiSrc}
-          pauseFallback={emojiSrc}
-          alt={`:${emojiName}:`}
-          title={`:${emojiName}:`}
+          emojiId={emojiId}
+          emojiName={emojiName}
           className="inline-block h-[1.375em] w-auto align-middle mx-0.5"
         />,
       )
