@@ -22,10 +22,15 @@ import {
   type DenoiserNode,
 } from './denoiserService'
 
-// BigInt-aware serializer for SFU WS messages (channel IDs are int64 Snowflakes).
-// Used for both outgoing (stringify) and incoming (parse) messages — large user IDs
-// in speaking events would lose precision with plain JSON.parse.
-const _bigJson = JSONBig({ useNativeBigInt: true, storeAsString: true })
+// Outgoing: JSON.stringify with a replacer that emits native BigInt as raw JSON numbers.
+// Avoids json-bigint's buggy `instanceof BigInt` check in stringify with useNativeBigInt.
+function sfuStringify(data: unknown): string {
+  return JSON.stringify(data, (_, v) =>
+    typeof v === 'bigint' ? `__BI__${v}` : v
+  ).replace(/"__BI__(\d+)"/g, '$1')
+}
+// Incoming: keep large int64 IDs as strings to avoid float64 precision loss
+const _bigJsonParse = JSONBig({ storeAsString: true })
 
 // RTC event type constants (match SFUProtocol.md / SFUEventPayloads.md)
 const T_JOIN      = 500   // Client→SFU: join; SFU→Client: join ack {ok:true}
@@ -364,7 +369,7 @@ interface SfuPayload {
 
 function sfuSend(data: unknown) {
   if (sfuSocket?.readyState === WebSocket.OPEN) {
-    const str = _bigJson.stringify(data)
+    const str = sfuStringify(data)
     console.debug(TAG + ' → SFU', S, data)
     sfuSocket.send(str)
   } else {
@@ -415,7 +420,7 @@ async function handleOffer(sdp: string) {
 function onSfuMessage(event: MessageEvent) {
   let payload: SfuPayload
   try {
-    payload = _bigJson.parse(event.data as string) as SfuPayload
+    payload = _bigJsonParse.parse(event.data as string) as SfuPayload
   } catch {
     verr('onSfuMessage: JSON parse failed, raw=%s', event.data)
     return
@@ -1018,7 +1023,7 @@ export async function joinVoice(
     vlog('joinVoice: SFU WebSocket OPEN')
 
     // RTCJoin
-    const joinMsg = { op: 7, t: T_JOIN, d: { channel: channelId, token: sfuToken } }
+    const joinMsg = { op: 7, t: T_JOIN, d: { channel: BigInt(channelId), token: sfuToken } }
     vlog('joinVoice: sending RTCJoin (t=%d)', T_JOIN)
     sfuSend(joinMsg)
 
