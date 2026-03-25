@@ -69,9 +69,10 @@ export default function ServerLayout() {
   }, [members])
 
   // Auto-navigate to saved channel when opening a guild with no channel in URL.
-  // Runs after channels load; only fires when there is no channel already selected.
+  // Skipped on mobile: the channel list IS the intended destination for /app/:serverId.
+  // Auto-navigating away would trap the user (back button re-triggers navigation).
   useEffect(() => {
-    if (!serverId || hasChannel || !channels?.length) return
+    if (!serverId || hasChannel || !channels?.length || isMobile) return
     const savedChannelId = selectedChannels[serverId]
     if (!savedChannelId) return
     const exists = channels.some((ch) => String(ch.id) === savedChannelId)
