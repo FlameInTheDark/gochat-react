@@ -28,6 +28,8 @@ interface FolderState {
    * never re-runs after loadFromSettings wipes itemOrder.
    */
   settingsVersion: number
+  /** Last selected channel per guild, keyed by guildId string. */
+  selectedChannels: Record<string, string>
 
   loadFromSettings: (
     apifolders?: Array<ModelUserSettingsGuildFolders>,
@@ -48,6 +50,7 @@ interface FolderState {
   reorderFolderGuilds: (folderId: string, newGuildIds: string[]) => void
   toggleCollapse: (id: string) => void
   getFolderForGuild: (guildId: string) => GuildFolder | undefined
+  setSelectedChannel: (guildId: string, channelId: string) => void
   saveToSettings: () => Promise<void>
 }
 
@@ -126,6 +129,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   folders: [],
   itemOrder: [],
   settingsVersion: 0,
+  selectedChannels: {},
 
   // ── load / sync ──────────────────────────────────────────────────────────
 
@@ -158,8 +162,15 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       entries.push({ pos, item: `folder:${folders[i].id}` })
     }
 
+    const selectedChannels: Record<string, string> = {}
+    for (const sg of settingsGuilds ?? []) {
+      if (sg.selected_channel) {
+        selectedChannels[String(sg.guild_id)] = String(sg.selected_channel)
+      }
+    }
+
     entries.sort((a, b) => a.pos - b.pos)
-    set((s) => ({ folders, itemOrder: entries.map((e) => e.item), settingsVersion: s.settingsVersion + 1 }))
+    set((s) => ({ folders, itemOrder: entries.map((e) => e.item), selectedChannels, settingsVersion: s.settingsVersion + 1 }))
   },
 
   syncGuilds: (allGuildIds) => {
@@ -374,11 +385,18 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     return get().folders.find((f) => f.guildIds.includes(guildId))
   },
 
+  setSelectedChannel: (guildId, channelId) => {
+    set((s) => ({
+      selectedChannels: { ...s.selectedChannels, [guildId]: channelId },
+    }))
+    scheduleSave(get)
+  },
+
   // ── persistence ───────────────────────────────────────────────────────────
 
   saveToSettings: async () => {
     try {
-      const { folders, itemOrder } = get()
+      const { folders, itemOrder, selectedChannels } = get()
       const settingsRes = await userApi.userMeSettingsGet({})
       const existing = settingsRes.data?.settings ?? {}
 
@@ -395,10 +413,12 @@ export const useFolderStore = create<FolderState>((set, get) => ({
         .map((item, pos) => {
           const guildId = item.slice(6)
           const prev = existingGuildsMap.get(guildId)
+          const selCh = selectedChannels[guildId]
           return {
             ...prev,
             guild_id: BigInt(guildId) as unknown as number,
             position: pos,
+            ...(selCh ? { selected_channel: BigInt(selCh) as unknown as number } : {}),
           }
         })
 
@@ -406,10 +426,12 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       const folderGuildSettings = folders.flatMap((folder) =>
         folder.guildIds.map((guildId, pos) => {
           const prev = existingGuildsMap.get(guildId)
+          const selCh = selectedChannels[guildId]
           return {
             ...prev,
             guild_id: BigInt(guildId) as unknown as number,
             position: pos,
+            ...(selCh ? { selected_channel: BigInt(selCh) as unknown as number } : {}),
           }
         }),
       )

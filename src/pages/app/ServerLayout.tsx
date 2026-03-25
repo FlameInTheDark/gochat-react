@@ -1,11 +1,12 @@
-import { useEffect } from 'react'
-import { Outlet, useParams, useLocation } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { Outlet, useParams, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { guildApi } from '@/api/client'
 import type { DtoChannel } from '@/types'
 import ChannelSidebar from '@/components/layout/ChannelSidebar'
 import { subscribeGuilds, addPresenceSubscription } from '@/services/wsService'
 import { useClientMode } from '@/hooks/useClientMode'
+import { useFolderStore } from '@/stores/folderStore'
 
 export interface ServerOutletContext {
   channels: DtoChannel[]
@@ -15,11 +16,16 @@ export default function ServerLayout() {
   const { serverId } = useParams<{ serverId: string }>()
   const isMobile = useClientMode() === 'mobile'
   const location = useLocation()
+  const navigate = useNavigate()
   // On mobile, detect if we're at the channel level by checking URL depth:
   // /app/:serverId → 2 parts → show channel list
   // /app/:serverId/:channelId → 3 parts → show chat
   const parts = location.pathname.split('/').filter(Boolean)
   const hasChannel = parts.length >= 3
+  const channelId = parts.length >= 3 ? parts[2] : null
+
+  const selectedChannels = useFolderStore((s) => s.selectedChannels)
+  const setSelectedChannel = useFolderStore((s) => s.setSelectedChannel)
 
   const { data: channels } = useQuery({
     queryKey: ['channels', serverId],
@@ -61,6 +67,32 @@ export default function ServerLayout() {
       addPresenceSubscription(ids)
     }
   }, [members])
+
+  // Auto-navigate to saved channel when opening a guild with no channel in URL.
+  // Runs after channels load; only fires when there is no channel already selected.
+  useEffect(() => {
+    if (!serverId || hasChannel || !channels?.length) return
+    const savedChannelId = selectedChannels[serverId]
+    if (!savedChannelId) return
+    const exists = channels.some((ch) => String(ch.id) === savedChannelId)
+    if (exists) {
+      navigate(`/app/${serverId}/${savedChannelId}`, { replace: true })
+    }
+  }, [serverId, hasChannel, channels, selectedChannels, navigate])
+
+  // Persist the selected channel for this guild when the user navigates to a channel.
+  // Debounced 1.5 s so rapid channel switches don't trigger unnecessary API calls.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!serverId || !channelId) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      setSelectedChannel(serverId, channelId)
+    }, 1500)
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+  }, [serverId, channelId, setSelectedChannel])
 
   const resolvedChannels = channels ?? []
 
