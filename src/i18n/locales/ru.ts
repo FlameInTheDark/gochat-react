@@ -594,6 +594,20 @@ const ru: Translation = {
         mutedUntil: 'Заглушено до {{time}}',
         mutedIndefinite: 'Заглушено навсегда',
     },
+    // ── Invite Page ───────────────────────────────────────────────────────────
+    invitePage: {
+        loginRequired: 'Войдите, чтобы принять это приглашение.',
+        signIn: 'Войти',
+        createAccount: 'Создать аккаунт',
+        youveBeenInvited: 'Вас приглашают на сервер',
+        membersCount: '{{count}} участник',
+        acceptInvite: 'Принять приглашение',
+        joining: 'Подключение…',
+        returnToApp: 'Вернуться в приложение',
+        goToApp: 'Перейти в приложение',
+        invalidInvite: 'Приглашение недействительно или истекло.',
+        joinFailed: 'Не удалось присоединиться. Приглашение могло истечь.',
+    },
 }
 
 export default ru

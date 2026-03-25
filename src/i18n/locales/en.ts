@@ -591,6 +591,20 @@ const en: Translation = {
         mutedUntil: 'Muted until {{time}}',
         mutedIndefinite: 'Muted indefinitely',
     },
+    // ── Invite Page ───────────────────────────────────────────────────────────
+    invitePage: {
+        loginRequired: 'You need to be logged in to accept this invite.',
+        signIn: 'Sign In',
+        createAccount: 'Create an account',
+        youveBeenInvited: "You've been invited to join",
+        membersCount: '{{count}} member',
+        acceptInvite: 'Accept Invite',
+        joining: 'Joining…',
+        returnToApp: 'Return to App',
+        goToApp: 'Go to app',
+        invalidInvite: 'This invite is invalid or has expired.',
+        joinFailed: 'Failed to join the server. The invite may have expired.',
+    },
 }
 
 export default en

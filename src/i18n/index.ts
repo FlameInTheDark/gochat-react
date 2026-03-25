@@ -10,12 +10,19 @@ export const SUPPORTED_LANGUAGES = [
 
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number]['code']
 
+const SUPPORTED_CODES = SUPPORTED_LANGUAGES.map((l) => l.code)
+
+function detectBrowserLanguage(): string {
+    const browserLang = navigator.language?.split('-')[0] ?? 'en'
+    return SUPPORTED_CODES.includes(browserLang as SupportedLanguage) ? browserLang : 'en'
+}
+
 void i18n.use(initReactI18next).init({
     resources: {
         en: { translation: en },
         ru: { translation: ru },
     },
-    lng: 'en',
+    lng: detectBrowserLanguage(),
     fallbackLng: 'en',
     interpolation: {
         // React already handles XSS

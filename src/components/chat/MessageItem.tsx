@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -683,26 +684,34 @@ export default function MessageItem({
                 'absolute -top-3 right-2 z-10 flex items-center gap-0.5 rounded border border-border bg-background shadow-sm',
                 reactionPickerOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
               )}>
-                <button
-                  ref={reactionButtonRef}
-                  type="button"
-                  onClick={handleOpenReactionPicker}
-                  aria-label={t('messageItem.addReaction')}
-                  title={t('messageItem.addReaction')}
-                  className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <Smile className="h-4 w-4" />
-                </button>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      ref={reactionButtonRef}
+                      type="button"
+                      onClick={handleOpenReactionPicker}
+                      aria-label={t('messageItem.addReaction')}
+                      className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <Smile className="h-4 w-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">{t('messageItem.addReaction')}</TooltipContent>
+                </Tooltip>
                 {replyAction && (
-                  <button
-                    type="button"
-                    onClick={replyAction.onClick}
-                    aria-label={replyAction.label}
-                    title={replyAction.label}
-                    className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
-                  >
-                    <ReplyIcon className="h-4 w-4" />
-                  </button>
+                  <Tooltip delayDuration={400}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={replyAction.onClick}
+                        aria-label={replyAction.label}
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        <ReplyIcon className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">{replyAction.label}</TooltipContent>
+                  </Tooltip>
                 )}
               </div>
             )}

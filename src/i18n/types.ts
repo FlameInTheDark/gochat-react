@@ -558,4 +558,17 @@ export interface Translation {
         mutedUntil: string
         mutedIndefinite: string
     }
+    invitePage: {
+        loginRequired: string
+        signIn: string
+        createAccount: string
+        youveBeenInvited: string
+        membersCount: string
+        acceptInvite: string
+        joining: string
+        returnToApp: string
+        goToApp: string
+        invalidInvite: string
+        joinFailed: string
+    }
 }

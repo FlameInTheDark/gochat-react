@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -12,6 +12,7 @@ import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const token = useAuthStore((s) => s.token)
   const setToken = useAuthStore((s) => s.setToken)
   const setRefreshToken = useAuthStore((s) => s.setRefreshToken)
@@ -59,7 +60,8 @@ export default function LoginPage() {
       if (token) {
         setToken(token)
         if (refresh_token) setRefreshToken(refresh_token)
-        navigate('/app')
+        const next = searchParams.get('next')
+        navigate(next ?? '/app')
       }
     } catch {
       setError(t('auth.invalidCredentials'))

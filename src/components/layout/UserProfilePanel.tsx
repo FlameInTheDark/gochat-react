@@ -12,7 +12,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { guildApi, rolesApi, userApi } from '@/api/client'
 import type { DtoMember, DtoGuild } from '@/types'
-import type { DtoRole } from '@/client'
+import type { DtoRole, DtoUser } from '@/client'
 import { cn } from '@/lib/utils'
 import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
 import ProfileCardBody, { userColor, colorToHex, panelTextColors, isDark } from './ProfileCardBody'
@@ -130,12 +130,22 @@ export default function UserProfilePanel() {
     staleTime: 30_000,
   })
 
+  // In DM context (no guildId) there's no member record — fetch the user directly
+  const { data: fetchedUser } = useQuery<DtoUser>({
+    queryKey: ['user', userId],
+    queryFn: () => userApi.userUserIdGet({ userId }).then((r) => r.data),
+    enabled: !!userId && !guildId && !!profile,
+    staleTime: 60_000,
+  })
+
   const isMobile = useClientMode() === 'mobile'
 
   // ── Data from query cache ─────────────────────────────────────────────────
 
   const members = queryClient.getQueryData<DtoMember[]>(['members', guildId]) ?? []
   const member = members.find((m) => String(m.user?.id) === userId)
+  // In DM context member is undefined; fall back to the directly-fetched user
+  const userData = member?.user ?? fetchedUser
 
   const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === guildId)
   const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
@@ -147,9 +157,9 @@ export default function UserProfilePanel() {
   const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
   const canManageRoles = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_ROLES)
 
-  const displayName = member?.username ?? member?.user?.name ?? activeProfile?.fallbackName ?? t('common.unknown')
-  const globalName = member?.user?.name
-  const discriminator = member?.user?.discriminator
+  const displayName = member?.username ?? userData?.name ?? activeProfile?.fallbackName ?? t('common.unknown')
+  const globalName = userData?.name
+  const discriminator = userData?.discriminator
   const joinDate = member?.join_at
     ? new Date(member.join_at).toLocaleDateString(undefined, {
       year: 'numeric', month: 'long', day: 'numeric',
@@ -180,7 +190,7 @@ export default function UserProfilePanel() {
 
   const isSelf = currentUser?.id !== undefined && String(currentUser.id) === userId
   const isFriend = friends.some((f) => String(f.id) === userId)
-  const memberDiscriminator = member?.user?.discriminator
+  const memberDiscriminator = userData?.discriminator
 
   async function handleSendFriendRequest() {
     if (!memberDiscriminator) return
@@ -224,8 +234,8 @@ export default function UserProfilePanel() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   const accent = userColor(userId)
-  const rawPanelColor = activeProfile && member?.user?.panel_color ? colorToHex(member.user.panel_color) : null
-  const rawBannerColor = activeProfile && member?.user?.banner_color ? colorToHex(member.user.banner_color) : null
+  const rawPanelColor = activeProfile && userData?.panel_color ? colorToHex(userData.panel_color) : null
+  const rawBannerColor = activeProfile && userData?.banner_color ? colorToHex(userData.banner_color) : null
   const { textColor, mutedColor } = panelTextColors(rawPanelColor)
 
   // ── Shared inner content ───────────────────────────────────────────────────
@@ -267,8 +277,8 @@ export default function UserProfilePanel() {
         displayName={displayName}
         globalName={globalName}
         discriminator={discriminator}
-        avatarUrl={member?.user?.avatar?.url}
-        bio={mobile ? undefined : member?.user?.bio}
+        avatarUrl={userData?.avatar?.url}
+        bio={mobile ? undefined : userData?.bio}
         panelColor={rawPanelColor}
         bannerColor={rawBannerColor}
         accent={accent}
@@ -278,9 +288,9 @@ export default function UserProfilePanel() {
           // ── Mobile: grouped semi-transparent blocks ────────────────────────
           <>
             {/* Block 1: Bio + Member Since */}
-            {(member?.user?.bio || joinDate) && (
+            {(userData?.bio || joinDate) && (
               <div className="rounded-2xl p-3 space-y-2.5" style={{ backgroundColor: blockBg }}>
-                {member?.user?.bio && (
+                {userData?.bio && (
                   <div>
                     <p
                       className={cn('text-[10px] font-semibold uppercase tracking-wider mb-0.5', !mutedColor && 'text-muted-foreground')}
@@ -292,11 +302,11 @@ export default function UserProfilePanel() {
                       className={cn('text-sm whitespace-pre-wrap break-words', !textColor && 'text-foreground')}
                       style={{ color: textColor }}
                     >
-                      {member.user.bio}
+                      {userData.bio}
                     </p>
                   </div>
                 )}
-                {member?.user?.bio && joinDate && (
+                {userData?.bio && joinDate && (
                   <div className="h-px" style={{ backgroundColor: rawPanelColor ? (isDark(rawPanelColor) ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.1)') : 'rgba(255,255,255,0.1)' }} />
                 )}
                 {joinDate && (
@@ -408,7 +418,7 @@ export default function UserProfilePanel() {
             )}
 
             {/* Roles */}
-            <div>
+            {guildId && <div>
               <div className="flex items-center justify-between mb-1.5">
                 <p
                   className={cn('text-[10px] font-semibold uppercase tracking-wider', !mutedColor && 'text-muted-foreground')}
@@ -485,7 +495,7 @@ export default function UserProfilePanel() {
                   })}
                 </div>
               )}
-            </div>
+            </div>}
 
             {/* Actions */}
             <div className="space-y-2">

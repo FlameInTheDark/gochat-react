@@ -32,6 +32,7 @@ import { useReadStateStore } from '@/stores/readStateStore'
 import { useUnreadStore } from '@/stores/unreadStore'
 import TypingIndicator from '@/components/chat/TypingIndicator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useMessagePagination } from '@/hooks/useMessagePagination'
 import { useTranslation } from 'react-i18next'
@@ -1309,31 +1310,39 @@ export default function ChannelPage() {
                 </button>
               )}
               {isTextChannel && (
-                <button
-                  onClick={handleThreadButtonClick}
-                  title={threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}
-                  className={cn(
-                    'w-9 h-9 flex items-center justify-center rounded transition-colors',
-                    threadButtonActive
-                      ? 'text-foreground bg-accent'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                  )}
-                >
-                  <Spool className="w-4 h-4" />
-                </button>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleThreadButtonClick}
+                      className={cn(
+                        'w-9 h-9 flex items-center justify-center rounded transition-colors',
+                        threadButtonActive
+                          ? 'text-foreground bg-accent'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                      )}
+                    >
+                      <Spool className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}</TooltipContent>
+                </Tooltip>
               )}
-              <button
-                onClick={handleMembersButtonClick}
-                title={rightPanelMode === 'members' ? t('channel.hideMemberList') : t('channel.showMemberList')}
-                className={cn(
-                  'w-9 h-9 flex items-center justify-center rounded transition-colors',
-                  rightPanelMode === 'members'
-                    ? 'text-foreground bg-accent'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                )}
-              >
-                <Users className="w-4 h-4" />
-              </button>
+              <Tooltip delayDuration={400}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleMembersButtonClick}
+                    className={cn(
+                      'w-9 h-9 flex items-center justify-center rounded transition-colors',
+                      rightPanelMode === 'members'
+                        ? 'text-foreground bg-accent'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                    )}
+                  >
+                    <Users className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{rightPanelMode === 'members' ? t('channel.hideMemberList') : t('channel.showMemberList')}</TooltipContent>
+              </Tooltip>
             </div>
           )}
 
@@ -1341,31 +1350,39 @@ export default function ChannelPage() {
           {!isMobile && (
             <div className="ml-auto flex items-center gap-2">
               {isTextChannel && (
-                <button
-                  onClick={handleThreadButtonClick}
-                  title={threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}
-                  className={cn(
-                    'w-8 h-8 flex items-center justify-center rounded transition-colors',
-                    threadButtonActive
-                      ? 'text-foreground bg-accent'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                  )}
-                >
-                  <Spool className="w-4 h-4" />
-                </button>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleThreadButtonClick}
+                      className={cn(
+                        'w-8 h-8 flex items-center justify-center rounded transition-colors',
+                        threadButtonActive
+                          ? 'text-foreground bg-accent'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                      )}
+                    >
+                      <Spool className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}</TooltipContent>
+                </Tooltip>
               )}
-              <button
-                onClick={handleMembersButtonClick}
-                title={rightPanelMode === 'members' ? t('channel.hideMemberList') : t('channel.showMemberList')}
-                className={cn(
-                  'w-8 h-8 flex items-center justify-center rounded transition-colors',
-                  rightPanelMode === 'members'
-                    ? 'text-foreground bg-accent'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                )}
-              >
-                <Users className="w-4 h-4" />
-              </button>
+              <Tooltip delayDuration={400}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleMembersButtonClick}
+                    className={cn(
+                      'w-8 h-8 flex items-center justify-center rounded transition-colors',
+                      rightPanelMode === 'members'
+                        ? 'text-foreground bg-accent'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                    )}
+                  >
+                    <Users className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{rightPanelMode === 'members' ? t('channel.hideMemberList') : t('channel.showMemberList')}</TooltipContent>
+              </Tooltip>
               <SearchBar
                 ref={searchBarRef}
                 className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
