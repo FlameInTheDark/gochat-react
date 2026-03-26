@@ -439,37 +439,43 @@ function handleMessage(event: MessageEvent) {
       // Always sync custom_status_text — empty string clears a previously set status
       store.setCustomStatus(uid, presence.custom_status_text ?? '')
 
-      // Sync mute/deafen state for users in voice channels
+      // Sync mute/deafen state for users in voice channels.
+      // Only act when voice_channel_id is explicitly present in the payload —
+      // an absent field means the server didn't send voice state in this update,
+      // so we must not touch voice channel membership.
       if (presence.voice_channel_id !== undefined) {
-        const voiceStore = useVoiceStore.getState()
-        const presenceStore = usePresenceStore.getState()
-        const currentUserId = useAuthStore.getState().user?.id
-        const channelId = String(presence.voice_channel_id)
+        const voiceChannelIdNum = Number(presence.voice_channel_id)
+        if (voiceChannelIdNum !== 0) {
+          const voiceStore = useVoiceStore.getState()
+          const presenceStore = usePresenceStore.getState()
+          const currentUserId = useAuthStore.getState().user?.id
+          const channelId = String(presence.voice_channel_id)
 
-        // Track user in voice channel for sidebar display (including current user)
-        // Add/update user in voice channel with mute/deafen state
-        presenceStore.addUserToVoiceChannel(channelId, {
-          userId: uid,
-          username: presence.username ?? `User ${uid.slice(0, 6)}`,
-          avatarUrl: presence.avatar_url,
-          muted: presence.mute ?? false,
-          deafened: presence.deafen ?? false,
-        })
+          // Track user in voice channel for sidebar display (including current user)
+          // Add/update user in voice channel with mute/deafen state
+          presenceStore.addUserToVoiceChannel(channelId, {
+            userId: uid,
+            username: presence.username ?? `User ${uid.slice(0, 6)}`,
+            avatarUrl: presence.avatar_url,
+            muted: presence.mute ?? false,
+            deafened: presence.deafen ?? false,
+          })
 
-        // Sync mute/deafen state for other users (not ourselves)
-        if (uid !== String(currentUserId ?? '')) {
-          voiceStore.setPeerMuted(uid, presence.mute ?? false)
-          voiceStore.setPeerDeafened(uid, presence.deafen ?? false)
-        }
-      } else {
-        // User left voice channel - remove from tracking only if they were in one
-        const presenceStore = usePresenceStore.getState()
-        const voiceUsers = presenceStore.voiceChannelUsers
-        const wasInAnyChannel = Object.values(voiceUsers).some((users) =>
-          users.some((u) => u.userId === uid)
-        )
-        if (wasInAnyChannel) {
-          presenceStore.removeUserFromAllVoiceChannels(uid)
+          // Sync mute/deafen state for other users (not ourselves)
+          if (uid !== String(currentUserId ?? '')) {
+            voiceStore.setPeerMuted(uid, presence.mute ?? false)
+            voiceStore.setPeerDeafened(uid, presence.deafen ?? false)
+          }
+        } else {
+          // voice_channel_id explicitly 0 → user left voice channel
+          const presenceStore = usePresenceStore.getState()
+          const voiceUsers = presenceStore.voiceChannelUsers
+          const wasInAnyChannel = Object.values(voiceUsers).some((users) =>
+            users.some((u) => u.userId === uid)
+          )
+          if (wasInAnyChannel) {
+            presenceStore.removeUserFromAllVoiceChannels(uid)
+          }
         }
       }
     }
