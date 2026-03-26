@@ -30,6 +30,8 @@ interface MessageReactionsProps {
   channelId: string
   messageId: string
   onAddReaction?: (rect: DOMRect) => void
+  openDialog?: boolean
+  onDialogClose?: () => void
 }
 
 function getReactionName(reaction: DtoMessageReaction): string {
@@ -49,7 +51,7 @@ interface ReactionUsers {
 
 const PAGE_SIZE = 20
 
-export default function MessageReactions({ reactions, channelId, messageId, onAddReaction }: MessageReactionsProps) {
+export default function MessageReactions({ reactions, channelId, messageId, onAddReaction, openDialog: openDialogProp, onDialogClose }: MessageReactionsProps) {
   const { t } = useTranslation()
   const updateMessageReaction = useMessageStore((s) => s.updateMessageReaction)
   const [pending, setPending] = useState<Set<string>>(new Set())
@@ -61,6 +63,15 @@ export default function MessageReactions({ reactions, channelId, messageId, onAd
   const sentinelRef = useRef<HTMLDivElement>(null)
 
   const visible = reactions.filter((r) => (r.count ?? 0) > 0)
+
+  // Open dialog externally (e.g. from context menu)
+  useEffect(() => {
+    if (!openDialogProp) return
+    const first = visible[0]
+    if (first) openDialog(getReactionName(first))
+    onDialogClose?.()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openDialogProp])
 
   // Load users for a reaction if not cached
   const loadUsers = useCallback(async (reactionName: string) => {
@@ -305,7 +316,7 @@ export default function MessageReactions({ reactions, channelId, messageId, onAd
 
       {/* Reactions dialog */}
       <Dialog open={dialogOpen} onOpenChange={handleOpenChange}>
-        <DialogContent className="flex flex-col gap-0 p-0 sm:max-w-[480px] h-[440px] overflow-hidden">
+        <DialogContent aria-describedby={undefined} className="flex flex-col gap-0 p-0 sm:max-w-[480px] h-[440px] overflow-hidden">
           <DialogHeader className="px-4 py-3 border-b border-border shrink-0">
             <DialogTitle>{t('reactions.dialogTitle')}</DialogTitle>
           </DialogHeader>

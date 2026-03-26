@@ -71,6 +71,14 @@ body {
     scrollbar-color: oklch(1 0 0 / 18%) transparent;
   }
 
+  button:not(:disabled),
+  a,
+  [role="button"],
+  label[for],
+  select {
+    cursor: pointer;
+  }
+
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);

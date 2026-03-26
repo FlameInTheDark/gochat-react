@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'motion/react'
-import { ChevronDown, ChevronLeft, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye, MoreVertical } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -22,6 +22,9 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   Dialog,
@@ -52,7 +55,7 @@ import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/
 import type { DtoRole, DtoMember } from '@/client'
 import { useClientMode } from '@/hooks/useClientMode'
 import { useNotificationSettings } from '@/hooks/useNotificationSettings'
-import { NotificationsSubmenu } from './NotificationsSubmenu'
+import { NotificationsSubmenu, NotificationsDropdownSubmenu } from './NotificationsSubmenu'
 
 interface Props {
   channels: DtoChannel[]
@@ -856,6 +859,7 @@ function ChannelItem({
 }: ChannelItemProps) {
   const { t } = useTranslation()
   const { getChannelNotifications, setChannelNotifications } = useNotificationSettings()
+  const isMobile = useClientMode() === 'mobile'
   const isVoice = channel.type === ChannelType.ChannelTypeGuildVoice
   const Icon = isVoice ? Volume2 : Hash
   const hasVoiceUsers = isVoice && voiceUsers && voiceUsers.length > 0
@@ -891,15 +895,19 @@ function ChannelItem({
     <div className="w-full">
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <button
+          <div
             draggable={!isEditing}
             onDragStart={onDragStart}
             onDragOver={onDragOver}
             onDrop={onDrop}
             onDragEnd={onDragEnd}
             onClick={handleClick}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleClick() }}
+            role="button"
+            tabIndex={0}
             className={cn(
-              'w-full flex items-center gap-2 px-2 py-1 rounded text-sm transition-colors text-left cursor-pointer select-none group/item',
+              'w-full flex items-center gap-2 px-2 rounded text-sm transition-colors text-left cursor-pointer select-none group/item',
+              isMobile ? 'py-2' : 'py-1',
               isActive
                 ? 'bg-accent text-foreground'
                 : isUnread
@@ -941,9 +949,70 @@ function ChannelItem({
                 {mentionCount === 0 && isUnread && !isActive && (
                   <span className="ml-auto shrink-0 w-2 h-2 rounded-full bg-foreground" />
                 )}
+                {/* Mobile: three-dot menu button */}
+                {isMobile && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        className="shrink-0 p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/60"
+                      >
+                        <MoreVertical className="w-4 h-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent onClick={(e) => e.stopPropagation()}>
+                      {isVoice && (
+                        <>
+                          <DropdownMenuItem
+                            onClick={() => navigate(`/app/${serverId}/${String(channel.id)}`)}
+                            className="gap-2"
+                          >
+                            <Eye className="w-4 h-4" />
+                            {t('channelSidebar.viewChannel')}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                        </>
+                      )}
+                      {canManageChannels && (
+                        <>
+                          <DropdownMenuItem onClick={onOpenSettings} className="gap-2">
+                            <Settings className="w-4 h-4" />
+                            {t('channelSidebar.editChannel')}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                        </>
+                      )}
+                      <NotificationsDropdownSubmenu
+                        current={getChannelNotifications(String(channel.id))}
+                        onUpdate={(patch) => void setChannelNotifications(String(channel.id), patch)}
+                      />
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => { void navigator.clipboard.writeText(String(channel.id)) }}
+                        className="gap-2"
+                      >
+                        <Copy className="w-4 h-4" />
+                        {t('channelSidebar.copyChannelId')}
+                      </DropdownMenuItem>
+                      {canManageChannels && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => onDelete(channel)}
+                            className="text-destructive focus:text-destructive gap-2"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            {t('channelSidebar.deleteChannel')}
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </>
             )}
-          </button>
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
           {isVoice && (

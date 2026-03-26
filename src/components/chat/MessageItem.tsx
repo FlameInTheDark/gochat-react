@@ -182,6 +182,7 @@ export default function MessageItem({
   const [editContent, setEditContent] = useState('')
   const [editLoading, setEditLoading] = useState(false)
   const [reactionPickerOpen, setReactionPickerOpen] = useState(false)
+  const [reactionsDialogOpen, setReactionsDialogOpen] = useState(false)
   const [reactionPickerRect, setReactionPickerRect] = useState<DOMRect | null>(null)
   const [reactionPickerRightOf, setReactionPickerRightOf] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -382,11 +383,12 @@ export default function MessageItem({
   function handleAuthorClick(e: React.MouseEvent) {
     e.stopPropagation()
     if (!message.author?.id) return
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     openUserProfile(
       String(message.author.id),
       serverId ?? null,
-      e.clientX,
-      e.clientY,
+      rect.right,
+      rect.top,
       authorName,
     )
   }
@@ -394,11 +396,12 @@ export default function MessageItem({
   function handleReferencedAuthorClick(e: React.MouseEvent) {
     e.stopPropagation()
     if (!referencedMessage?.author?.id) return
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
     openUserProfile(
       String(referencedMessage.author.id),
       serverId ?? null,
-      e.clientX,
-      e.clientY,
+      rect.right,
+      rect.top,
       referencedMessage.author.name ?? t('common.unknown'),
     )
   }
@@ -976,6 +979,8 @@ export default function MessageItem({
                       reactions={message.reactions!}
                       channelId={channelId}
                       messageId={messageId}
+                      openDialog={reactionsDialogOpen}
+                      onDialogClose={() => setReactionsDialogOpen(false)}
                       onAddReaction={(rect) => {
                         setReactionPickerRect(rect)
                         setReactionPickerRightOf(true)
@@ -991,32 +996,83 @@ export default function MessageItem({
         </ContextMenuTrigger>
 
         <ContextMenuContent>
+          {/* Group 1: Quick reactions */}
           {hasRealMessageId && (
-            <ContextMenuItem
-              onClick={() => {
-                const rect = messageContainerRef.current?.getBoundingClientRect()
-                if (rect) {
-                  setReactionPickerRect(rect)
-                  setReactionPickerRightOf(false)
-                  setReactionPickerOpen(true)
-                }
-              }}
-              className="gap-2"
-            >
-              <SmilePlus className="w-4 h-4" />
-              {t('messageItem.addReaction')}
+            <>
+              <div className="flex flex-col gap-0.5 px-1 py-1">
+                <div className="flex items-center">
+                  {(['👍', '❤️', '😂', '😮'] as const).map((emoji) => (
+                    <ContextMenuItem
+                      key={emoji}
+                      onClick={() => void handleReactionEmojiSelect(emoji)}
+                      className="flex-1 h-8 !p-0 justify-center text-base"
+                    >
+                      {emoji}
+                    </ContextMenuItem>
+                  ))}
+                </div>
+                <ContextMenuItem
+                  onClick={() => {
+                    const rect = messageContainerRef.current?.getBoundingClientRect()
+                    if (rect) {
+                      setReactionPickerRect(rect)
+                      setReactionPickerRightOf(false)
+                      setReactionPickerOpen(true)
+                    }
+                  }}
+                  className="gap-2"
+                >
+                  <SmilePlus className="w-4 h-4" />
+                  {t('messageItem.addReaction')}
+                </ContextMenuItem>
+                {(message.reactions?.length ?? 0) > 0 && (
+                  <ContextMenuItem
+                    onClick={() => setReactionsDialogOpen(true)}
+                    className="gap-2"
+                  >
+                    <Smile className="w-4 h-4" />
+                    {t('messageItem.seeReactions')}
+                  </ContextMenuItem>
+                )}
+              </div>
+              <ContextMenuSeparator />
+            </>
+          )}
+
+          {/* Group 2: Edit, Reply, Thread, Message User */}
+          {canEditMessage && (
+            <ContextMenuItem onClick={startEdit} className="gap-2">
+              <Pencil className="w-4 h-4" />
+              {t('messageItem.editMessage')}
             </ContextMenuItem>
           )}
-          <ContextMenuItem onClick={handleCopy} className="gap-2">
-            <Copy className="w-4 h-4" />
-            {t('messageItem.copyText')}
-          </ContextMenuItem>
           {replyAction && (
             <ContextMenuItem onClick={replyAction.onClick} className="gap-2">
               <ReplyIcon className="w-4 h-4" />
               {replyAction.label}
             </ContextMenuItem>
           )}
+          {threadAction && (
+            <ContextMenuItem onClick={threadAction.onClick} className="gap-2">
+              <Spool className="w-4 h-4" />
+              {threadAction.label}
+            </ContextMenuItem>
+          )}
+          {!isOwn && (
+            <ContextMenuItem onClick={() => void handleMessageUser()} className="gap-2">
+              <MessageSquare className="w-4 h-4" />
+              {t('messageItem.messageUser')}
+            </ContextMenuItem>
+          )}
+          {(canEditMessage || !!replyAction || !!threadAction || !isOwn) && (
+            <ContextMenuSeparator />
+          )}
+
+          {/* Group 3: Copy text, Copy ID */}
+          <ContextMenuItem onClick={handleCopy} className="gap-2">
+            <Copy className="w-4 h-4" />
+            {t('messageItem.copyText')}
+          </ContextMenuItem>
           {hasRealMessageId && (
             <ContextMenuItem
               onClick={() => { void navigator.clipboard.writeText(messageId) }}
@@ -1026,33 +1082,8 @@ export default function MessageItem({
               {t('messageItem.copyMessageId')}
             </ContextMenuItem>
           )}
-          {threadAction && (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem onClick={threadAction.onClick} className="gap-2">
-                <Spool className="w-4 h-4" />
-                {threadAction.label}
-              </ContextMenuItem>
-            </>
-          )}
-          {canEditMessage && (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem onClick={startEdit} className="gap-2">
-                <Pencil className="w-4 h-4" />
-                {t('messageItem.editMessage')}
-              </ContextMenuItem>
-            </>
-          )}
-          {!isOwn && (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => void handleMessageUser()} className="gap-2">
-                <MessageSquare className="w-4 h-4" />
-                {t('messageItem.messageUser')}
-              </ContextMenuItem>
-            </>
-          )}
+
+          {/* Group 4: Delete */}
           {canDeleteMessage && (
             <>
               <ContextMenuSeparator />

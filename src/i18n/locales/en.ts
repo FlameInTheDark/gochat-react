@@ -396,6 +396,7 @@ const en: Translation = {
         cancel: 'cancel',
         edited: '(edited)',
         addReaction: 'Add Reaction',
+        seeReactions: 'See Reactions',
     },
     joinMessages: [
         'has joined the party!',

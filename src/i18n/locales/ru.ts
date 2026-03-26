@@ -399,6 +399,7 @@ const ru: Translation = {
         cancel: 'отмены',
         edited: '(изменено)',
         addReaction: 'Добавить реакцию',
+        seeReactions: 'Посмотреть реакции',
     },
     joinMessages: [
         'присоединился к вечеринке!',

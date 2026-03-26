@@ -374,6 +374,7 @@ export interface Translation {
         cancel: string
         edited: string
         addReaction: string
+        seeReactions: string
     }
     joinMessages: string[]
     serverSidebar: {
