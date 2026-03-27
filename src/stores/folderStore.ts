@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import { userApi, axiosInstance } from '@/api/client'
-import type { ModelUserSettingsGuildFolders, ModelUserSettingsGuilds } from '@/client'
+import { axiosInstance } from '@/api/client'
+import type { ModelUserSettingsData, ModelUserSettingsGuildFolders, ModelUserSettingsGuilds } from '@/client'
+import { queryClient } from '@/lib/queryClient'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 export interface GuildFolder {
@@ -52,6 +53,14 @@ interface FolderState {
   getFolderForGuild: (guildId: string) => GuildFolder | undefined
   setSelectedChannel: (guildId: string, channelId: string) => void
   saveToSettings: () => Promise<void>
+  /**
+   * If a debounced UI-state save is pending, cancel it and merge the accumulated
+   * folder/channel data into `existing`, returning the combined settings object.
+   * If no save is pending, returns `existing` unchanged.
+   * Called automatically by saveSettings() so any immediate config save absorbs
+   * accumulated channel-navigation state in one request.
+   */
+  flushPendingInto: (existing: ModelUserSettingsData) => ModelUserSettingsData
 }
 
 let _localIdCounter = 1
@@ -60,8 +69,11 @@ function genLocalId(): string {
 }
 
 // ── Debounced save ───────────────────────────────────────────────────────────
-// Coalesces rapid mutations (e.g. several drag-drop events) into a single
-// GET+POST cycle, avoiding race conditions from overlapping requests.
+// UI-state changes (channel navigation, folder reorder) are cheap to accumulate
+// locally and expensive to save on every action. We batch them with a long timer
+// so rapid navigation doesn't hammer the API. Any immediate settings save (voice,
+// appearance, etc.) calls flushPendingInto() which cancels this timer and merges
+// the accumulated state into that request — zero extra requests.
 let _saveTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleSave(get: () => FolderState) {
@@ -69,7 +81,49 @@ function scheduleSave(get: () => FolderState) {
   _saveTimer = setTimeout(() => {
     _saveTimer = null
     void get().saveToSettings()
-  }, 400)
+  }, 25_000)
+}
+
+// Pure helper — builds the guilds + guild_folders payload from current store state.
+function buildFolderPayload(
+  existing: ModelUserSettingsData,
+  folders: GuildFolder[],
+  itemOrder: string[],
+  selectedChannels: Record<string, string>,
+): ModelUserSettingsData {
+  const existingGuildsMap = new Map(
+    (existing.guilds ?? []).map((g) => [String(g.guild_id), g]),
+  )
+  const topLevelSettings = itemOrder
+    .filter((x) => x.startsWith('guild:'))
+    .map((item, pos) => {
+      const guildId = item.slice(6)
+      const prev = existingGuildsMap.get(guildId)
+      const selCh = selectedChannels[guildId]
+      return {
+        ...prev,
+        guild_id: BigInt(guildId) as unknown as number,
+        position: pos,
+        ...(selCh ? { selected_channel: BigInt(selCh) as unknown as number } : {}),
+      }
+    })
+  const folderGuildSettings = folders.flatMap((folder) =>
+    folder.guildIds.map((guildId, pos) => {
+      const prev = existingGuildsMap.get(guildId)
+      const selCh = selectedChannels[guildId]
+      return {
+        ...prev,
+        guild_id: BigInt(guildId) as unknown as number,
+        position: pos,
+        ...(selCh ? { selected_channel: BigInt(selCh) as unknown as number } : {}),
+      }
+    }),
+  )
+  return {
+    ...existing,
+    guilds: [...topLevelSettings, ...folderGuildSettings],
+    guild_folders: toApiGuildFolders(folders, itemOrder),
+  }
 }
 
 // ── Empty-folder cleanup helper ───────────────────────────────────────────────
@@ -397,57 +451,23 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   saveToSettings: async () => {
     try {
       const { folders, itemOrder, selectedChannels } = get()
-      const settingsRes = await userApi.userMeSettingsGet({})
-      const existing = settingsRes.data?.settings ?? {}
-
-      // Preserve existing per-guild settings (notifications, selected channel, etc.)
-      // while updating positions.  We must include ALL guilds (top-level AND folder
-      // guilds) so that notification preferences are not wiped on save.
-      const existingGuildsMap = new Map(
-        (existing.guilds ?? []).map((g) => [String(g.guild_id), g]),
-      )
-
-      // Top-level guilds — position = index in itemOrder
-      const topLevelSettings = itemOrder
-        .filter((x) => x.startsWith('guild:'))
-        .map((item, pos) => {
-          const guildId = item.slice(6)
-          const prev = existingGuildsMap.get(guildId)
-          const selCh = selectedChannels[guildId]
-          return {
-            ...prev,
-            guild_id: BigInt(guildId) as unknown as number,
-            position: pos,
-            ...(selCh ? { selected_channel: BigInt(selCh) as unknown as number } : {}),
-          }
-        })
-
-      // Folder guilds — position = index within the folder
-      const folderGuildSettings = folders.flatMap((folder) =>
-        folder.guildIds.map((guildId, pos) => {
-          const prev = existingGuildsMap.get(guildId)
-          const selCh = selectedChannels[guildId]
-          return {
-            ...prev,
-            guild_id: BigInt(guildId) as unknown as number,
-            position: pos,
-            ...(selCh ? { selected_channel: BigInt(selCh) as unknown as number } : {}),
-          }
-        }),
-      )
-
-      // Use axiosInstance directly (not the generated client) because the generated
-      // client's serializeDataIfNeeded() calls JSON.stringify() which cannot handle
-      // BigInt values (Snowflake IDs).  axiosInstance.transformRequest uses JSONBig
-      // which correctly serialises BigInt as JSON integers.
+      const existing = queryClient.getQueryData<ModelUserSettingsData>(['user-settings']) ?? {}
+      // Use axiosInstance directly — generated client's serializeDataIfNeeded()
+      // calls JSON.stringify() which cannot handle BigInt Snowflake IDs.
+      const updated = buildFolderPayload(existing, folders, itemOrder, selectedChannels)
       const baseUrl = getApiBaseUrl()
-      await axiosInstance.post(`${baseUrl}/user/me/settings`, {
-        ...existing,
-        guilds: [...topLevelSettings, ...folderGuildSettings],
-        guild_folders: toApiGuildFolders(folders, itemOrder),
-      })
+      await axiosInstance.post(`${baseUrl}/user/me/settings`, updated)
+      queryClient.setQueryData(['user-settings'], updated)
     } catch {
       // Non-critical — silently ignore save failures
     }
+  },
+
+  flushPendingInto: (existing) => {
+    if (_saveTimer === null) return existing
+    clearTimeout(_saveTimer)
+    _saveTimer = null
+    const { folders, itemOrder, selectedChannels } = get()
+    return buildFolderPayload(existing, folders, itemOrder, selectedChannels)
   },
 }))

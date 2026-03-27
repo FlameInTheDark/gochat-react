@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, memo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -412,7 +412,7 @@ interface SortableGuildIconProps {
   isOwner: boolean
 }
 
-function SortableGuildIcon({
+function SortableGuildIconImpl({
   itemId,
   guild,
   isActive,
@@ -545,6 +545,18 @@ function SortableGuildIcon({
   )
 }
 
+const SortableGuildIcon = memo(SortableGuildIconImpl, (prev, next) =>
+  prev.itemId === next.itemId &&
+  prev.guild === next.guild &&
+  prev.isActive === next.isActive &&
+  prev.isMergeTarget === next.isMergeTarget &&
+  prev.dropBefore === next.dropBefore &&
+  prev.dropAfter === next.dropAfter &&
+  prev.folders === next.folders &&
+  prev.canManageServer === next.canManageServer &&
+  prev.isOwner === next.isOwner
+)
+
 // ── Guild inside expanded folder panel ───────────────────────────────────────
 interface SortableGuildInPanelProps {
   itemId: string
@@ -560,7 +572,7 @@ interface SortableGuildInPanelProps {
   isOwner: boolean
 }
 
-function SortableGuildInPanel({
+function SortableGuildInPanelImpl({
   itemId,
   guild,
   isActive,
@@ -674,6 +686,16 @@ function SortableGuildInPanel({
     </div>
   )
 }
+
+const SortableGuildInPanel = memo(SortableGuildInPanelImpl, (prev, next) =>
+  prev.itemId === next.itemId &&
+  prev.guild === next.guild &&
+  prev.isActive === next.isActive &&
+  prev.dropBefore === next.dropBefore &&
+  prev.dropAfter === next.dropAfter &&
+  prev.canManageServer === next.canManageServer &&
+  prev.isOwner === next.isOwner
+)
 
 // ── Sortable folder item ──────────────────────────────────────────────────────
 interface SortableFolderItemProps {
@@ -1336,7 +1358,7 @@ export default function ServerSidebar() {
                     isMergeTarget={overMergeId === itemId}
                     dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
                     dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
-                    onNavigate={() => navigate(`/app/${guildId}`)}
+                    onNavigate={() => { if (guildId !== serverId) navigate(`/app/${guildId}`) }}
                     onOpenSettings={() => openServerSettings(guildId)}
                     onLeave={() => setLeavingGuild(guild)}
                     onNewFolder={() => openCreateFolder(guildId)}
@@ -1369,7 +1391,7 @@ export default function ServerSidebar() {
                     dropIndicator={dropIndicator}
                     onEditFolder={() => openEditFolder(folder)}
                     onDissolveFolder={() => deleteFolder(folder.id)}
-                    onNavigateGuild={(gid) => navigate(`/app/${gid}`)}
+                    onNavigateGuild={(gid) => { if (gid !== serverId) navigate(`/app/${gid}`) }}
                     onGuildSettings={(gid) => openServerSettings(gid)}
                     onLeaveGuild={(g) => setLeavingGuild(g)}
                     onRemoveGuildFromFolder={(gid) => removeGuildFromFolder(gid)}

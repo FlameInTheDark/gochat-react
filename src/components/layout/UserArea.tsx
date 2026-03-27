@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { Circle, CircleDot, MinusCircle, Moon, Pencil, Settings, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -26,6 +25,8 @@ import { sendPresenceStatus } from '@/services/wsService'
 import { useUiStore } from '@/stores/uiStore'
 import { userApi } from '@/api/client'
 import type { ModelUserSettingsData } from '@/client'
+import { saveSettings } from '@/lib/settingsApi'
+import { queryClient } from '@/lib/queryClient'
 import { cn } from '@/lib/utils'
 import StatusDot from '@/components/ui/StatusDot'
 import { useTranslation } from 'react-i18next'
@@ -40,7 +41,6 @@ const STATUS_ICONS: Record<UserStatus, React.ReactNode> = {
 }
 
 export default function UserArea() {
-  const queryClient = useQueryClient()
   const user = useAuthStore((s) => s.user)
   const ownStatus = usePresenceStore((s) => s.ownStatus)
   const setOwnStatus = usePresenceStore((s) => s.setOwnStatus)
@@ -68,21 +68,12 @@ export default function UserArea() {
   async function saveCustomStatus(text: string) {
     setSaving(true)
     try {
-      const settingsRes = await userApi.userMeSettingsGet()
-      const existing: ModelUserSettingsData = settingsRes.data?.settings ?? {}
-      await userApi.userMeSettingsPost({
-        request: {
-          ...existing,
-          status: {
-            ...existing.status,
-            status: ownStatus,
-            custom_status_text: text || undefined,
-          },
-        },
+      const existingStatus = queryClient.getQueryData<ModelUserSettingsData>(['user-settings'])?.status ?? {}
+      await saveSettings({
+        status: { ...existingStatus, status: ownStatus, custom_status_text: text || undefined },
       })
       setCustomStatusText(text)
       sendPresenceStatus(ownStatus, text)
-      await queryClient.invalidateQueries({ queryKey: ['user-settings'] })
       setDialogOpen(false)
       toast.success(text ? t('userArea.customStatusUpdated') : t('userArea.customStatusCleared'))
     } catch {

@@ -14,6 +14,9 @@ interface VoiceState {
   channelId: string | null
   guildId: string | null
   channelName: string | null
+  guildName: string | null
+  sfuUrl: string | null
+  voiceRegion: string | null
   localMuted: boolean
   localDeafened: boolean
   localSpeaking: boolean // true when VAD/PTT is actively transmitting
@@ -37,7 +40,7 @@ interface VoiceState {
   }
   peers: Record<string, VoicePeer> // keyed by userId string
 
-  setVoiceChannel: (guildId: string, channelId: string, channelName: string) => void
+  setVoiceChannel: (guildId: string, channelId: string, channelName: string, guildName?: string, sfuUrl?: string, voiceRegion?: string) => void
   setSettings: (settings: Partial<VoiceState['settings']>) => void
   addPeer: (userId: string) => void
   removePeer: (userId: string) => void
@@ -60,6 +63,9 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   channelId: null,
   guildId: null,
   channelName: null,
+  guildName: null,
+  sfuUrl: null,
+  voiceRegion: null,
   localMuted: false,
   localDeafened: false,
   localSpeaking: false,
@@ -83,8 +89,8 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   },
   peers: {},
 
-  setVoiceChannel: (guildId, channelId, channelName) =>
-    set({ guildId, channelId, channelName }),
+  setVoiceChannel: (guildId, channelId, channelName, guildName, sfuUrl, voiceRegion) =>
+    set({ guildId, channelId, channelName, guildName: guildName ?? null, sfuUrl: sfuUrl ?? null, voiceRegion: voiceRegion ?? null }),
 
   setSettings: (settings) =>
     set((state) => ({ settings: { ...state.settings, ...settings } })),
@@ -165,6 +171,9 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       channelId: null,
       guildId: null,
       channelName: null,
+      guildName: null,
+      sfuUrl: null,
+      voiceRegion: null,
       localMuted: false,
       localDeafened: false,
       localCameraEnabled: false,

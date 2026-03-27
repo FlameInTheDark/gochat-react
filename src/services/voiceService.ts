@@ -16,7 +16,7 @@
 import JSONBig from 'json-bigint'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
-import { sendRaw } from './wsService'
+import { sendRaw, sendPresenceStatus, setPresenceVoiceChannel } from './wsService'
 import {
   buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression,
   type DenoiserNode,
@@ -875,7 +875,8 @@ function cleanup(sendPresenceClear = true) {
   }
 
   if (sendPresenceClear) {
-    sendRaw({ op: 3, d: { status: 'online', voice_channel_id: 0 } })
+    setPresenceVoiceChannel(null)
+    sendPresenceStatus('online')
   }
   useVoiceStore.getState().reset()
   vlog('cleanup: done')
@@ -887,6 +888,8 @@ export async function joinVoice(
   channelName: string,
   sfuUrl: string,
   sfuToken: string,
+  guildName?: string,
+  voiceRegion?: string,
 ): Promise<void> {
   vlog('joinVoice: guildId=%s channelId=%s channelName=%s', guildId, channelId, channelName)
   vlog('joinVoice: sfuUrl=%s', sfuUrl)
@@ -1064,8 +1067,9 @@ export async function joinVoice(
   }, BINDING_ALIVE_INTERVAL)
 
   // Update voice store and presence
-  useVoiceStore.getState().setVoiceChannel(guildId, channelId, channelName)
-  sendRaw({ op: 3, d: { status: 'online', voice_channel_id: BigInt(channelId) } })
+  useVoiceStore.getState().setVoiceChannel(guildId, channelId, channelName, guildName, sfuUrl, voiceRegion)
+  setPresenceVoiceChannel(channelId)
+  sendPresenceStatus('online')
 
   // Listen for other users joining/leaving this voice channel via main gateway events
   const handleMemberJoinVoice = (e: Event) => {

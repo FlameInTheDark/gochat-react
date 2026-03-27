@@ -6,6 +6,9 @@ import { userApi } from '@/api/client'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { useFolderStore } from '@/stores/folderStore'
 import { ChannelType, type DtoChannel } from '@/types'
+import { useAppearanceStore, DEFAULT_CHAT_SPACING, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore'
+import { useNotificationSettingsStore } from '@/stores/notificationSettingsStore'
+import i18n from '@/i18n'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 
@@ -414,24 +417,51 @@ export function useWebSocket() {
   //   • Updated guild folder layout (ordering/folders changed on another device)
 
   useEffect(() => {
-    function onUserSettingsUpdate() {
+    function applySettings(settings: NonNullable<Awaited<ReturnType<typeof userApi.userMeSettingsGet>>['data']['settings']>) {
+      queryClient.setQueryData(['user-settings'], settings)
+
+      // Presence status
+      const savedStatus = settings.status?.status
+      if (savedStatus && VALID_STATUSES.has(savedStatus)) {
+        setOwnStatus(savedStatus as UserStatus)
+        sendPresenceStatus(savedStatus as UserStatus)
+      }
+
+      // Guild folder layout
+      useFolderStore.getState().loadFromSettings(settings.guild_folders, settings.guilds)
+
+      // Appearance
+      const { setFontScale, setChatSpacing } = useAppearanceStore.getState()
+      setFontScale(settings.appearance?.chat_font_scale ?? DEFAULT_FONT_SCALE)
+      setChatSpacing(settings.appearance?.chat_spacing ?? DEFAULT_CHAT_SPACING)
+
+      // Language
+      if (settings.language) {
+        void i18n.changeLanguage(settings.language)
+      }
+
+      // Notification settings
+      useNotificationSettingsStore.getState().setSettings({
+        guilds: settings.guilds,
+        channels: settings.channels,
+        users: settings.users,
+      })
+    }
+
+    function onUserSettingsUpdate(e: Event) {
+      const detail = (e as CustomEvent).detail
+      // The WS event payload may carry the full settings — use it directly to
+      // avoid an extra GET.  If it doesn't, fall back to a network fetch.
+      const maybeSettings = detail?.settings ?? (detail && 'status' in detail ? detail : null)
+      if (maybeSettings) {
+        applySettings(maybeSettings)
+        return
+      }
       userApi
         .userMeSettingsGet()
         .then((res) => {
           const settings = res.data?.settings
-
-          // Sync presence status
-          const savedStatus = settings?.status?.status
-          if (savedStatus && VALID_STATUSES.has(savedStatus)) {
-            setOwnStatus(savedStatus as UserStatus)
-            sendPresenceStatus(savedStatus as UserStatus)
-          }
-
-          // Reload guild folder layout — another client may have changed ordering
-          useFolderStore.getState().loadFromSettings(
-            settings?.guild_folders,
-            settings?.guilds,
-          )
+          if (settings) applySettings(settings)
         })
         .catch(() => {
           // Non-critical — keep current state if the fetch fails

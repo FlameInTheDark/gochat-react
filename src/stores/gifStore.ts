@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { userApi } from '@/api/client'
+import { saveSettings } from '@/lib/settingsApi'
 
 interface GifState {
   favoriteGifs: string[]
@@ -33,9 +33,7 @@ export const useGifStore = create<GifState>((set, get) => ({
 
 async function saveGifs(urls: string[]) {
   try {
-    const res = await userApi.userMeSettingsGet()
-    const existing = res.data?.settings ?? {}
-    await userApi.userMeSettingsPost({ request: { ...existing, favorite_gifs: urls } })
+    await saveSettings({ favorite_gifs: urls })
   } catch {
     // non-critical — ignore
   }

@@ -882,7 +882,7 @@ export default function ChannelPage() {
     try {
       const res = await guildApi.guildGuildIdVoiceChannelIdJoinPost({ guildId: serverId, channelId })
       if (res.data.sfu_url && res.data.sfu_token) {
-        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token)
+        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token, guild?.name ?? undefined, channel.voice_region ?? undefined)
       }
     } catch {
       toast.error(t('channelSidebar.joinVoiceFailed'))

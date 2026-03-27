@@ -3,7 +3,7 @@ import type { ModelUserSettingsData, ModelUserSettingsNotifications } from '@/cl
 
 interface NotificationSettingsState {
   settings: ModelUserSettingsData
-  setSettings: (s: ModelUserSettingsData) => void
+  setSettings: (s: Pick<ModelUserSettingsData, 'guilds' | 'channels' | 'users'>) => void
   getGuildNotif: (guildId: string) => ModelUserSettingsNotifications | undefined
   getChannelNotif: (channelId: string) => ModelUserSettingsNotifications | undefined
   getUserNotif: (userId: string) => ModelUserSettingsNotifications | undefined

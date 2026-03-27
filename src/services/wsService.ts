@@ -58,6 +58,8 @@ const activePresenceSubs = new Set<string>()
 let currentOwnStatus: UserStatus = 'online'
 // Custom status text included in every op:3 presence broadcast
 let currentCustomStatusText = ''
+// Current voice channel ID — included in every op:3 presence broadcast
+let currentVoiceChannelId: string | null = null
 
 // Last event sequence ID received — echoed back in heartbeats (op:2, d.e)
 let lastEventId = 0
@@ -262,13 +264,14 @@ function resubscribe() {
   }
   syncChannelSubscriptions()
 
-  // Re-send own presence status (with custom text if set)
+  // Re-send own presence status (with custom text and voice channel if set)
   sendJson({
     op: 3,
     d: {
       status: currentOwnStatus,
       platform: 'web',
       ...(currentCustomStatusText ? { custom_status_text: currentCustomStatusText } : {}),
+      ...(currentVoiceChannelId ? { voice_channel_id: BigInt(currentVoiceChannelId) } : {}),
     },
   })
 
@@ -1172,9 +1175,16 @@ export function sendPresenceStatus(status: UserStatus, customStatusText?: string
         status,
         platform: 'web',
         ...(currentCustomStatusText ? { custom_status_text: currentCustomStatusText } : {}),
+        ...(currentVoiceChannelId ? { voice_channel_id: BigInt(currentVoiceChannelId) } : {}),
       },
     })
   }
+}
+
+// Update the tracked voice channel for presence broadcasts.
+// Call with null when leaving voice — the next sendPresenceStatus will omit voice_channel_id.
+export function setPresenceVoiceChannel(channelId: string | null) {
+  currentVoiceChannelId = channelId
 }
 
 // Send a raw message with BigInt-aware serialization (used by voice service for SFU signalling).

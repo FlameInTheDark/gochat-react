@@ -15,6 +15,7 @@ import { applyVoiceSettings } from '@/services/voiceService'
 import { buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression, type DenoiserNode } from '@/services/denoiserService'
 import { useNavigate } from 'react-router-dom'
 import { userApi, uploadApi, axiosInstance } from '@/api/client'
+import { saveSettings } from '@/lib/settingsApi'
 import type { ModelUserSettingsData, DtoUser } from '@/client'
 import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
@@ -380,9 +381,7 @@ export default function AppSettingsModal() {
   ]
 
   async function patchSettings(update: Partial<ModelUserSettingsData>) {
-    const merged: ModelUserSettingsData = { ...(settingsData ?? {}), ...update }
-    await userApi.userMeSettingsPost({ request: merged })
-    await queryClient.invalidateQueries({ queryKey: ['user-settings'] })
+    await saveSettings(update)
   }
 
   // Step 1 — file picker opens → read as data URL → show crop dialog

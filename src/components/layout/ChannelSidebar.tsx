@@ -227,7 +227,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
         channelId,
       })
       if (res.data.sfu_url && res.data.sfu_token) {
-        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token)
+        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token, serverName, channel.voice_region ?? undefined)
       }
     } catch {
       toast.error(t('channelSidebar.joinVoiceFailed'))
