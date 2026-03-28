@@ -14,7 +14,7 @@ import App from './App.tsx'
     value: unknown,
     ...args: unknown[]
   ) {
-    if (value instanceof SharedArrayBuffer) {
+    if (typeof SharedArrayBuffer !== 'undefined' && value instanceof SharedArrayBuffer) {
       // Copy SAB → regular ArrayBuffer so the polyfill can handle it
       return _from(Uint8Array.from(new Uint8Array(value)))
     }
