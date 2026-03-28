@@ -22,14 +22,14 @@ export default defineConfig(({ mode }) => {
         '@tanstack/react-query': path.resolve(__dirname, './node_modules/@tanstack/react-query/build/modern/index.js'),
         // Use npm buffer polyfill instead of the externalized Node.js built-in
         buffer: path.resolve(__dirname, './node_modules/buffer/index.js'),
+        // Force Vite/Rollup to resolve @snazzah/davey-wasm32-wasi from its package
+        // directory so both the root import and sub-path imports (worker URL) resolve
+        // correctly, regardless of how the build environment handles the legacy
+        // "browser" field (no "exports" field in this package).
+        '@snazzah/davey-wasm32-wasi': path.resolve(__dirname, './node_modules/@snazzah/davey-wasm32-wasi'),
       },
     },
-    build: {
-      outDir: 'dist',
-      rollupOptions: {
-        external: ['@snazzah/davey-wasm32-wasi', '@napi-rs/wasm-runtime'],
-      },
-    },
+    build: { outDir: 'dist' },
     optimizeDeps: {
       exclude: ['@snazzah/davey', '@snazzah/davey-wasm32-wasi', '@napi-rs/wasm-runtime'],
       include: ['buffer'],
