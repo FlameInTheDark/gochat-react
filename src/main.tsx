@@ -5,48 +5,20 @@ import './index.css'
 import '@/i18n'
 import App from './App.tsx'
 
-// @napi-rs/wasm-runtime (used by @snazzah/davey-wasm32-wasi) returns buffer values that
-// the npm `buffer` polyfill's Buffer.from cannot handle (cross-realm or non-standard types).
-// Patch Buffer.from: try normally first; on failure extract bytes via indexed access,
-// which works for any array-like regardless of prototype chain or realm.
+// @napi-rs/wasm-runtime (used by @snazzah/davey-wasm32-wasi) passes a SharedArrayBuffer
+// to Buffer.from. The npm `buffer` polyfill only handles ArrayBuffer, not SharedArrayBuffer.
+// Intercept and copy to a regular ArrayBuffer-backed Uint8Array first.
 {
   const _from = Buffer.from.bind(Buffer)
   ;(Buffer as unknown as { from: typeof Buffer.from }).from = function patchedBufferFrom(
     value: unknown,
     ...args: unknown[]
   ) {
-    try {
-      return _from(value, ...args)
-    } catch (err) {
-      if (value !== null && typeof value === 'object') {
-        const v = value as Record<string, unknown>
-        // Log the object structure so we can understand what @napi-rs/wasm-runtime returns
-        console.warn('[Buffer.from patch] unhandled type:', {
-          tag: Object.prototype.toString.call(value),
-          ctor: Object.getPrototypeOf(value)?.constructor?.name,
-          keys: Object.keys(v),
-          ownProps: Object.getOwnPropertyNames(v),
-          hasLength: 'length' in v,
-          length: v['length'],
-          hasByteLength: 'byteLength' in v,
-          byteLength: v['byteLength'],
-          type: v['type'],
-          data: v['data'],
-          ptr: v['ptr'],
-          len: v['len'],
-          value,
-        })
-        // Unwrap { type: 'Buffer', data: <array-like> } if present
-        const source = (v['type'] === 'Buffer' && v['data'] != null) ? v['data'] : v
-        const len = (source as { length?: unknown }).length
-        if (typeof len === 'number' && len >= 0) {
-          const bytes = new Uint8Array(len)
-          for (let i = 0; i < len; i++) bytes[i] = (source as Record<number, unknown>)[i] as number
-          return _from(bytes)
-        }
-      }
-      throw err
+    if (value instanceof SharedArrayBuffer) {
+      // Copy SAB → regular ArrayBuffer so the polyfill can handle it
+      return _from(Uint8Array.from(new Uint8Array(value)))
     }
+    return _from(value, ...args)
   } as typeof Buffer.from
 }
 
