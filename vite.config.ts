@@ -30,12 +30,26 @@ function daveyResolvePlugin(): Plugin {
     load(id) {
       if (id === '\0davey-wasm32-wasi-stub') {
         // Minimal stub — E2EE voice won't function but the build succeeds.
+        // All methods are no-ops; encrypt/decrypt return the input unchanged (passthrough).
         return `
-          export class DAVESession {}
+          export class DAVESession {
+            constructor() {}
+            setPassthroughMode() {}
+            reset() {}
+            get status() { return 0 }
+            setExternalSender() {}
+            getSerializedKeyPackage() { return null }
+            processProposals() { return {} }
+            processCommit() {}
+            processWelcome() {}
+            encrypt(_mt, _codec, frame) { return frame }
+            decrypt(_uid, _mt, frame) { return frame }
+            canPassthrough() { return true }
+          }
           export const Codec = Object.freeze({})
           export const MediaType = Object.freeze({})
           export const ProposalsOperationType = Object.freeze({})
-          export const SessionStatus = Object.freeze({})
+          export const SessionStatus = Object.freeze({ PENDING: 0 })
           export default {}
         `
       }
