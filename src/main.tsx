@@ -5,35 +5,32 @@ import './index.css'
 import '@/i18n'
 import App from './App.tsx'
 
-// @napi-rs/wasm-runtime (used by @snazzah/davey-wasm32-wasi) returns Buffer objects
-// as { type: 'Buffer', data: Uint8Array } where data is a TypedArray, not a plain Array.
-// The npm `buffer` polyfill's Buffer.from only handles Array (not TypedArray) for this format.
-// Patch Buffer.from to accept both.
+// @napi-rs/wasm-runtime (used by @snazzah/davey-wasm32-wasi) returns buffer values that
+// the npm `buffer` polyfill's Buffer.from cannot handle (cross-realm or non-standard types).
+// Patch Buffer.from: try normally first; on failure extract bytes via indexed access,
+// which works for any array-like regardless of prototype chain or realm.
 {
   const _from = Buffer.from.bind(Buffer)
   ;(Buffer as unknown as { from: typeof Buffer.from }).from = function patchedBufferFrom(
     value: unknown,
     ...args: unknown[]
   ) {
-    if (
-      value !== null &&
-      typeof value === 'object' &&
-      !ArrayBuffer.isView(value) &&
-      !(value instanceof ArrayBuffer)
-    ) {
-      const v = value as Record<string, unknown>
-      // { type: 'Buffer', data: TypedArray } — @napi-rs/wasm-runtime format
-      if (v['type'] === 'Buffer' && v['data'] != null && !Array.isArray(v['data']) && ArrayBuffer.isView(v['data'])) {
-        const d = v['data'] as Uint8Array
-        return _from(new Uint8Array(d.buffer, d.byteOffset, d.byteLength))
+    try {
+      return _from(value, ...args)
+    } catch (err) {
+      if (value !== null && typeof value === 'object') {
+        const v = value as Record<string, unknown>
+        // Unwrap { type: 'Buffer', data: <array-like> } if present
+        const source = (v['type'] === 'Buffer' && v['data'] != null) ? v['data'] : v
+        const len = (source as { length?: unknown }).length
+        if (typeof len === 'number' && len >= 0) {
+          const bytes = new Uint8Array(len)
+          for (let i = 0; i < len; i++) bytes[i] = (source as Record<number, unknown>)[i] as number
+          return _from(bytes)
+        }
       }
-      // Cross-realm TypedArray: has buffer/byteOffset/byteLength but fails ArrayBuffer.isView
-      if (v['buffer'] instanceof ArrayBuffer && typeof v['byteOffset'] === 'number' && typeof v['byteLength'] === 'number') {
-        return _from(new Uint8Array(v['buffer'] as ArrayBuffer, v['byteOffset'] as number, v['byteLength'] as number))
-      }
+      throw err
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (_from as (...a: unknown[]) => Buffer)(value, ...args)
   } as typeof Buffer.from
 }
 
