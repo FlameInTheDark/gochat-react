@@ -15,8 +15,14 @@ import App from './App.tsx'
     ...args: unknown[]
   ) {
     if (typeof SharedArrayBuffer !== 'undefined' && value instanceof SharedArrayBuffer) {
-      // Copy SAB → regular ArrayBuffer so the polyfill can handle it
-      return _from(Uint8Array.from(new Uint8Array(value)))
+      // Buffer.from(sab, byteOffset?, length?) — honour the offset/length args,
+      // then copy the slice into a regular ArrayBuffer so the polyfill can handle it.
+      const view = args.length >= 2
+        ? new Uint8Array(value, args[0] as number, args[1] as number)
+        : args.length === 1
+          ? new Uint8Array(value, args[0] as number)
+          : new Uint8Array(value)
+      return _from(new Uint8Array(view)) // new Uint8Array(view) copies into fresh ArrayBuffer
     }
     return _from(value, ...args)
   } as typeof Buffer.from
