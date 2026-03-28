@@ -38,8 +38,8 @@ function daveyResolvePlugin(): Plugin {
             reset() {}
             get status() { return 0 }
             setExternalSender() {}
-            getSerializedKeyPackage() { return null }
-            processProposals() { return {} }
+            getSerializedKeyPackage() { return new Uint8Array(0) }
+            processProposals() { return { commit: null, welcome: null } }
             processCommit() {}
             processWelcome() {}
             encrypt(_mt, _codec, frame) { return frame }
