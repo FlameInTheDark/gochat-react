@@ -20,6 +20,22 @@ import App from './App.tsx'
     } catch (err) {
       if (value !== null && typeof value === 'object') {
         const v = value as Record<string, unknown>
+        // Log the object structure so we can understand what @napi-rs/wasm-runtime returns
+        console.warn('[Buffer.from patch] unhandled type:', {
+          tag: Object.prototype.toString.call(value),
+          ctor: Object.getPrototypeOf(value)?.constructor?.name,
+          keys: Object.keys(v),
+          ownProps: Object.getOwnPropertyNames(v),
+          hasLength: 'length' in v,
+          length: v['length'],
+          hasByteLength: 'byteLength' in v,
+          byteLength: v['byteLength'],
+          type: v['type'],
+          data: v['data'],
+          ptr: v['ptr'],
+          len: v['len'],
+          value,
+        })
         // Unwrap { type: 'Buffer', data: <array-like> } if present
         const source = (v['type'] === 'Buffer' && v['data'] != null) ? v['data'] : v
         const len = (source as { length?: unknown }).length
