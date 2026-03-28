@@ -3,6 +3,13 @@ import CodeBlock from '@/components/chat/CodeBlock'
 import { emojiUrl } from '@/lib/emoji'
 import AnimatedImage from '@/components/ui/AnimatedImage'
 import CustomEmojiImage from '@/components/chat/CustomEmojiImage'
+import { emojiIndex } from '@/lib/emojiData'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 // ── Resolver ─────────────────────────────────────────────────────────────────
 
@@ -33,6 +40,9 @@ export interface MentionResolver {
 const INLINE_SOURCE =
   /\*\*\*(.+?)\*\*\*|\*\*(.+?)\*\*|\*(.+?)\*|__(.+?)__|_(.+?)_|~~(.+?)~~|`([^`\n]+)`|<@&(\d+)>|<@(\d+)>|<#(\d+)>|<:([A-Za-z0-9-]+):(\d+)>|@everyone|@here|https?:\/\/[^\s<>)]+/
     .source
+
+const EXTENDED_PICTOGRAPHIC_RE = /\p{Extended_Pictographic}[\uFE00-\uFE0F\u20E3]?(?:\u200D\p{Extended_Pictographic}[\uFE00-\uFE0F\u20E3]?)*/gu
+const CUSTOM_EMOJI_TOKEN_RE = /<:[A-Za-z0-9-]+:\d+>/g
 
 const PILL_CLASS: Record<'user' | 'channel' | 'role', string> = {
   user:    'bg-blue-500/20 text-blue-400 hover:bg-blue-500/35',
@@ -77,6 +87,40 @@ function parseMentionPill(
   )
 }
 
+function splitTextOnEmoji(text: string, keyPrefix: string): React.ReactNode[] {
+  const re = new RegExp(EXTENDED_PICTOGRAPHIC_RE.source, 'gu')
+  const nodes: React.ReactNode[] = []
+  let last = 0
+  let i = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index))
+    const char = m[0]
+    const entry = emojiIndex.get(char)
+    const k = `${keyPrefix}-ue${i++}`
+    if (entry) {
+      nodes.push(
+        <TooltipProvider key={k}>
+          <Tooltip delayDuration={500}>
+            <TooltipTrigger asChild>
+              <span className="cursor-default">{char}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="flex flex-col items-center gap-1.5 px-3 py-2.5">
+              <span className="text-4xl leading-none">{char}</span>
+              <span className="text-xs font-semibold">:{entry.slug}:</span>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>,
+      )
+    } else {
+      nodes.push(char)
+    }
+    last = m.index + char.length
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
+}
+
 function parseInline(
   text: string,
   prefix: string,
@@ -90,7 +134,7 @@ function parseInline(
 
   while ((match = re.exec(text)) !== null) {
     if (match.index > lastIdx) {
-      nodes.push(text.slice(lastIdx, match.index))
+      nodes.push(...splitTextOnEmoji(text.slice(lastIdx, match.index), `${prefix}-${count}`))
     }
 
     const k = `${prefix}-${count++}`
@@ -168,7 +212,7 @@ function parseInline(
   }
 
   if (lastIdx < text.length) {
-    nodes.push(text.slice(lastIdx))
+    nodes.push(...splitTextOnEmoji(text.slice(lastIdx), `${prefix}-tail`))
   }
 
   return nodes
@@ -307,9 +351,6 @@ function appendLines(
 
 // ── Emoji-only detection ──────────────────────────────────────────────────────
 
-const CUSTOM_EMOJI_TOKEN_RE = /<:[A-Za-z0-9-]+:\d+>/g
-// Extended_Pictographic covers emoji, symbols, and ZWJ sequences in modern V8/browsers
-const EXTENDED_PICTOGRAPHIC_RE = /\p{Extended_Pictographic}[\uFE00-\uFE0F\u20E3]?(?:\u200D\p{Extended_Pictographic}[\uFE00-\uFE0F\u20E3]?)*/gu
 
 /**
  * Returns true when `content` consists exclusively of emoji (custom and/or

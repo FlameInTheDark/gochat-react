@@ -215,12 +215,13 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   async function handleVoiceJoin(channel: DtoChannel) {
     const channelId = String(channel.id)
 
-    // If already connected to this channel, just navigate without rejoining
+    // Second click on the same channel → open the voice channel view
     if (currentVoiceChannelId === channelId) {
       navigate(`/app/${serverId}/${channelId}`)
       return
     }
 
+    // First click → join voice; VoicePanel appears at bottom, no navigation
     try {
       const res = await guildApi.guildGuildIdVoiceChannelIdJoinPost({
         guildId: serverId,
@@ -232,7 +233,6 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     } catch {
       toast.error(t('channelSidebar.joinVoiceFailed'))
     }
-    navigate(`/app/${serverId}/${channelId}`)
   }
 
   // ── Drag & drop ─────────────────────────────────────────────────────────────

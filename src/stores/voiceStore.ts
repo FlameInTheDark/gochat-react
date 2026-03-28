@@ -24,6 +24,11 @@ interface VoiceState {
   localVideoStream: MediaStream | null
   ping: number // RTT in ms
   connectionState: VoiceConnectionState
+  daveEnabled: boolean         // server reported dave_enabled=true in Ready
+  daveProtocolVersion: 0 | 1  // 0 = transport-only, 1 = E2EE active
+  daveTransitioning: boolean   // true while a DAVE epoch/downgrade transition is in progress
+  daveEpoch: number            // current DAVE epoch (0 = not started)
+  davePrivacyCode: string | null // voice privacy code from davey (null when not E2EE)
   settings: {
     audioInputDevice: string
     audioOutputDevice: string
@@ -56,6 +61,9 @@ interface VoiceState {
   setPeerVideoStream: (userId: string, stream: MediaStream | null) => void
   setPing: (ping: number) => void
   setConnectionState: (state: VoiceConnectionState) => void
+  setDaveEnabled: (enabled: boolean) => void
+  setDaveState: (version: 0 | 1, transitioning: boolean, epoch?: number) => void
+  setDavePrivacyCode: (code: string | null) => void
   reset: () => void
 }
 
@@ -73,6 +81,11 @@ export const useVoiceStore = create<VoiceState>((set) => ({
   localVideoStream: null,
   ping: 0,
   connectionState: 'disconnected',
+  daveEnabled: false,
+  daveProtocolVersion: 0,
+  daveTransitioning: false,
+  daveEpoch: 0,
+  davePrivacyCode: null,
   settings: {
     audioInputDevice: '',
     audioOutputDevice: '',
@@ -166,6 +179,13 @@ export const useVoiceStore = create<VoiceState>((set) => ({
 
   setConnectionState: (connectionState) => set({ connectionState }),
 
+  setDaveEnabled: (daveEnabled) => set({ daveEnabled }),
+
+  setDaveState: (daveProtocolVersion, daveTransitioning, daveEpoch) =>
+    set((s) => ({ daveProtocolVersion, daveTransitioning, daveEpoch: daveEpoch ?? s.daveEpoch })),
+
+  setDavePrivacyCode: (davePrivacyCode) => set({ davePrivacyCode }),
+
   reset: () =>
     set({
       channelId: null,
@@ -180,6 +200,11 @@ export const useVoiceStore = create<VoiceState>((set) => ({
       localVideoStream: null,
       ping: 0,
       connectionState: 'disconnected',
+      daveEnabled: false,
+      daveProtocolVersion: 0,
+      daveTransitioning: false,
+      daveEpoch: 0,
+      davePrivacyCode: null,
       peers: {},
     }),
 }))

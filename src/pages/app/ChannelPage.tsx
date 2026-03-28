@@ -606,12 +606,12 @@ export default function ChannelPage() {
   }, [])
 
   useEffect(() => {
-    if (!channelId) return
+    if (!channelId || isVoice) return
     activateChannel(channelId)
     return () => {
       deactivateChannel(channelId)
     }
-  }, [channelId])
+  }, [channelId, isVoice])
 
   // Clear search when navigating to a different channel
   useEffect(() => {
@@ -918,7 +918,6 @@ export default function ChannelPage() {
   const getParentMessageProps = useCallback(function getParentMessageProps(msg: DtoMessage) {
     const isInformationalMessage = msg.type === 2 || msg.type === 3 || msg.type === 4
     const canReply =
-      (msg.type === 0 || msg.type === 1) &&
       !isAutoThreadFollowup(msg) &&
       msg.id != null
     const attachedThread = isThreadChannel(msg.thread) ? msg.thread : null

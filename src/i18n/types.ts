@@ -431,6 +431,16 @@ export interface Translation {
         disconnect: string
         cameraOn: string
         cameraOff: string
+        region: string
+        host: string
+        encryption: string
+        encryptionE2E: string
+        encryptionTransport: string
+        encryptionTransitioning: string
+        encryptionWaiting: string
+        encryptionWaitingDetail: string
+        privacyCode: string
+        privacyCodeHint: string
     }
     userProfile: {
         memberSince: string

@@ -1,5 +1,4 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import emojiGroupsData from 'unicode-emoji-json/data-by-group.json'
 import {
   Clock,
   Gamepad2,
@@ -14,16 +13,10 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { emojiUrl } from '@/lib/emoji'
+import emojiGroupsData from 'unicode-emoji-json/data-by-group.json'
+import { type EmojiEntry, emojiIndex } from '@/lib/emojiData'
 
 // ── Types ────────────────────────────────────────────────────────────────────
-
-interface EmojiEntry {
-  emoji: string
-  name: string
-  slug: string
-  skin_tone_support: boolean
-  group?: string
-}
 
 export interface CustomEmojiGroup {
   guildId: string
@@ -50,9 +43,6 @@ const emojiGroups = emojiGroupsData.map((group) => ({
   ...group,
   emojis: group.emojis.map((emoji) => ({ ...emoji, group: group.slug })),
 }))
-
-const allEmojis: EmojiEntry[] = emojiGroups.flatMap((g) => g.emojis)
-const emojiIndex = new Map<string, EmojiEntry>(allEmojis.map((e) => [e.emoji, e]))
 
 interface CategoryMeta {
   slug: string

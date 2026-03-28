@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router'
-import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity, Video, VideoOff } from 'lucide-react'
+import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity, Video, VideoOff, ShieldCheck, ShieldOff, ShieldAlert, Copy, Check } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useVoiceStore } from '@/stores/voiceStore'
 import type { VoiceConnectionState } from '@/stores/voiceStore'
@@ -60,6 +60,11 @@ export default function VoicePanel() {
   const localCameraEnabled = useVoiceStore((s) => s.localCameraEnabled)
   const storePing = useVoiceStore((s) => s.ping)
   const connectionState = useVoiceStore((s) => s.connectionState)
+  const daveEnabled = useVoiceStore((s) => s.daveEnabled)
+  const daveProtocolVersion = useVoiceStore((s) => s.daveProtocolVersion)
+  const daveTransitioning = useVoiceStore((s) => s.daveTransitioning)
+  const daveEpoch = useVoiceStore((s) => s.daveEpoch)
+  const davePrivacyCode = useVoiceStore((s) => s.davePrivacyCode)
 
   const { data: voiceRegions = [] } = useQuery<VoiceRegion[]>({
     queryKey: ['voice-regions'],
@@ -72,7 +77,16 @@ export default function VoicePanel() {
     ? (voiceRegions.find((r) => r.id === voiceRegion)?.name ?? voiceRegion)
     : 'Automatic'
   const sfuHost = parseSfuHost(sfuUrl)
+
+  const encryptionInfo = daveTransitioning
+    ? { label: t('voicePanel.encryptionTransitioning'), Icon: ShieldAlert, color: 'text-yellow-400', detail: null }
+    : daveProtocolVersion === 1
+      ? { label: t('voicePanel.encryptionE2E'), Icon: ShieldCheck, color: 'text-green-400', detail: daveEpoch > 0 ? `epoch ${daveEpoch}` : null }
+      : daveEnabled
+        ? { label: t('voicePanel.encryptionWaiting'), Icon: ShieldAlert, color: 'text-yellow-500', detail: t('voicePanel.encryptionWaitingDetail') }
+        : { label: t('voicePanel.encryptionTransport'), Icon: ShieldOff, color: 'text-muted-foreground', detail: null }
   const [displayPing, setDisplayPing] = useState(0)
+  const [privacyCodeCopied, setPrivacyCodeCopied] = useState(false)
 
   // Update display ping when store ping changes, but keep previous value if it drops to 0
   useEffect(() => {
@@ -80,6 +94,16 @@ export default function VoicePanel() {
       setDisplayPing(storePing)
     }
   }, [storePing])
+
+  const privacyCodeChunks = davePrivacyCode ? (davePrivacyCode.match(/.{1,5}/g) ?? []) : []
+
+  function handleCopyPrivacyCode() {
+    if (!davePrivacyCode) return
+    void navigator.clipboard.writeText(davePrivacyCode).then(() => {
+      setPrivacyCodeCopied(true)
+      setTimeout(() => setPrivacyCodeCopied(false), 2000)
+    })
+  }
 
   const status = getConnectionStatus(connectionState, t)
   const isTransient = connectionState === 'connecting' || connectionState === 'routing'
@@ -146,32 +170,73 @@ export default function VoicePanel() {
               {/* Ping indicator with tooltip */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div
-                    className={cn(
-                      'flex items-center gap-1 text-[10px] shrink-0 cursor-default',
-                      pingValue === null
-                        ? 'text-muted-foreground'
-                        : pingValue < 160
-                          ? 'text-green-500'
-                          : pingValue < 300
-                            ? 'text-orange-500'
-                            : 'text-red-500',
-                    )}
-                  >
-                    <Activity className="w-3 h-3" />
-                    <span>{pingValue !== null ? t('voicePanel.ping', { ping: pingValue }) : '--'}</span>
+                  <div className="flex items-center gap-1.5 shrink-0 cursor-default">
+                    <div
+                      className={cn(
+                        'flex items-center gap-1 text-[10px]',
+                        pingValue === null
+                          ? 'text-muted-foreground'
+                          : pingValue < 160
+                            ? 'text-green-500'
+                            : pingValue < 300
+                              ? 'text-orange-500'
+                              : 'text-red-500',
+                      )}
+                    >
+                      <Activity className="w-3 h-3" />
+                      <span>{pingValue !== null ? t('voicePanel.ping', { ping: pingValue }) : '--'}</span>
+                    </div>
+                    <encryptionInfo.Icon className={cn('w-3 h-3', encryptionInfo.color)} />
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="p-0">
-                  <div className="px-3 py-2.5 space-y-1.5 min-w-[160px]">
+                  <div className="px-3 py-2.5 space-y-1.5 min-w-[180px]">
                     <div className="flex items-center justify-between gap-4">
-                      <span className="text-[11px] text-muted-foreground">Region</span>
+                      <span className="text-[11px] text-muted-foreground">{t('voicePanel.region')}</span>
                       <span className="text-[11px] font-medium">{regionLabel}</span>
                     </div>
                     {sfuHost && (
                       <div className="flex items-center justify-between gap-4">
-                        <span className="text-[11px] text-muted-foreground">Host</span>
+                        <span className="text-[11px] text-muted-foreground">{t('voicePanel.host')}</span>
                         <span className="text-[11px] font-medium font-mono">{sfuHost}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-[11px] text-muted-foreground">{t('voicePanel.encryption')}</span>
+                      <span className={cn('text-[11px] font-medium flex items-center gap-1', encryptionInfo.color)}>
+                        <encryptionInfo.Icon className="w-3 h-3" />
+                        {encryptionInfo.label}
+                      </span>
+                    </div>
+                    {encryptionInfo.detail && (
+                      <div className="flex items-center justify-end">
+                        <span className="text-[10px] text-muted-foreground font-mono">{encryptionInfo.detail}</span>
+                      </div>
+                    )}
+                    {davePrivacyCode && (
+                      <div className="pt-1 border-t border-border/50 mt-0.5">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-[10px] text-muted-foreground">{t('voicePanel.privacyCode')}</p>
+                          <button
+                            onClick={handleCopyPrivacyCode}
+                            className="text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            {privacyCodeCopied
+                              ? <Check className="w-3 h-3 text-green-400" />
+                              : <Copy className="w-3 h-3" />}
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1">
+                          {privacyCodeChunks.map((chunk, i) => (
+                            <span
+                              key={i}
+                              className="text-[11px] font-mono font-medium text-green-400 bg-green-400/10 rounded px-1.5 py-0.5 tabular-nums text-center"
+                            >
+                              {chunk}
+                            </span>
+                          ))}
+                        </div>
+                        <p className="text-[9px] text-muted-foreground mt-1.5 text-center">{t('voicePanel.privacyCodeHint')}</p>
                       </div>
                     )}
                   </div>

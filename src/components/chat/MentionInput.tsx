@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next'
 import { useClientMode } from '@/hooks/useClientMode'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { emojiUrl } from '@/lib/emoji'
+import { allEmojis } from '@/lib/emojiData'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -26,7 +27,9 @@ interface SuggestionItem {
   token: string    // serialized token: <@id> <#id> <@&id> or <:name:id>
   name: string     // name for the suggestion list
   color?: number   // role color (RGB integer, 0 = none)
-  emojiId?: string // emoji image ID (for emoji type)
+  emojiId?: string // emoji image ID (for custom emoji type)
+  unicodeEmoji?: string // unicode emoji character (for unicode emoji type)
+  serverName?: string  // server name for custom emoji
   description?: string // slash command result preview
 }
 
@@ -421,8 +424,8 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
         setSuggestions([])
         return
       }
-      const allCustom = Object.values(guildEmojiMap).flat()
-      const items: SuggestionItem[] = allCustom
+      const customItems: SuggestionItem[] = customEmojiGroups
+        .flatMap((g) => g.emojis.map((e) => ({ ...e, guildName: g.guildName })))
         .filter((e) => e.name.toLowerCase().includes(query))
         .sort((a, b) => {
           const as = a.name.toLowerCase().startsWith(query)
@@ -430,7 +433,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
           if (as !== bs) return as ? -1 : 1
           return a.name.localeCompare(b.name)
         })
-        .slice(0, 10)
+        .slice(0, 5)
         .map((e) => ({
           type: 'emoji' as const,
           id: e.id,
@@ -438,7 +441,26 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
           token: `<:${e.name}:${e.id}>`,
           name: e.name,
           emojiId: e.id,
+          serverName: e.guildName,
         }))
+      const unicodeItems: SuggestionItem[] = allEmojis
+        .filter((e) => e.slug.includes(query) || e.name.toLowerCase().includes(query))
+        .sort((a, b) => {
+          const as = a.slug.startsWith(query)
+          const bs = b.slug.startsWith(query)
+          if (as !== bs) return as ? -1 : 1
+          return a.slug.localeCompare(b.slug)
+        })
+        .slice(0, 10 - customItems.length)
+        .map((e) => ({
+          type: 'emoji' as const,
+          id: e.slug,
+          display: e.emoji,
+          token: e.emoji,
+          name: e.slug,
+          unicodeEmoji: e.emoji,
+        }))
+      const items = [...customItems, ...unicodeItems]
       setSuggestions(items)
       setActiveIdx(0)
       return
@@ -545,7 +567,11 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
       return
     }
     if (item.type === 'emoji') {
-      insertCustomEmojiChip(item.name, item.emojiId!)
+      if (item.unicodeEmoji) {
+        insertEmojiInEditor(item.unicodeEmoji)
+      } else {
+        insertCustomEmojiChip(item.name, item.emojiId!)
+      }
     } else {
       insertChip(item)
     }
@@ -837,6 +863,9 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
                   className="w-6 h-6 shrink-0 object-contain"
                 />
               )}
+              {item.type === 'emoji' && item.unicodeEmoji && (
+                <span className="w-6 h-6 shrink-0 flex items-center justify-center text-xl leading-none">{item.unicodeEmoji}</span>
+              )}
               {item.type === 'channel' && (
                 <Hash className="w-4 h-4 shrink-0 text-muted-foreground" />
               )}
@@ -861,6 +890,9 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
               </span>
               {item.type === 'slash' && item.description && (
                 <span className="ml-auto text-xs text-muted-foreground shrink-0 pl-2">{item.description}</span>
+              )}
+              {item.type === 'emoji' && item.serverName && (
+                <span className="ml-auto text-xs text-muted-foreground shrink-0 pl-2 truncate max-w-[120px]">{item.serverName}</span>
               )}
               {item.type === 'role' && (
                 <span className="ml-auto text-xs text-muted-foreground shrink-0">{t('chat.role')}</span>

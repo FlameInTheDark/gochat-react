@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 import { messageApi } from '@/api/client'
 import { useMessageStore } from '@/stores/messageStore'
 import { emojiUrl } from '@/lib/emoji'
+import { emojiIndex } from '@/lib/emojiData'
 import {
   HoverCard,
   HoverCardContent,
@@ -290,7 +291,7 @@ export default function MessageReactions({ reactions, channelId, messageId, onAd
                   <span className="text-4xl leading-none">{emojiName}</span>
                 )}
                 <span className="text-center text-xs font-semibold leading-tight">
-                  {isCustom ? `:${emojiName}:` : emojiName}
+                  {isCustom ? `:${emojiName}:` : `:${emojiIndex.get(emojiName)?.slug ?? emojiName}:`}
                 </span>
                 <span className="text-[10px] opacity-60">{t('reactions.clickToSeeWhoReacted')}</span>
               </HoverCardContent>

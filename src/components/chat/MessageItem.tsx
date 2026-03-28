@@ -682,7 +682,7 @@ export default function MessageItem({
             isMentioned && 'bg-yellow-500/10 hover:bg-yellow-500/15 border-l-2 border-yellow-500/60 pl-[6px]',
           )}>
             {/* Hover action buttons — reply + add reaction */}
-            {!isPendingMessage && !isInformationalMessage && hasRealMessageId && (
+            {!isPendingMessage && hasRealMessageId && (
               <div className={cn(
                 'absolute -top-3 right-2 z-10 flex items-center gap-0.5 rounded border border-border bg-background shadow-sm',
                 reactionPickerOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
@@ -974,7 +974,7 @@ export default function MessageItem({
                     )
                   )}
                   {/* Reactions */}
-                  {!isPendingMessage && !informationalContent && hasRealMessageId && (message.reactions?.length ?? 0) > 0 && (
+                  {!isPendingMessage && hasRealMessageId && (message.reactions?.length ?? 0) > 0 && (
                     <MessageReactions
                       reactions={message.reactions!}
                       channelId={channelId}
