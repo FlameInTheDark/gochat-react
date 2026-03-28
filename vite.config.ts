@@ -24,7 +24,12 @@ export default defineConfig(({ mode }) => {
         buffer: path.resolve(__dirname, './node_modules/buffer/index.js'),
       },
     },
-    build: { outDir: 'dist' },
+    build: {
+      outDir: 'dist',
+      rollupOptions: {
+        external: ['@snazzah/davey-wasm32-wasi', '@napi-rs/wasm-runtime'],
+      },
+    },
     optimizeDeps: {
       exclude: ['@snazzah/davey', '@snazzah/davey-wasm32-wasi', '@napi-rs/wasm-runtime'],
       include: ['buffer'],
