@@ -16,6 +16,7 @@ import JSONBig from 'json-bigint'
 import axios from 'axios'
 import { useAuthStore } from '@/stores/authStore'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
+import { getDeviceKey } from '@/lib/deviceKey'
 
 const jsonBig = JSONBig({ storeAsString: true, useNativeBigInt: false })
 
@@ -55,10 +56,13 @@ export const axiosInstance = axios.create({
   ],
 })
 
-axiosInstance.interceptors.request.use((cfg) => {
+axiosInstance.interceptors.request.use(async (cfg) => {
   const token = useAuthStore.getState().token
   if (token && cfg.headers) {
     cfg.headers.Authorization = `Bearer ${token}`
+  }
+  if (cfg.url?.includes('/user/me/settings') && cfg.headers) {
+    cfg.headers['X-Device-Key'] = await getDeviceKey()
   }
   return cfg
 })
