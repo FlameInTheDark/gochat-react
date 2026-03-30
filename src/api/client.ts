@@ -35,9 +35,7 @@ export const axiosInstance = axios.create({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ;(headers as any)['Content-Type'] ??= 'application/json'
         }
-        return JSON.stringify(data, (_, value) =>
-          typeof value === 'bigint' ? value.toString() : value
-        )
+        return jsonBig.stringify(data)
       }
       return data
     },

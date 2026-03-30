@@ -26,7 +26,7 @@ export default function ResetPasswordPage() {
     try {
       await authApi.authResetPost({
         request: {
-          id: Number(userId ?? '0'),
+          id: BigInt(userId) as unknown as number,
           password,
           token: token ?? '',
         },
