@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { authApi } from '@/api/client'
 import { useTranslation } from 'react-i18next'
+import { MailCheck } from 'lucide-react'
 
 export default function RegisterPage() {
-  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [sent, setSent] = useState(false)
   const { t } = useTranslation()
 
   useEffect(() => {
@@ -22,10 +23,8 @@ export default function RegisterPage() {
     setError(null)
     setLoading(true)
     try {
-      await authApi.authRegistrationPost({
-        request: { email },
-      })
-      navigate('/')
+      await authApi.authRegistrationPost({ request: { email } })
+      setSent(true)
     } catch {
       setError(t('auth.registrationFailed'))
     } finally {
@@ -33,11 +32,34 @@ export default function RegisterPage() {
     }
   }
 
+  if (sent) {
+    return (
+      <div className="flex flex-1 w-full items-center justify-center bg-background">
+        <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm text-center">
+          <div className="flex justify-center">
+            <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+              <MailCheck className="w-8 h-8 text-primary" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-2xl font-bold">{t('auth.registrationSentTitle')}</h1>
+            <p className="text-sm text-muted-foreground">
+              {t('auth.registrationSentDesc', { email })}
+            </p>
+          </div>
+          <Link to="/" className="block">
+            <Button variant="outline" className="w-full">{t('auth.backToSignIn')}</Button>
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-1 w-full items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm">
         <h1 className="text-center text-2xl font-bold">{t('auth.createAccountTitle')}</h1>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={(e) => { void handleSubmit(e) }} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email">{t('auth.email')}</Label>
             <Input

@@ -6,10 +6,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { axiosInstance } from '@/api/client'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
+import { useTranslation } from 'react-i18next'
+import { CircleCheck } from 'lucide-react'
 
 export default function ConfirmPage() {
   const { userId, token } = useParams<{ userId: string; token: string }>()
   const navigate = useNavigate()
+  const { t } = useTranslation()
 
   const [name, setName] = useState('')
   const [discriminator, setDiscriminator] = useState('')
@@ -24,7 +27,7 @@ export default function ConfirmPage() {
   if (!userId || !token) {
     return (
       <div className="flex flex-1 w-full items-center justify-center bg-background">
-        <p className="text-destructive">Invalid confirmation link.</p>
+        <p className="text-destructive">{t('auth.confirmInvalidLink')}</p>
       </div>
     )
   }
@@ -49,17 +52,16 @@ export default function ConfirmPage() {
       if (axios.isAxiosError(err)) {
         const status = err.response?.status
         if (status === 409) {
-          setError('That username is already taken. Please choose another.')
+          setError(t('auth.confirmUsernameTaken'))
         } else if (status === 401) {
-          setError('Invalid or expired confirmation link.')
+          setError(t('auth.confirmLinkExpired'))
         } else if (status === 400) {
-          const detail = (err.response?.data as { message?: string } | undefined)?.message
-          setError(detail ? `Confirmation failed: ${detail}` : 'Invalid request. Check your input.')
+          setError(t('auth.confirmInvalidRequest'))
         } else {
-          setError('Confirmation failed. Please try again.')
+          setError(t('auth.confirmFailed'))
         }
       } else {
-        setError('Confirmation failed. Please try again.')
+        setError(t('auth.confirmFailed'))
       }
     } finally {
       setLoading(false)
@@ -69,9 +71,16 @@ export default function ConfirmPage() {
   if (success) {
     return (
       <div className="flex flex-1 w-full items-center justify-center bg-background">
-        <div className="text-center space-y-2">
-          <p className="text-green-500 font-medium">Account confirmed successfully!</p>
-          <p className="text-sm text-muted-foreground">Redirecting to login…</p>
+        <div className="text-center space-y-4">
+          <div className="flex justify-center">
+            <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center">
+              <CircleCheck className="w-8 h-8 text-green-500" />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <p className="text-lg font-semibold">{t('auth.confirmSuccessTitle')}</p>
+            <p className="text-sm text-muted-foreground">{t('auth.confirmSuccessDesc')}</p>
+          </div>
         </div>
       </div>
     )
@@ -80,10 +89,10 @@ export default function ConfirmPage() {
   return (
     <div className="flex flex-1 w-full items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm">
-        <h1 className="text-center text-2xl font-bold">Complete your account</h1>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <h1 className="text-center text-2xl font-bold">{t('auth.confirmTitle')}</h1>
+        <form onSubmit={(e) => { void handleSubmit(e) }} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Display name</Label>
+            <Label htmlFor="name">{t('auth.confirmDisplayName')}</Label>
             <Input
               id="name"
               value={name}
@@ -92,18 +101,18 @@ export default function ConfirmPage() {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="discriminator">Username</Label>
+            <Label htmlFor="discriminator">{t('auth.confirmUsername')}</Label>
             <Input
               id="discriminator"
               value={discriminator}
               onChange={(e) => setDiscriminator(e.target.value)}
               pattern="[a-z0-9\-_.]+"
-              title="Lowercase letters, numbers, hyphens, underscores and dots only"
+              title={t('auth.confirmUsernameHint')}
               required
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">{t('auth.confirmPasswordLabel')}</Label>
             <Input
               id="password"
               type="password"
@@ -114,7 +123,7 @@ export default function ConfirmPage() {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="confirm-password">Confirm password</Label>
+            <Label htmlFor="confirm-password">{t('auth.confirmConfirmPasswordLabel')}</Label>
             <Input
               id="confirm-password"
               type="password"
@@ -124,7 +133,7 @@ export default function ConfirmPage() {
               required
             />
             {passwordMismatch && (
-              <p className="text-xs text-destructive">Passwords do not match.</p>
+              <p className="text-xs text-destructive">{t('auth.passwordMismatch')}</p>
             )}
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
@@ -133,7 +142,7 @@ export default function ConfirmPage() {
             className="w-full"
             disabled={loading || passwordMismatch || !name || !discriminator || !password || !confirmPassword}
           >
-            {loading ? 'Confirming…' : 'Confirm account'}
+            {loading ? t('auth.confirmSubmitting') : t('auth.confirmSubmit')}
           </Button>
         </form>
       </div>

@@ -34,6 +34,47 @@ const ru: Translation = {
         resetPassword: 'Сбросить пароль',
         resettingPassword: 'Сброс…',
         resetFailed: 'Не удалось сбросить пароль. Ссылка могла устареть.',
+
+        // Registration success
+        registrationSentTitle: 'Проверьте почту',
+        registrationSentDesc: 'Мы отправили ссылку для подтверждения на {{email}}. Перейдите по ссылке, чтобы завершить регистрацию.',
+
+        // Account confirmation page
+        confirmTitle: 'Завершите создание аккаунта',
+        confirmDisplayName: 'Отображаемое имя',
+        confirmUsername: 'Имя пользователя',
+        confirmUsernameHint: 'Только строчные буквы, цифры, дефис, подчёркивание и точка',
+        confirmPasswordLabel: 'Пароль',
+        confirmConfirmPasswordLabel: 'Подтвердите пароль',
+        confirmSubmit: 'Подтвердить аккаунт',
+        confirmSubmitting: 'Подтверждение…',
+        confirmSuccessTitle: 'Аккаунт подтверждён!',
+        confirmSuccessDesc: 'Переход на страницу входа…',
+        confirmInvalidLink: 'Неверная ссылка подтверждения.',
+        confirmUsernameTaken: 'Это имя пользователя уже занято. Выберите другое.',
+        confirmLinkExpired: 'Ссылка подтверждения недействительна или устарела.',
+        confirmInvalidRequest: 'Некорректный запрос. Проверьте введённые данные.',
+        confirmFailed: 'Подтверждение не удалось. Попробуйте ещё раз.',
+
+        // 2FA login step
+        twoFaTitle: 'Двухфакторная аутентификация',
+        twoFaSubtitle: 'Подтвердите личность для продолжения',
+        twoFaMethodTotp: 'Приложение-аутентификатор',
+        twoFaMethodRecovery: 'Код восстановления',
+        twoFaMethodEmail: 'Код на почту',
+        twoFaAuthCodeLabel: 'Код аутентификатора',
+        twoFaRecoveryCodeLabel: 'Код восстановления',
+        twoFaEmailCodeLabel: 'Код из письма',
+        twoFaEmailPlaceholder: 'Введите код из письма',
+        twoFaSendEmail: 'Отправить код на почту',
+        twoFaSending: 'Отправка…',
+        twoFaEmailSentNote: 'Код отправлен на ваш адрес электронной почты.',
+        twoFaVerify: 'Подтвердить',
+        twoFaVerifying: 'Проверка…',
+        twoFaBack: '← Назад ко входу',
+        twoFaVerificationFailed: 'Не удалось подтвердить — попробуйте снова',
+        twoFaInvalidCode: 'Неверный код — попробуйте снова',
+        twoFaSendFailed: 'Не удалось отправить письмо — попробуйте снова',
     },
 
     // ── App layout / loading ──────────────────────────────────────────────────
@@ -136,6 +177,7 @@ const ru: Translation = {
         appearance: 'Внешний вид',
         voiceVideo: 'Голос и видео',
         language: 'Язык',
+        security: 'Безопасность',
         dangerZone: 'Опасная зона',
 
         // Account
@@ -209,6 +251,69 @@ const ru: Translation = {
         languageFailed: 'Не удалось сохранить язык',
 
         // Danger zone
+        // Security — change password
+        secChangePasswordTitle: 'Изменить пароль',
+        secCurrentPassword: 'Текущий пароль',
+        secNewPassword: 'Новый пароль',
+        secNewPasswordPlaceholder: 'Не менее 8 символов',
+        secConfirmPassword: 'Подтвердите новый пароль',
+        secChangePasswordBtn: 'Изменить пароль',
+        secSaving: 'Сохранение…',
+        secPasswordMismatch: 'Новые пароли не совпадают',
+        secPasswordTooShort: 'Пароль должен содержать не менее 8 символов',
+        secPasswordChanged: 'Пароль успешно изменён',
+        secPasswordChangeFailed: 'Не удалось изменить пароль — проверьте текущий пароль',
+
+        // Security — 2FA shared
+        secVerificationCode: 'Код подтверждения',
+        secCodeTypeAuthenticator: 'Аутентификатор',
+        secCodeTypeRecovery: 'Код восстановления',
+        secCodePlaceholderTotp: '6-значный код',
+        secCodePlaceholderRecovery: 'Код восстановления',
+        secProcessing: 'Обработка…',
+        secInvalidCredentials: 'Неверный пароль или код',
+        secCopied: 'Скопировано в буфер обмена',
+        secCopyAll: 'Копировать все',
+
+        // Security — 2FA status
+        sec2faTitle: 'Двухфакторная аутентификация',
+        sec2faEnabled: 'Включена',
+        sec2faDisabled: 'Отключена',
+        sec2faMethod: 'Метод',
+        sec2faRecoveryCodesRemaining: 'Осталось кодов восстановления',
+        sec2faEnableBtn: 'Включить приложение-аутентификатор',
+        sec2faEnableDesc: 'Добавьте дополнительный уровень защиты. При каждом входе потребуется приложение-аутентификатор.',
+        sec2faRegenBtn: 'Сгенерировать коды восстановления',
+        sec2faDisableBtn: 'Отключить 2FA',
+
+        // Security — TOTP setup wizard
+        secTotpPasswordDesc: 'Подтвердите текущий пароль для начала настройки.',
+        secTotpContinue: 'Продолжить',
+        secTotpVerifying: 'Проверка…',
+        secTotpWrongPassword: 'Неверный пароль',
+        secTotpScanDesc: 'Отсканируйте QR-код в приложении-аутентификаторе (Google Authenticator, Authy, 1Password и др.).',
+        secTotpShowManualKey: 'Показать ключ для ручного ввода',
+        secTotpHideManualKey: 'Скрыть ключ для ручного ввода',
+        secTotpScannedBtn: 'Я отсканировал код →',
+        secTotpConfirmDesc: 'Введите 6-значный код из приложения для подтверждения и активации TOTP.',
+        secTotpAuthCodeLabel: 'Код аутентификатора',
+        secTotpEnableBtn: 'Включить TOTP',
+        secTotpInvalidCode: 'Неверный код — попробуйте снова',
+
+        // Security — recovery codes display
+        secRecoverySaveTitle: 'Сохраните коды восстановления',
+        secRecoverySaveDesc: 'Храните их в надёжном месте. Каждый код можно использовать только один раз.',
+        secRecoveryDoneBtn: 'Готово — я сохранил коды',
+
+        // Security — disable / regen action forms
+        secDisableTitle: 'Отключить двухфакторную аутентификацию',
+        secDisableDesc: 'Введите пароль и код подтверждения для отключения 2FA.',
+        secDisableSubmit: 'Отключить 2FA',
+        secDisabledSuccess: 'Двухфакторная аутентификация отключена',
+        secRegenTitle: 'Сгенерировать коды восстановления',
+        secRegenDesc: 'Все существующие коды восстановления будут аннулированы и заменены новыми.',
+        secRegenSubmit: 'Сгенерировать коды',
+
         dangerDesc: 'Эти действия необратимы. Пожалуйста, будьте осторожны.',
         logOut: 'Выйти',
         logOutDesc: 'Выйдите из аккаунта на этом устройстве.',
@@ -502,6 +607,7 @@ const ru: Translation = {
         todayAt: 'Сегодня в {{time}}',
         yesterdayAt: 'Вчера в {{time}}',
         done: 'Готово',
+        back: 'Назад',
     },
 
     // ── Server Settings modal ────────────────────────────────────────────────

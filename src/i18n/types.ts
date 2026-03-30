@@ -32,6 +32,41 @@ export interface Translation {
         resetPassword: string
         resettingPassword: string
         resetFailed: string
+        registrationSentTitle: string
+        registrationSentDesc: string
+        confirmTitle: string
+        confirmDisplayName: string
+        confirmUsername: string
+        confirmUsernameHint: string
+        confirmPasswordLabel: string
+        confirmConfirmPasswordLabel: string
+        confirmSubmit: string
+        confirmSubmitting: string
+        confirmSuccessTitle: string
+        confirmSuccessDesc: string
+        confirmInvalidLink: string
+        confirmUsernameTaken: string
+        confirmLinkExpired: string
+        confirmInvalidRequest: string
+        confirmFailed: string
+        twoFaTitle: string
+        twoFaSubtitle: string
+        twoFaMethodTotp: string
+        twoFaMethodRecovery: string
+        twoFaMethodEmail: string
+        twoFaAuthCodeLabel: string
+        twoFaRecoveryCodeLabel: string
+        twoFaEmailCodeLabel: string
+        twoFaEmailPlaceholder: string
+        twoFaSendEmail: string
+        twoFaSending: string
+        twoFaEmailSentNote: string
+        twoFaVerify: string
+        twoFaVerifying: string
+        twoFaBack: string
+        twoFaVerificationFailed: string
+        twoFaInvalidCode: string
+        twoFaSendFailed: string
     }
     app: {
         loading: string
@@ -125,6 +160,7 @@ export interface Translation {
         appearance: string
         voiceVideo: string
         language: string
+        security: string
         dangerZone: string
         username: string
         discriminator: string
@@ -188,6 +224,57 @@ export interface Translation {
         selectLanguageDesc: string
         languageSaved: string
         languageFailed: string
+        secChangePasswordTitle: string
+        secCurrentPassword: string
+        secNewPassword: string
+        secNewPasswordPlaceholder: string
+        secConfirmPassword: string
+        secChangePasswordBtn: string
+        secSaving: string
+        secPasswordMismatch: string
+        secPasswordTooShort: string
+        secPasswordChanged: string
+        secPasswordChangeFailed: string
+        secVerificationCode: string
+        secCodeTypeAuthenticator: string
+        secCodeTypeRecovery: string
+        secCodePlaceholderTotp: string
+        secCodePlaceholderRecovery: string
+        secProcessing: string
+        secInvalidCredentials: string
+        secCopied: string
+        secCopyAll: string
+        sec2faTitle: string
+        sec2faEnabled: string
+        sec2faDisabled: string
+        sec2faMethod: string
+        sec2faRecoveryCodesRemaining: string
+        sec2faEnableBtn: string
+        sec2faEnableDesc: string
+        sec2faRegenBtn: string
+        sec2faDisableBtn: string
+        secTotpPasswordDesc: string
+        secTotpContinue: string
+        secTotpVerifying: string
+        secTotpWrongPassword: string
+        secTotpScanDesc: string
+        secTotpShowManualKey: string
+        secTotpHideManualKey: string
+        secTotpScannedBtn: string
+        secTotpConfirmDesc: string
+        secTotpAuthCodeLabel: string
+        secTotpEnableBtn: string
+        secTotpInvalidCode: string
+        secRecoverySaveTitle: string
+        secRecoverySaveDesc: string
+        secRecoveryDoneBtn: string
+        secDisableTitle: string
+        secDisableDesc: string
+        secDisableSubmit: string
+        secDisabledSuccess: string
+        secRegenTitle: string
+        secRegenDesc: string
+        secRegenSubmit: string
         dangerDesc: string
         logOut: string
         logOutDesc: string
@@ -468,6 +555,7 @@ export interface Translation {
         todayAt: string
         yesterdayAt: string
         done: string
+        back: string
     }
     serverSettings: {
         title: string
