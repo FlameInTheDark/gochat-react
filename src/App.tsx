@@ -38,7 +38,7 @@ const router = createBrowserRouter([
   { path: '/confirm/:userId/:token', element: <ConfirmPage /> },
   { path: '/invite/:code', element: <InvitePage /> },
   { path: '/forgot-password', element: <ForgotPasswordPage /> },
-  { path: '/reset/:token', element: <ResetPasswordPage /> },
+  { path: '/reset/:userId/:token', element: <ResetPasswordPage /> },
   {
     path: '/app',
     element: <AppLayout />,

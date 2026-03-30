@@ -7,7 +7,7 @@ import { authApi } from '@/api/client'
 import { useTranslation } from 'react-i18next'
 
 export default function ResetPasswordPage() {
-  const { token } = useParams<{ token: string }>()
+  const { userId, token } = useParams<{ userId: string; token: string }>()
   const navigate = useNavigate()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -24,7 +24,13 @@ export default function ResetPasswordPage() {
     setError(null)
     setLoading(true)
     try {
-      await authApi.authResetPost({ request: { password, token: token ?? '' } })
+      await authApi.authResetPost({
+        request: {
+          id: Number(userId ?? '0'),
+          password,
+          token: token ?? '',
+        },
+      })
       navigate('/')
     } catch {
       setError(t('auth.resetFailed'))
@@ -33,11 +39,19 @@ export default function ResetPasswordPage() {
     }
   }
 
+  if (!userId || !token) {
+    return (
+      <div className="flex flex-1 w-full items-center justify-center bg-background">
+        <p className="text-destructive">{t('auth.confirmInvalidLink')}</p>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-1 w-full items-center justify-center bg-background">
       <div className="w-full max-w-sm space-y-6 rounded-lg border bg-card p-8 shadow-sm">
         <h1 className="text-center text-2xl font-bold">{t('auth.resetPasswordTitle')}</h1>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={(e) => { void handleSubmit(e) }} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="password">{t('auth.newPassword')}</Label>
             <Input
