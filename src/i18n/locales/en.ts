@@ -34,6 +34,47 @@ const en: Translation = {
         resetPassword: 'Reset password',
         resettingPassword: 'Resetting…',
         resetFailed: 'Failed to reset password. The link may have expired.',
+
+        // Registration success
+        registrationSentTitle: 'Check your email',
+        registrationSentDesc: "We've sent a confirmation link to {{email}}. Follow the link to complete your registration.",
+
+        // Account confirmation page
+        confirmTitle: 'Complete your account',
+        confirmDisplayName: 'Display name',
+        confirmUsername: 'Username',
+        confirmUsernameHint: 'Lowercase letters, numbers, hyphens, underscores and dots only',
+        confirmPasswordLabel: 'Password',
+        confirmConfirmPasswordLabel: 'Confirm password',
+        confirmSubmit: 'Confirm account',
+        confirmSubmitting: 'Confirming…',
+        confirmSuccessTitle: 'Account confirmed!',
+        confirmSuccessDesc: 'Redirecting to sign in…',
+        confirmInvalidLink: 'Invalid confirmation link.',
+        confirmUsernameTaken: 'That username is already taken. Please choose another.',
+        confirmLinkExpired: 'Invalid or expired confirmation link.',
+        confirmInvalidRequest: 'Invalid request. Check your input.',
+        confirmFailed: 'Confirmation failed. Please try again.',
+
+        // 2FA login step
+        twoFaTitle: 'Two-factor authentication',
+        twoFaSubtitle: 'Verify your identity to continue',
+        twoFaMethodTotp: 'Authenticator app',
+        twoFaMethodRecovery: 'Recovery code',
+        twoFaMethodEmail: 'Email code',
+        twoFaAuthCodeLabel: 'Authenticator code',
+        twoFaRecoveryCodeLabel: 'Recovery code',
+        twoFaEmailCodeLabel: 'Email code',
+        twoFaEmailPlaceholder: 'Enter the code from your email',
+        twoFaSendEmail: 'Send code to email',
+        twoFaSending: 'Sending…',
+        twoFaEmailSentNote: 'A code was sent to your email address.',
+        twoFaVerify: 'Verify',
+        twoFaVerifying: 'Verifying…',
+        twoFaBack: '← Back to sign in',
+        twoFaVerificationFailed: 'Verification failed — try again',
+        twoFaInvalidCode: 'Invalid code — please try again',
+        twoFaSendFailed: 'Failed to send email — try again',
     },
 
     // ── App layout / loading ──────────────────────────────────────────────────
@@ -136,6 +177,7 @@ const en: Translation = {
         appearance: 'Appearance',
         voiceVideo: 'Voice & Video',
         language: 'Language',
+        security: 'Security',
         dangerZone: 'Danger Zone',
 
         // Account
@@ -207,6 +249,69 @@ const en: Translation = {
         selectLanguageDesc: 'Choose the language used throughout the app.',
         languageSaved: 'Language updated',
         languageFailed: 'Failed to save language',
+
+        // Security — change password
+        secChangePasswordTitle: 'Change Password',
+        secCurrentPassword: 'Current password',
+        secNewPassword: 'New password',
+        secNewPasswordPlaceholder: 'At least 8 characters',
+        secConfirmPassword: 'Confirm new password',
+        secChangePasswordBtn: 'Change password',
+        secSaving: 'Saving…',
+        secPasswordMismatch: 'New passwords do not match',
+        secPasswordTooShort: 'Password must be at least 8 characters',
+        secPasswordChanged: 'Password changed successfully',
+        secPasswordChangeFailed: 'Failed to change password — check your current password',
+
+        // Security — 2FA shared
+        secVerificationCode: 'Verification code',
+        secCodeTypeAuthenticator: 'Authenticator',
+        secCodeTypeRecovery: 'Recovery code',
+        secCodePlaceholderTotp: '6-digit code',
+        secCodePlaceholderRecovery: 'Recovery code',
+        secProcessing: 'Processing…',
+        secInvalidCredentials: 'Invalid password or code',
+        secCopied: 'Copied to clipboard',
+        secCopyAll: 'Copy all',
+
+        // Security — 2FA status
+        sec2faTitle: 'Two-Factor Authentication',
+        sec2faEnabled: 'Enabled',
+        sec2faDisabled: 'Disabled',
+        sec2faMethod: 'Method',
+        sec2faRecoveryCodesRemaining: 'Recovery codes remaining',
+        sec2faEnableBtn: 'Enable Authenticator App',
+        sec2faEnableDesc: "Add an extra layer of security. You'll need your authenticator app each time you sign in.",
+        sec2faRegenBtn: 'Regenerate recovery codes',
+        sec2faDisableBtn: 'Disable 2FA',
+
+        // Security — TOTP setup wizard
+        secTotpPasswordDesc: 'Confirm your current password to begin setup.',
+        secTotpContinue: 'Continue',
+        secTotpVerifying: 'Verifying…',
+        secTotpWrongPassword: 'Incorrect password',
+        secTotpScanDesc: 'Scan this QR code with your authenticator app (Google Authenticator, Authy, 1Password, etc.).',
+        secTotpShowManualKey: 'Show manual entry key',
+        secTotpHideManualKey: 'Hide manual entry key',
+        secTotpScannedBtn: "I've scanned the code →",
+        secTotpConfirmDesc: 'Enter the 6-digit code from your authenticator app to verify and activate TOTP.',
+        secTotpAuthCodeLabel: 'Authenticator code',
+        secTotpEnableBtn: 'Enable TOTP',
+        secTotpInvalidCode: 'Invalid code — try again',
+
+        // Security — recovery codes display
+        secRecoverySaveTitle: 'Save your recovery codes',
+        secRecoverySaveDesc: 'Store these somewhere safe. Each code can only be used once if you lose access to your authenticator.',
+        secRecoveryDoneBtn: "Done — I've saved my codes",
+
+        // Security — disable / regen action forms
+        secDisableTitle: 'Disable two-factor authentication',
+        secDisableDesc: 'Enter your password and a verification code to remove 2FA from your account.',
+        secDisableSubmit: 'Disable 2FA',
+        secDisabledSuccess: 'Two-factor authentication disabled',
+        secRegenTitle: 'Regenerate recovery codes',
+        secRegenDesc: 'This invalidates all existing recovery codes and generates a new set.',
+        secRegenSubmit: 'Regenerate codes',
 
         // Danger zone
         dangerDesc: 'These actions are irreversible. Please proceed with caution.',
@@ -499,6 +604,7 @@ const en: Translation = {
         todayAt: 'Today at {{time}}',
         yesterdayAt: 'Yesterday at {{time}}',
         done: 'Done',
+        back: 'Back',
     },
 
     // ── Server Settings modal ────────────────────────────────────────────────

@@ -27,8 +27,9 @@ import i18n, { SUPPORTED_LANGUAGES } from '@/i18n'
 import { useClientMode } from '@/hooks/useClientMode'
 import ProfileCardBody, { userColor } from '@/components/layout/ProfileCardBody'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
+import SecuritySection from '@/components/settings/SecuritySection'
 
-type Section = 'account' | 'appearance' | 'voice' | 'language' | 'danger'
+type Section = 'account' | 'appearance' | 'voice' | 'language' | 'security' | 'danger'
 
 function numToHex(n: number | undefined | null, fallback: string): string {
   if (n == null) return fallback
@@ -377,6 +378,7 @@ export default function AppSettingsModal() {
     { key: 'appearance', label: t('settings.appearance') },
     { key: 'voice', label: t('settings.voiceVideo') },
     { key: 'language', label: t('settings.language') },
+    { key: 'security', label: t('settings.security') },
     { key: 'danger', label: t('settings.dangerZone'), danger: true },
   ]
 
@@ -1292,6 +1294,9 @@ export default function AppSettingsModal() {
                   </div>
                 </div>
               )}
+
+              {/* Security */}
+              {section === 'security' && <SecuritySection />}
 
               {/* Danger Zone */}
               {section === 'danger' && (
