@@ -17,6 +17,7 @@ import ServerLayout from '@/pages/app/ServerLayout'
 import ChannelPage from '@/pages/app/ChannelPage'
 import MePage from '@/pages/app/MePage'
 import DMPage from '@/pages/app/DMPage'
+import NotFoundPage from '@/pages/NotFoundPage'
 import CreateServerModal from '@/components/modals/CreateServerModal'
 import CreateChannelModal from '@/components/modals/CreateChannelModal'
 import CreateCategoryModal from '@/components/modals/CreateCategoryModal'
@@ -61,6 +62,7 @@ const router = createBrowserRouter([
       },
     ],
   },
+  { path: '*', element: <NotFoundPage /> },
 ], { basename: import.meta.env.VITE_BASE_PATH || '/' })
 
 export default function App() {

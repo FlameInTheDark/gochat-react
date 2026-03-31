@@ -187,6 +187,16 @@ export default function ChannelPage() {
   const messageInputRef = useRef<MessageInputHandle | null>(null)
   const rightPanelResizeCleanupRef = useRef<(() => void) | null>(null)
 
+  // Insert mention from invalid invite embed
+  useEffect(() => {
+    function handleInsertMention(e: Event) {
+      const { userId, name } = (e as CustomEvent<{ userId: string; name: string }>).detail
+      messageInputRef.current?.insertMentionAtEnd(userId, name)
+    }
+    window.addEventListener('chat:insert-mention', handleInsertMention)
+    return () => window.removeEventListener('chat:insert-mention', handleInsertMention)
+  }, [])
+
   // Jump-to-message from search.
   const locationState = location.state as ChannelPageLocationState | null
   const jumpIdFromState = locationState?.jumpToMessageId

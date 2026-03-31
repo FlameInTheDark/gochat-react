@@ -244,6 +244,7 @@ interface Props {
 
 export interface MentionInputHandle {
   focusEditor: () => void
+  insertMentionAtEnd: (userId: string, name: string) => void
 }
 
 const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput({
@@ -376,9 +377,36 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     selection.addRange(range)
   }, [disabled])
 
+  const insertMentionAtEnd = useCallback((userId: string, name: string) => {
+    const el = editorRef.current
+    if (!el || disabled) return
+
+    const span = document.createElement('span')
+    span.contentEditable = 'false'
+    span.dataset.token = `<@${userId}>`
+    span.dataset.mention = 'true'
+    span.dataset.type = 'user'
+    span.className = 'mention-chip'
+    span.textContent = `@${name}`
+
+    const space = document.createTextNode('\u00A0')
+    el.appendChild(span)
+    el.appendChild(space)
+    el.classList.remove('is-empty')
+
+    el.focus()
+    const range = document.createRange()
+    range.setStart(space, 1)
+    range.collapse(true)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+  }, [disabled])
+
   useImperativeHandle(ref, () => ({
     focusEditor,
-  }), [focusEditor])
+    insertMentionAtEnd,
+  }), [focusEditor, insertMentionAtEnd])
 
   // Close suggestions when clicking outside the entire component (editor + popup)
   useEffect(() => {

@@ -630,6 +630,9 @@ const en: Translation = {
         emojiTitle: 'Emoji', emojiDesc: 'Upload custom emoji for your server. Members can use them in messages with :name: completion.', uploadEmoji: 'Upload New Emoji', emojiLimits: 'Max 256 KB · Max 128×128 px · Animated GIF/WebP supported',
         emojiNameLabel: 'Name', emojiNamePlaceholder: 'party-cat', emojiNameHint: 'Letters, numbers, hyphens only', emojiFileLabel: 'Image file',
         uploading: 'Uploading…', upload: 'Upload', emojiUploaded: 'Emoji uploaded', emojiUploadFailed: 'Failed to upload emoji', emojiNameSaved: 'Emoji renamed', emojiNameSaveFailed: 'Failed to rename emoji', emojiDeleted: 'Emoji deleted', emojiDeleteFailed: 'Failed to delete emoji',
+        emojiSelectFile: 'Click to select', emojiStaticSection: 'Static — {{count}} / 50', emojiAnimatedSection: 'Animated — {{count}} / 50',
+        emojiNoStatic: 'No static emoji yet', emojiNoAnimated: 'No animated emoji yet', emojiUploadHintStatic: 'Upload a PNG, WebP or JPEG above', emojiUploadHintAnimated: 'Upload an animated GIF above',
+        emojiRename: 'Rename', emojiDeleteBtn: 'Delete emoji', emojiFileTooLarge: 'File exceeds the 256 KB limit even after resizing.',
         deleteServer: 'Delete this Server', deleteServerDesc: 'These actions are irreversible. Please proceed with caution.', deleteServerConfirm: 'Deleting…', deleteServerFailed: 'Failed to delete server', deleteServerNameMismatch: 'Server name does not match',
         permCategoryGeneral: 'General Server', permCategoryMembership: 'Membership', permCategoryText: 'Text Channels', permCategoryVoice: 'Voice Channels',
         permAdministrator: 'Administrator', permAdministratorDesc: 'Grants all permissions and bypasses channel overrides. Assign with caution.',
@@ -721,6 +724,18 @@ const en: Translation = {
         goToApp: 'Go to app',
         invalidInvite: 'This invite is invalid or has expired.',
         joinFailed: 'Failed to join the server. The invite may have expired.',
+        inviteEmbedHeader: "You've been invited to join a server",
+        join: 'Join',
+        joined: 'Joined!',
+        invalidHeader: 'You received an invite, but…',
+        invalidTitle: 'Invalid Invite',
+        invalidAskForNew: 'Ask {{name}} for a new invite!',
+        mention: 'Mention',
+    },
+    notFound: {
+        title: '404 — Page not found',
+        subtitle: "The page you're looking for doesn't exist or has been moved.",
+        back: 'Go back',
     },
 }
 

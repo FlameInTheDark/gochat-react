@@ -26,7 +26,9 @@ export default function ResetPasswordPage() {
     try {
       await authApi.authResetPost({
         request: {
-          id: BigInt(userId) as unknown as number,
+          // Keep Snowflake IDs as strings at runtime: the auth service accepts
+          // stringified int64 values, while BigInt cannot be JSON-serialized here.
+          id: userId as unknown as number,
           password,
           token: token ?? '',
         },

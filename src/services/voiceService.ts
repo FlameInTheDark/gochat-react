@@ -29,6 +29,9 @@
 import JSONBig from 'json-bigint'
 import { Buffer } from 'buffer'
 import { Codec, DAVESession, MediaType, ProposalsOperationType, SessionStatus } from '@snazzah/davey'
+import type { ModelUserSettingsData } from '@/client'
+import { queryClient } from '@/lib/queryClient'
+import { saveSettings } from '@/lib/settingsApi'
 import { useAuthStore } from '@/stores/authStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
@@ -136,6 +139,9 @@ interface AudioContextWithSinkId extends AudioContext {
   setSinkId(sinkId: string): Promise<void>
 }
 
+let clearInvalidAudioOutputDevicePromise: Promise<void> | null = null
+let clearInvalidAudioOutputDeviceId: string | null = null
+
 // Gain nodes keyed by userId — used for per-user volume and deafen toggling.
 const audioGains: Record<string, GainNode> = {}
 
@@ -190,6 +196,93 @@ type EncodedFrame = {
 
 function currentUserId(): string {
   return String(useAuthStore.getState().user?.id ?? '')
+}
+
+function getAudioContextWithSinkId(ctx: AudioContext): AudioContextWithSinkId | null {
+  const sinkCtx = ctx as AudioContext & Partial<AudioContextWithSinkId>
+  return typeof sinkCtx.setSinkId === 'function' ? sinkCtx as AudioContextWithSinkId : null
+}
+
+function isMissingAudioOutputDeviceError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === 'NotFoundError'
+  }
+  if (typeof error !== 'object' || error === null) {
+    return false
+  }
+  const maybeError = error as { name?: unknown; message?: unknown }
+  return maybeError.name === 'NotFoundError' ||
+    (typeof maybeError.message === 'string' && maybeError.message.includes('is not found'))
+}
+
+async function clearInvalidAudioOutputDevicePreference(invalidDeviceId: string): Promise<void> {
+  if (useVoiceStore.getState().settings.audioOutputDevice !== invalidDeviceId) {
+    return
+  }
+
+  useVoiceStore.getState().setSettings({ audioOutputDevice: '' })
+
+  if (clearInvalidAudioOutputDevicePromise && clearInvalidAudioOutputDeviceId === invalidDeviceId) {
+    await clearInvalidAudioOutputDevicePromise
+    return
+  }
+
+  const existing = queryClient.getQueryData<ModelUserSettingsData>(['user-settings'])
+  if (!existing?.devices) {
+    vlog('audio output device cleared locally (deviceId=%s, no cached user settings to persist)', invalidDeviceId)
+    return
+  }
+
+  clearInvalidAudioOutputDeviceId = invalidDeviceId
+  clearInvalidAudioOutputDevicePromise = saveSettings({
+    devices: {
+      ...existing.devices,
+      audio_output_device: undefined,
+    },
+  })
+    .then(() => {
+      vlog('audio output device cleared from persisted settings (deviceId=%s)', invalidDeviceId)
+    })
+    .catch((err) => {
+      vwarn('audio output device persist reset failed for deviceId=%s: %o', invalidDeviceId, err)
+    })
+    .finally(() => {
+      clearInvalidAudioOutputDeviceId = null
+      clearInvalidAudioOutputDevicePromise = null
+    })
+
+  await clearInvalidAudioOutputDevicePromise
+}
+
+async function applySavedAudioOutputDevice(ctx: AudioContext, reason: string): Promise<void> {
+  const sinkCtx = getAudioContextWithSinkId(ctx)
+  if (!sinkCtx) {
+    return
+  }
+
+  const sinkId = useVoiceStore.getState().settings.audioOutputDevice
+  if (!sinkId) {
+    return
+  }
+
+  try {
+    await sinkCtx.setSinkId(sinkId)
+  } catch (err) {
+    if (!isMissingAudioOutputDeviceError(err)) {
+      verr('%s: setSinkId failed: %o', reason, err)
+      return
+    }
+
+    vwarn('%s: output device %s not found — falling back to default output', reason, sinkId)
+    void clearInvalidAudioOutputDevicePreference(sinkId)
+
+    try {
+      await sinkCtx.setSinkId('')
+      vlog('%s: audio output reset to system default', reason)
+    } catch (fallbackErr) {
+      verr('%s: default-output fallback failed: %o', reason, fallbackErr)
+    }
+  }
 }
 
 function resolveFallbackRemoteUserId(): string | null {
@@ -1593,9 +1686,7 @@ function createPeerConnection(): RTCPeerConnection {
     source.connect(gain)
     gain.connect(ctx.destination)
 
-    if (settings.audioOutputDevice && 'setSinkId' in ctx) {
-      void (ctx as unknown as AudioContextWithSinkId).setSinkId(settings.audioOutputDevice).catch((e: unknown) => verr('ontrack: setSinkId failed: %o', e))
-    }
+    void applySavedAudioOutputDevice(ctx, 'ontrack')
 
     if (audioGains[userId]) {
       audioGains[userId].disconnect()
@@ -2057,10 +2148,8 @@ export function setDeafened(deafened: boolean) {
     gain.gain.value = deafened ? 0 : effectiveGain
     vlog('setDeafened: gain for userId=%s → %.2f', uid, gain.gain.value)
   }
-  if (audioCtx && (audioCtx as unknown as AudioContextWithSinkId).setSinkId) {
-    if (!deafened && settings.audioOutputDevice) {
-      void (audioCtx as unknown as AudioContextWithSinkId).setSinkId(settings.audioOutputDevice).catch(() => {})
-    }
+  if (audioCtx && !deafened) {
+    void applySavedAudioOutputDevice(audioCtx, 'setDeafened')
   }
   if (peerConnection) {
     for (const receiver of peerConnection.getReceivers()) {
@@ -2367,8 +2456,8 @@ export function applyVoiceSettings() {
     localInputGain.gain.value = settings.audioInputLevel / 100
   }
 
-  if (audioCtx && 'setSinkId' in audioCtx && settings.audioOutputDevice) {
-    void (audioCtx as unknown as AudioContextWithSinkId).setSinkId(settings.audioOutputDevice).catch(() => {})
+  if (audioCtx) {
+    void applySavedAudioOutputDevice(audioCtx, 'applyVoiceSettings')
   }
 
   if (peerConnection && localStream) {

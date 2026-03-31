@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import {
   AlertCircle,
+  CornerUpRight,
   Copy,
   Hash,
   MessageSquare,
@@ -674,7 +675,7 @@ export default function MessageItem({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div ref={messageContainerRef} className={cn(
-            'relative flex items-start gap-3 rounded px-2 group',
+            'relative flex flex-col rounded px-2 group',
             isGrouped ? 'py-0.5' : 'py-1',
             deliveryState === 'sending' && 'opacity-70',
             deliveryState === 'failed' && 'bg-red-500/8 hover:bg-red-500/12',
@@ -718,7 +719,52 @@ export default function MessageItem({
                 )}
               </div>
             )}
-            {isGrouped ? (
+            {showReplyPreview && (
+              <div
+                role={canOpenReference ? 'button' : undefined}
+                tabIndex={canOpenReference ? 0 : undefined}
+                onClick={handleReferencePreviewClick}
+                onKeyDown={handleReferencePreviewKeyDown}
+                className={cn(
+                  'group/reply flex items-center gap-3 text-xs text-muted-foreground',
+                  canOpenReference && 'cursor-pointer',
+                )}
+              >
+                <div className="w-9 shrink-0 flex items-center justify-end">
+                  <CornerUpRight className="h-4 w-4 text-muted-foreground/40 group-hover/reply:text-muted-foreground transition-colors" strokeWidth={2.5} />
+                </div>
+                <div className="min-w-0 flex-1 flex items-center gap-1.5 overflow-hidden">
+                  {referencedMessage?.author && (
+                    <Avatar className="h-4 w-4 shrink-0">
+                      <AvatarImage
+                        src={referencedMessage.author.avatar?.url}
+                        alt={referencedMessage.author.name ?? 'User'}
+                        className="object-cover"
+                      />
+                      <AvatarFallback className="text-[9px]">
+                        {(referencedMessage.author.name ?? '?').charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                  )}
+                  {referencedMessage?.author?.name && (
+                    <button
+                      type="button"
+                      onClick={handleReferencedAuthorClick}
+                      data-message-interactive="true"
+                      className="shrink-0 font-medium hover:underline"
+                      style={referencedAuthorRoleColor ? { color: referencedAuthorRoleColor, opacity: 0.75 } : { color: 'var(--foreground)' }}
+                    >
+                      {replyPreviewAuthorName}
+                    </button>
+                  )}
+                  <div className="truncate">
+                    {parseInlineMessageContent(replyPreviewText, resolver, `reply-preview-${messageId}`)}
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="flex items-start gap-3">
+            {isGrouped && !showReplyPreview ? (
               /* Compact grouped row: no avatar — hover reveals timestamp in left gutter */
               <div className="w-9 shrink-0 flex items-center justify-end mt-0.5">
                 <span className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity leading-none tabular-nums select-none">
@@ -744,7 +790,7 @@ export default function MessageItem({
             )}
 
             <div className="min-w-0 flex-1">
-              {!isGrouped && !useInlineInformationalLayout && (
+              {(!isGrouped || showReplyPreview) && !useInlineInformationalLayout && (
                 <div className="flex items-baseline gap-2">
                   {/* Clickable author name */}
                   <button
@@ -800,48 +846,6 @@ export default function MessageItem({
                 </div>
               ) : (
                 <>
-                  {showReplyPreview && (
-                    <div
-                      role={canOpenReference ? 'button' : undefined}
-                      tabIndex={canOpenReference ? 0 : undefined}
-                      onClick={handleReferencePreviewClick}
-                      onKeyDown={handleReferencePreviewKeyDown}
-                      className={cn(
-                        'mb-1.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground',
-                        canOpenReference && 'cursor-pointer',
-                      )}
-                    >
-                      <ReplyIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      {referencedMessage?.author && (
-                        <Avatar className="h-4 w-4 shrink-0">
-                          <AvatarImage
-                            src={referencedMessage.author.avatar?.url}
-                            alt={referencedMessage.author.name ?? 'User'}
-                            className="object-cover"
-                          />
-                          <AvatarFallback className="text-[9px]">
-                            {(referencedMessage.author.name ?? '?').charAt(0).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                      )}
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        {referencedMessage?.author?.name && (
-                          <button
-                            type="button"
-                            onClick={handleReferencedAuthorClick}
-                            data-message-interactive="true"
-                            className="shrink-0 font-medium hover:underline"
-                            style={referencedAuthorRoleColor ? { color: referencedAuthorRoleColor } : { color: 'var(--foreground)' }}
-                          >
-                            {replyPreviewAuthorName}
-                          </button>
-                        )}
-                        <div className="min-w-0 line-clamp-1 break-words">
-                          {parseInlineMessageContent(replyPreviewText, resolver, `reply-preview-${messageId}`)}
-                        </div>
-                      </div>
-                    </div>
-                  )}
                   {useInlineInformationalLayout && (
                     <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm leading-relaxed text-muted-foreground">
                       <button
@@ -905,7 +909,7 @@ export default function MessageItem({
                   )}
                   {/* Invite embeds */}
                   {message.content && extractInviteCodes(message.content).map((code) => (
-                    <InviteEmbed key={code} code={code} />
+                    <InviteEmbed key={code} code={code} authorId={message.author?.id != null ? String(message.author.id) : undefined} authorName={message.author?.name ?? undefined} />
                   ))}
                   {!informationalContent && threadPreview && (
                     <div
@@ -991,6 +995,7 @@ export default function MessageItem({
                   {deliveryStateContent}
                 </>
               )}
+            </div>
             </div>
           </div>
         </ContextMenuTrigger>

@@ -633,6 +633,9 @@ const ru: Translation = {
         emojiTitle: 'Эмодзи', emojiDesc: 'Загрузите пользовательские эмодзи для сервера. Участники могут использовать их через :название:.', uploadEmoji: 'Загрузить эмодзи', emojiLimits: 'Макс. 256 КБ · Макс. 128×128 пкс · Анимированные GIF/WebP поддерживаются',
         emojiNameLabel: 'Название', emojiNamePlaceholder: 'party-cat', emojiNameHint: 'Только буквы, цифры и дефисы', emojiFileLabel: 'Файл изображения',
         uploading: 'Загрузка…', upload: 'Загрузить', emojiUploaded: 'Эмодзи загружено', emojiUploadFailed: 'Не удалось загрузить эмодзи', emojiNameSaved: 'Эмодзи переименовано', emojiNameSaveFailed: 'Не удалось переименовать эмодзи', emojiDeleted: 'Эмодзи удалено', emojiDeleteFailed: 'Не удалось удалить эмодзи',
+        emojiSelectFile: 'Нажмите для выбора', emojiStaticSection: 'Статичные — {{count}} / 50', emojiAnimatedSection: 'Анимированные — {{count}} / 50',
+        emojiNoStatic: 'Нет статичных эмодзи', emojiNoAnimated: 'Нет анимированных эмодзи', emojiUploadHintStatic: 'Загрузите PNG, WebP или JPEG выше', emojiUploadHintAnimated: 'Загрузите анимированный GIF выше',
+        emojiRename: 'Переименовать', emojiDeleteBtn: 'Удалить эмодзи', emojiFileTooLarge: 'Файл превышает лимит 256 КБ даже после изменения размера.',
         deleteServer: 'Удалить этот сервер', deleteServerDesc: 'Эти действия необратимы. Пожалуйста, будьте осторожны.', deleteServerConfirm: 'Удаление…', deleteServerFailed: 'Не удалось удалить сервер', deleteServerNameMismatch: 'Название сервера не совпадает',
         permCategoryGeneral: 'Общие настройки сервера', permCategoryMembership: 'Участники', permCategoryText: 'Текстовые каналы', permCategoryVoice: 'Голосовые каналы',
         permAdministrator: 'Администратор', permAdministratorDesc: 'Предоставляет все права и обходит ограничения каналов. Назначайте осторожно.',
@@ -724,6 +727,18 @@ const ru: Translation = {
         goToApp: 'Перейти в приложение',
         invalidInvite: 'Приглашение недействительно или истекло.',
         joinFailed: 'Не удалось присоединиться. Приглашение могло истечь.',
+        inviteEmbedHeader: 'Вас пригласили на сервер',
+        join: 'Войти',
+        joined: 'Вы вошли!',
+        invalidHeader: 'Вы получили приглашение, но…',
+        invalidTitle: 'Недействительное приглашение',
+        invalidAskForNew: 'Попросите {{name}} прислать новое приглашение!',
+        mention: 'Упомянуть',
+    },
+    notFound: {
+        title: '404 — Страница не найдена',
+        subtitle: 'Страница, которую вы ищете, не существует или была перемещена.',
+        back: 'Назад',
     },
 }
 

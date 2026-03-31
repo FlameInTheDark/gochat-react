@@ -102,6 +102,7 @@ interface Props {
 export interface MessageInputHandle {
   addFiles: (files: FileList | File[]) => void
   focusEditor: () => void
+  insertMentionAtEnd: (userId: string, name: string) => void
 }
 
 const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput({
@@ -147,6 +148,9 @@ const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput
     },
     focusEditor: () => {
       mentionInputRef.current?.focusEditor()
+    },
+    insertMentionAtEnd: (userId, name) => {
+      mentionInputRef.current?.insertMentionAtEnd(userId, name)
     },
   }))
 

@@ -17,8 +17,10 @@ export default function ForgotPasswordPage() {
     e.preventDefault()
     setError(null)
     setLoading(true)
+    const normalizedEmail = email.trim()
     try {
-      await authApi.authRecoveryPost({ request: { email } })
+      await authApi.authRecoveryPost({ request: { email: normalizedEmail } })
+      setEmail(normalizedEmail)
       setSent(true)
     } catch {
       setError(t('auth.recoveryFailed'))

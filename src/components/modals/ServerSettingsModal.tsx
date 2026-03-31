@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, Fragment } from 'react'
 import { useTranslation } from 'react-i18next'
-import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil, Shield, UserMinus, Ban, GripVertical, ChevronLeft, ChevronRight } from 'lucide-react'
+import { X, Plus, Trash2, ShieldAlert, Copy, Camera, AlertTriangle, Smile, Upload, Pencil, Shield, UserMinus, Ban, GripVertical, ChevronLeft, ChevronRight, ImagePlus } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -101,6 +101,37 @@ function Toggle({
       />
     </button>
   )
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Resize a static image to fit within 128×128 px (aspect-ratio preserved).
+ *  GIFs are returned unchanged to preserve animation. */
+async function resizeEmojiIfNeeded(file: File): Promise<File> {
+  if (file.type === 'image/gif') return file
+
+  const MAX = 128
+  const bitmap = await createImageBitmap(file)
+  const { width, height } = bitmap
+
+  if (width <= MAX && height <= MAX) {
+    bitmap.close()
+    return file
+  }
+
+  const scale = Math.min(MAX / width, MAX / height)
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.round(width * scale)
+  canvas.height = Math.round(height * scale)
+  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close()
+
+  return new Promise<File>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) { reject(new Error('Canvas toBlob failed')); return }
+      resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.png'), { type: 'image/png' }))
+    }, 'image/png')
+  })
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -292,11 +323,27 @@ export default function ServerSettingsModal() {
   const emojiFileRef = useRef<HTMLInputElement>(null)
   const [emojiName, setEmojiName] = useState('')
   const [emojiFile, setEmojiFile] = useState<File | null>(null)
+  const [emojiPreviewUrl, setEmojiPreviewUrl] = useState<string | null>(null)
   const [uploadingEmoji, setUploadingEmoji] = useState(false)
   const [editingEmojiId, setEditingEmojiId] = useState<string | null>(null)
   const [editingEmojiName, setEditingEmojiName] = useState('')
   const [savingEmojiId, setSavingEmojiId] = useState<string | null>(null)
   const [deletingEmojiId, setDeletingEmojiId] = useState<string | null>(null)
+
+  async function handleEmojiFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.files?.[0] ?? null
+    setEmojiPreviewUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
+    if (!raw) { setEmojiFile(null); return }
+    const file = await resizeEmojiIfNeeded(raw)
+    if (file.size > 256 * 1024) {
+      toast.error(t('serverSettings.emojiFileTooLarge'))
+      setEmojiFile(null)
+      if (emojiFileRef.current) emojiFileRef.current.value = ''
+      return
+    }
+    setEmojiFile(file)
+    setEmojiPreviewUrl(URL.createObjectURL(file))
+  }
 
   // ── Queries ─────────────────────────────────────────────────────────────────
 
@@ -680,6 +727,7 @@ export default function ServerSettingsModal() {
       toast.success(t('serverSettings.emojiUploaded'))
       setEmojiName('')
       setEmojiFile(null)
+      setEmojiPreviewUrl(null)
       if (emojiFileRef.current) emojiFileRef.current.value = ''
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -1529,53 +1577,82 @@ export default function ServerSettingsModal() {
             {/* ── Emojis ── */}
             {section === 'emojis' && (
               <div className="space-y-6">
-                <h2 className="text-xl font-bold flex items-center gap-2">
-                  <Smile className="w-5 h-5" />
-                  {t('serverSettings.emojiTitle')}
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  {t('serverSettings.emojiDesc')}
-                </p>
+                <div>
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Smile className="w-5 h-5" />
+                    {t('serverSettings.emojiTitle')}
+                  </h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {t('serverSettings.emojiDesc')}
+                  </p>
+                </div>
 
                 {/* Upload form */}
                 {isOwner && (
-                  <div className="rounded-lg border border-border p-4 space-y-3">
-                    <p className="text-sm font-semibold">{t('serverSettings.uploadEmoji')}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t('serverSettings.emojiLimits')}
-                    </p>
-                    <div className="flex gap-3 flex-wrap items-end">
-                      <div className="space-y-1 flex-1 min-w-[140px]">
-                        <Label className="text-xs">{t('serverSettings.emojiNameLabel')}</Label>
-                        <Input
-                          value={emojiName}
-                          onChange={(e) => setEmojiName(e.target.value.replace(/[^A-Za-z0-9-]/g, ''))}
-                          placeholder={t('serverSettings.emojiNamePlaceholder')}
-                          className="h-8 text-sm"
-                          maxLength={32}
-                        />
-                        <p className="text-[10px] text-muted-foreground">{t('serverSettings.emojiNameHint')}</p>
-                      </div>
-                      <div className="space-y-1 flex-1 min-w-[140px]">
-                        <Label className="text-xs">{t('serverSettings.emojiFileLabel')}</Label>
-                        <input
-                          ref={emojiFileRef}
-                          type="file"
-                          accept="image/png,image/gif,image/webp,image/jpeg"
-                          className="block w-full text-xs text-muted-foreground file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-muted file:text-foreground hover:file:bg-accent cursor-pointer"
-                          onChange={(e) => setEmojiFile(e.target.files?.[0] ?? null)}
-                        />
-                      </div>
-                      <Button
-                        size="sm"
-                        className="gap-2 shrink-0"
-                        onClick={() => void handleUploadEmoji()}
-                        disabled={uploadingEmoji || !emojiName.trim() || !emojiFile}
-                      >
-                        <Upload className="w-3.5 h-3.5" />
-                        {uploadingEmoji ? t('serverSettings.uploading') : t('serverSettings.upload')}
-                      </Button>
+                  <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+                    <div>
+                      <p className="text-sm font-semibold">{t('serverSettings.uploadEmoji')}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{t('serverSettings.emojiLimits')}</p>
                     </div>
+
+                    <div className="flex gap-4 items-start">
+                      {/* Clickable file preview zone */}
+                      <button
+                        type="button"
+                        onClick={() => emojiFileRef.current?.click()}
+                        className={cn(
+                          'w-20 h-20 rounded-xl border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-all shrink-0 overflow-hidden',
+                          emojiPreviewUrl
+                            ? 'border-primary/40 bg-muted/20 hover:brightness-90'
+                            : 'border-border hover:border-primary/50 bg-muted/30 hover:bg-muted/50',
+                        )}
+                        title={t('serverSettings.emojiSelectFile')}
+                      >
+                        {emojiPreviewUrl ? (
+                          <img src={emojiPreviewUrl} className="w-full h-full object-contain" alt="" />
+                        ) : (
+                          <>
+                            <ImagePlus className="w-6 h-6 text-muted-foreground" />
+                            <span className="text-[10px] text-muted-foreground leading-tight text-center px-1">
+                              {t('serverSettings.emojiSelectFile')}
+                            </span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Name + upload button */}
+                      <div className="flex-1 space-y-3">
+                        <div className="space-y-1">
+                          <Label className="text-xs">{t('serverSettings.emojiNameLabel')}</Label>
+                          <Input
+                            value={emojiName}
+                            onChange={(e) => setEmojiName(e.target.value.replace(/[^A-Za-z0-9-]/g, ''))}
+                            placeholder={t('serverSettings.emojiNamePlaceholder')}
+                            className="h-8 text-sm"
+                            maxLength={32}
+                          />
+                          <p className="text-[10px] text-muted-foreground">{t('serverSettings.emojiNameHint')}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          className="gap-2"
+                          onClick={() => void handleUploadEmoji()}
+                          disabled={uploadingEmoji || !emojiName.trim() || !emojiFile}
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          {uploadingEmoji ? t('serverSettings.uploading') : t('serverSettings.upload')}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Hidden file input */}
+                    <input
+                      ref={emojiFileRef}
+                      type="file"
+                      accept="image/png,image/gif,image/webp,image/jpeg"
+                      className="hidden"
+                      onChange={(e) => void handleEmojiFileChange(e)}
+                    />
                   </div>
                 )}
 
@@ -1584,7 +1661,7 @@ export default function ServerSettingsModal() {
                   const staticEmojis = guildEmojis.filter((e) => !e.animated)
                   const animatedEmojis = guildEmojis.filter((e) => e.animated)
 
-                  const renderEmojiRow = (emoji: DtoGuildEmoji) => {
+                  const renderEmojiCard = (emoji: DtoGuildEmoji) => {
                     const eid = String(emoji.id)
                     const isEditing = editingEmojiId === eid
                     const isDeleting = deletingEmojiId === eid
@@ -1593,21 +1670,21 @@ export default function ServerSettingsModal() {
                       <div
                         key={eid}
                         className={cn(
-                          'flex items-center gap-3 px-3 py-2 rounded-md hover:bg-accent/50 group',
-                          isDeleting && 'opacity-40',
+                          'relative group flex flex-col items-center gap-1.5 p-2 rounded-xl border border-transparent hover:border-border hover:bg-accent/40 transition-all',
+                          isDeleting && 'opacity-40 pointer-events-none',
                         )}
                       >
                         <img
-                          src={emojiUrl(eid, 44)}
+                          src={emojiUrl(eid, 64)}
                           alt={emoji.name}
-                          className="w-8 h-8 object-contain shrink-0"
+                          className="w-10 h-10 object-contain"
                         />
                         {isEditing ? (
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <div className="w-full space-y-1">
                             <Input
                               value={editingEmojiName}
                               onChange={(e) => setEditingEmojiName(e.target.value.replace(/[^A-Za-z0-9-]/g, ''))}
-                              className="h-7 text-sm flex-1"
+                              className="h-6 text-[10px] text-center px-1"
                               maxLength={32}
                               autoFocus
                               onKeyDown={(e) => {
@@ -1615,69 +1692,73 @@ export default function ServerSettingsModal() {
                                 if (e.key === 'Escape') setEditingEmojiId(null)
                               }}
                             />
-                            <Button size="sm" className="h-7 text-xs" onClick={() => void handleRenameEmoji(eid)} disabled={isSaving || !editingEmojiName.trim()}>
-                              {t('common.save')}
-                            </Button>
-                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingEmojiId(null)}>
-                              {t('common.cancel')}
-                            </Button>
+                            <div className="flex gap-1 justify-center">
+                              <Button size="sm" className="h-5 text-[10px] px-2" onClick={() => void handleRenameEmoji(eid)} disabled={isSaving || !editingEmojiName.trim()}>
+                                {t('common.save')}
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-5 text-[10px] px-2" onClick={() => setEditingEmojiId(null)}>
+                                {t('common.cancel')}
+                              </Button>
+                            </div>
                           </div>
                         ) : (
-                          <>
-                            <span className="font-mono text-sm flex-1 min-w-0 truncate">:{emoji.name}:</span>
-                            {isOwner && (
-                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                <button
-                                  onClick={() => { setEditingEmojiId(eid); setEditingEmojiName(emoji.name ?? '') }}
-                                  className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                                  title="Rename"
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => void handleDeleteEmoji(eid)}
-                                  disabled={isDeleting}
-                                  className="w-7 h-7 flex items-center justify-center rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            )}
-                          </>
+                          <span className="font-mono text-[10px] text-muted-foreground truncate w-full text-center leading-tight">
+                            :{emoji.name}:
+                          </span>
+                        )}
+                        {isOwner && !isEditing && (
+                          <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => { setEditingEmojiId(eid); setEditingEmojiName(emoji.name ?? '') }}
+                              className="w-5 h-5 flex items-center justify-center rounded bg-background/80 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                              title={t('serverSettings.emojiRename')}
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => void handleDeleteEmoji(eid)}
+                              disabled={isDeleting}
+                              className="w-5 h-5 flex items-center justify-center rounded bg-background/80 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                              title={t('serverSettings.emojiDeleteBtn')}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
                         )}
                       </div>
                     )
                   }
 
+                  const renderEmptyState = (label: string, hint: string) => (
+                    <div className="flex flex-col items-center justify-center py-10 rounded-xl border border-dashed border-border text-muted-foreground gap-2">
+                      <Smile className="w-8 h-8 opacity-20" />
+                      <p className="text-sm">{label}</p>
+                      {isOwner && <p className="text-xs opacity-60">{hint}</p>}
+                    </div>
+                  )
+
                   return (
                     <div className="space-y-6">
                       {/* Static */}
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">Static Emoji — {staticEmojis.length} / 50</p>
-                        {staticEmojis.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground rounded-md border border-dashed border-border">
-                            <Smile className="w-8 h-8 mb-2 opacity-20" />
-                            <p className="text-sm">No static emoji yet</p>
-                            {isOwner && <p className="text-xs mt-1 opacity-70">Upload a PNG, WEBP or JPG above</p>}
-                          </div>
-                        ) : (
-                          <div className="space-y-0.5">{staticEmojis.map(renderEmojiRow)}</div>
-                        )}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold">{t('serverSettings.emojiStaticSection', { count: staticEmojis.length })}</p>
+                        </div>
+                        {staticEmojis.length === 0
+                          ? renderEmptyState(t('serverSettings.emojiNoStatic'), t('serverSettings.emojiUploadHintStatic'))
+                          : <div className="grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1">{staticEmojis.map(renderEmojiCard)}</div>
+                        }
                       </div>
 
                       {/* Animated */}
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium">Animated Emoji — {animatedEmojis.length} / 50</p>
-                        {animatedEmojis.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground rounded-md border border-dashed border-border">
-                            <Smile className="w-8 h-8 mb-2 opacity-20" />
-                            <p className="text-sm">No animated emoji yet</p>
-                            {isOwner && <p className="text-xs mt-1 opacity-70">Upload a GIF above</p>}
-                          </div>
-                        ) : (
-                          <div className="space-y-0.5">{animatedEmojis.map(renderEmojiRow)}</div>
-                        )}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-semibold">{t('serverSettings.emojiAnimatedSection', { count: animatedEmojis.length })}</p>
+                        </div>
+                        {animatedEmojis.length === 0
+                          ? renderEmptyState(t('serverSettings.emojiNoAnimated'), t('serverSettings.emojiUploadHintAnimated'))
+                          : <div className="grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-1">{animatedEmojis.map(renderEmojiCard)}</div>
+                        }
                       </div>
                     </div>
                   )
