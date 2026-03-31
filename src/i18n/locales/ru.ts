@@ -665,6 +665,9 @@ const ru: Translation = {
         permMuteMembers: 'Заглушать участников', permMuteMembersDesc: 'Разрешить участникам отключать микрофон других в голосовых каналах.',
         permDeafenMembers: 'Оглушать участников', permDeafenMembersDesc: 'Разрешить участникам отключать звук для других в голосовых каналах.',
         permMoveMembers: 'Перемещать участников', permMoveMembersDesc: 'Разрешить участникам перемещать других между голосовыми каналами.',
+        permCategoryExpressions: 'Эмодзи',
+        permCreateExpressions: 'Создавать эмодзи', permCreateExpressionsDesc: 'Разрешить участникам загружать пользовательские эмодзи.',
+        permManageExpressions: 'Управлять эмодзи', permManageExpressionsDesc: 'Разрешить участникам переименовывать и удалять пользовательские эмодзи.',
     },
     // ── App Settings modal (Electron title-bar ⚙ button) ─────────────────────
     appSettings: {

@@ -611,6 +611,9 @@ export interface Translation {
         permMuteMembers: string; permMuteMembersDesc: string
         permDeafenMembers: string; permDeafenMembersDesc: string
         permMoveMembers: string; permMoveMembersDesc: string
+        permCategoryExpressions: string
+        permCreateExpressions: string; permCreateExpressionsDesc: string
+        permManageExpressions: string; permManageExpressionsDesc: string
     }
     // ── App Settings modal (Electron title-bar ⚙ button) ─────────────────────
     appSettings: {

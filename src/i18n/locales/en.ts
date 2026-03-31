@@ -662,6 +662,9 @@ const en: Translation = {
         permMuteMembers: 'Mute Members', permMuteMembersDesc: 'Allow members to server-mute others in voice channels.',
         permDeafenMembers: 'Deafen Members', permDeafenMembersDesc: 'Allow members to server-deafen others in voice channels.',
         permMoveMembers: 'Move Members', permMoveMembersDesc: 'Allow members to move others between voice channels.',
+        permCategoryExpressions: 'Expressions',
+        permCreateExpressions: 'Create Expressions', permCreateExpressionsDesc: 'Allow members to upload custom emojis.',
+        permManageExpressions: 'Manage Expressions', permManageExpressionsDesc: 'Allow members to rename or delete custom emojis.',
     },
     // ── App Settings modal (Electron title-bar ⚙ button) ─────────────────────
     appSettings: {

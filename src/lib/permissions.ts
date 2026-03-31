@@ -29,6 +29,8 @@ export const PermissionBits = {
   DEAFEN_MEMBERS: 24,
   MOVE_MEMBERS: 25,
   ADMINISTRATOR: 26,
+  CREATE_EXPRESSIONS: 27,
+  MANAGE_EXPRESSIONS: 28,
 } as const
 
 export type PermissionBit = (typeof PermissionBits)[keyof typeof PermissionBits]

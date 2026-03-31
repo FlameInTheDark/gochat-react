@@ -192,6 +192,13 @@ export default function ServerSettingsModal() {
         { bit: 25, label: t('serverSettings.permMoveMembers'),    desc: t('serverSettings.permMoveMembersDesc') },
       ],
     },
+    {
+      category: t('serverSettings.permCategoryExpressions'),
+      perms: [
+        { bit: 27, label: t('serverSettings.permCreateExpressions'), desc: t('serverSettings.permCreateExpressionsDesc') },
+        { bit: 28, label: t('serverSettings.permManageExpressions'), desc: t('serverSettings.permManageExpressionsDesc') },
+      ],
+    },
   ], [t])
 
   const [section, setSection] = useState<Section>('overview')
@@ -394,6 +401,8 @@ export default function ServerSettingsModal() {
     : 0
   const canKick = isOwner || hasPerm(effectivePerms, PermissionBits.ADMINISTRATOR) || hasPerm(effectivePerms, PermissionBits.KICK_MEMBERS)
   const canBan = isOwner || hasPerm(effectivePerms, PermissionBits.ADMINISTRATOR) || hasPerm(effectivePerms, PermissionBits.BAN_MEMBERS)
+  const canUploadEmoji = isOwner || hasPerm(effectivePerms, PermissionBits.ADMINISTRATOR) || hasPerm(effectivePerms, PermissionBits.CREATE_EXPRESSIONS)
+  const canManageEmoji = isOwner || hasPerm(effectivePerms, PermissionBits.ADMINISTRATOR) || hasPerm(effectivePerms, PermissionBits.MANAGE_EXPRESSIONS)
 
   const { data: invites = [] } = useQuery<DtoGuildInvite[]>({
     queryKey: ['invites', guildId],
@@ -1588,7 +1597,7 @@ export default function ServerSettingsModal() {
                 </div>
 
                 {/* Upload form */}
-                {isOwner && (
+                {canUploadEmoji && (
                   <div className="rounded-xl border border-border bg-card p-5 space-y-4">
                     <div>
                       <p className="text-sm font-semibold">{t('serverSettings.uploadEmoji')}</p>
@@ -1706,7 +1715,7 @@ export default function ServerSettingsModal() {
                             :{emoji.name}:
                           </span>
                         )}
-                        {isOwner && !isEditing && (
+                        {canManageEmoji && !isEditing && (
                           <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => { setEditingEmojiId(eid); setEditingEmojiName(emoji.name ?? '') }}
@@ -1733,7 +1742,7 @@ export default function ServerSettingsModal() {
                     <div className="flex flex-col items-center justify-center py-10 rounded-xl border border-dashed border-border text-muted-foreground gap-2">
                       <Smile className="w-8 h-8 opacity-20" />
                       <p className="text-sm">{label}</p>
-                      {isOwner && <p className="text-xs opacity-60">{hint}</p>}
+                      {canUploadEmoji && <p className="text-xs opacity-60">{hint}</p>}
                     </div>
                   )
 
