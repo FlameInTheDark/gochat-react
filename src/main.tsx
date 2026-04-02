@@ -5,11 +5,12 @@ import './index.css'
 import '@/i18n'
 import App from './App.tsx'
 
-// @napi-rs/wasm-runtime (used by @snazzah/davey-wasm32-wasi) passes a SharedArrayBuffer
-// to Buffer.from. The npm `buffer` polyfill only handles ArrayBuffer, not SharedArrayBuffer.
-// Intercept and copy to a regular ArrayBuffer-backed Uint8Array first.
+// Some WASM runtimes may pass a SharedArrayBuffer to Buffer.from.
+// The npm `buffer` polyfill only handles ArrayBuffer, not SharedArrayBuffer,
+// so copy it into a regular ArrayBuffer-backed Uint8Array first.
 {
   const _from = Buffer.from.bind(Buffer)
+  const unsafeFrom = _from as (...input: unknown[]) => Buffer
   ;(Buffer as unknown as { from: typeof Buffer.from }).from = function patchedBufferFrom(
     value: unknown,
     ...args: unknown[]
@@ -24,7 +25,7 @@ import App from './App.tsx'
           : new Uint8Array(value)
       return _from(new Uint8Array(view)) // new Uint8Array(view) copies into fresh ArrayBuffer
     }
-    return _from(value, ...args)
+    return unsafeFrom(value, ...args)
   } as typeof Buffer.from
 }
 
