@@ -97,6 +97,7 @@ interface Props {
     reference?: number
   }) => Promise<void>
   sendFailedMessage?: string
+  onMessageQueued?: () => void
 }
 
 export interface MessageInputHandle {
@@ -117,6 +118,7 @@ const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput
   onCancelReply,
   onSendMessage,
   sendFailedMessage,
+  onMessageQueued,
 }: Props, ref) {
   const lastTypingRef = useRef<number>(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -254,6 +256,7 @@ const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput
           prev.filter((attachment) => !sendingAttachmentIds.has(attachment.localId)),
         )
         onCancelReply?.()
+        onMessageQueued?.()
 
         void queuedMessage?.completion.catch(() => {
           toast.error(sendFailedMessage ?? t('chat.sendFailed'))
@@ -447,7 +450,7 @@ const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput
         hasAttachments={pendingAttachments.length > 0}
       />
       {disabledReason && (
-        <p className="px-2 pt-2 text-xs text-muted-foreground">
+        <p className="px-2 pt-2 text-xs text-muted-foreground truncate">
           {disabledReason}
         </p>
       )}

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Pencil, Spool, Trash2 } from 'lucide-react'
+import { ArrowLeft, LogIn, LogOut, Pencil, Spool, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { guildApi } from '@/api/client'
+import { useAuthStore } from '@/stores/authStore'
 import { useMessagePagination } from '@/hooks/useMessagePagination'
 import type { MentionResolver } from '@/lib/messageParser'
 import type { JumpRequest } from '@/lib/messageJump'
@@ -52,12 +53,17 @@ export default function ThreadPanel({
 }: Props) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.user)
   const threadId = String(thread.id)
   const parentChannelId = thread.parent_id != null ? String(thread.parent_id) : null
+  const [locallyJoined, setLocallyJoined] = useState(false)
+  const isMember = locallyJoined || (currentUser != null &&
+    (thread.member_ids ?? []).some((id) => String(id) === String(currentUser.id)))
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [joiningLeaving, setJoiningLeaving] = useState(false)
   const [name, setName] = useState(thread.name ?? '')
   const [topic, setTopic] = useState(thread.topic ?? '')
   const [closed, setClosed] = useState(!!thread.closed)
@@ -69,7 +75,8 @@ export default function ThreadPanel({
     setTopic(thread.topic ?? '')
     setClosed(!!thread.closed)
     setReplyTarget(null)
-  }, [thread.closed, thread.name, thread.topic])
+    setLocallyJoined(false)
+  }, [threadId])
 
   useEffect(() => {
     activateChannel(threadId)
@@ -142,6 +149,31 @@ export default function ThreadPanel({
     }
   }
 
+  async function handleJoin() {
+    setJoiningLeaving(true)
+    try {
+      await guildApi.guildGuildIdChannelChannelIdThreadMemberMePut({ guildId: serverId, channelId: threadId })
+      await refreshThreadData()
+    } catch {
+      toast.error(t('threads.joinFailed'))
+    } finally {
+      setJoiningLeaving(false)
+    }
+  }
+
+  async function handleLeave() {
+    setJoiningLeaving(true)
+    try {
+      await guildApi.guildGuildIdChannelChannelIdThreadMemberMeDelete({ guildId: serverId, channelId: threadId })
+      setLocallyJoined(false)
+      await refreshThreadData()
+    } catch {
+      toast.error(t('threads.leaveFailed'))
+    } finally {
+      setJoiningLeaving(false)
+    }
+  }
+
   const composerDisabled = thread.closed || !canSendMessages
   const composerDisabledReason = thread.closed
     ? t('threads.closedComposer')
@@ -161,32 +193,44 @@ export default function ThreadPanel({
             <ArrowLeft className="w-4 h-4" />
           </Button>
           <Spool className="w-4 h-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate font-semibold">
+          <span className="min-w-0 flex-1 truncate font-semibold">
             {thread.name ?? threadId}
           </span>
 
-          {canManageThread && (
-            <div className="ml-auto flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => setEditOpen(true)}
-                aria-label={t('threads.editThread')}
-              >
-                <Pencil className="w-4 h-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => setDeleteOpen(true)}
-                aria-label={t('threads.deleteThread')}
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </div>
-          )}
+          <div className="ml-auto flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              disabled={joiningLeaving}
+              onClick={() => void (isMember ? handleLeave() : handleJoin())}
+              aria-label={isMember ? t('threads.leaveThread') : t('threads.joinThread')}
+            >
+              {isMember ? <LogOut className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
+            </Button>
+            {canManageThread && (
+              <>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setEditOpen(true)}
+                  aria-label={t('threads.editThread')}
+                >
+                  <Pencil className="w-4 h-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setDeleteOpen(true)}
+                  aria-label={t('threads.deleteThread')}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </>
+            )}
+          </div>
         </div>
 
         {thread.topic && (
@@ -241,6 +285,7 @@ export default function ThreadPanel({
             resolver={resolver}
             replyTo={replyTarget}
             onCancelReply={() => setReplyTarget(null)}
+            onMessageQueued={!isMember ? () => setLocallyJoined(true) : undefined}
           />
         </ChatAttachmentDropZone>
       </div>

@@ -168,6 +168,10 @@ const en: Translation = {
         threadCreatedStarted: 'started a thread:',
         threadCreatedSeeAll: 'See all',
         threadCreatedThreadsLink: 'threads',
+        joinThread: 'Join Thread',
+        leaveThread: 'Leave Thread',
+        joinFailed: 'Failed to join thread',
+        leaveFailed: 'Failed to leave thread',
     },
 
     // ── User settings (AppSettingsModal) ────────────────────────────────────

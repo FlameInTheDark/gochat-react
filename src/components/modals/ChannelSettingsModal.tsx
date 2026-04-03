@@ -355,7 +355,10 @@ export default function ChannelSettingsModal() {
         guildId, channelId, roleId: selectedRoleId,
         req: { accept: editAccept, deny: editDeny },
       })
-      await queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] }),
+        queryClient.invalidateQueries({ queryKey: ['channels', guildId] }),
+      ])
       toast.success('Permissions saved')
     } catch {
       toast.error('Failed to save permissions')
@@ -370,7 +373,10 @@ export default function ChannelSettingsModal() {
       await rolesApi.guildGuildIdChannelChannelIdRolesRoleIdDelete({
         guildId, channelId, roleId,
       })
-      await queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] }),
+        queryClient.invalidateQueries({ queryKey: ['channels', guildId] }),
+      ])
       if (selectedRoleId === roleId) {
         setSelectedRoleId(null)
         setEditAccept(0)
@@ -390,7 +396,10 @@ export default function ChannelSettingsModal() {
         guildId, channelId, roleId: addRoleSelectId,
         req: { accept: 0, deny: 0 },
       })
-      await queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['channel-overrides', channelId] }),
+        queryClient.invalidateQueries({ queryKey: ['channels', guildId] }),
+      ])
       setSelectedRoleId(addRoleSelectId)
       setEditAccept(0)
       setEditDeny(0)

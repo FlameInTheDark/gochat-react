@@ -153,6 +153,10 @@ export interface Translation {
         threadCreatedStarted: string
         threadCreatedSeeAll: string
         threadCreatedThreadsLink: string
+        joinThread: string
+        leaveThread: string
+        joinFailed: string
+        leaveFailed: string
     }
     settings: {
         userSettings: string

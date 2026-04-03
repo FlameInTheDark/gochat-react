@@ -40,10 +40,10 @@ function ConversationStart({ channelName }: { channelName?: string }) {
           : <MessageSquare className="h-8 w-8 text-muted-foreground" />
         }
       </div>
-      <h3 className="mb-1 text-[1.6rem] font-bold leading-tight">
+      <h3 className="mb-1 text-[1.6rem] font-bold leading-tight truncate">
         {isChannel ? t('chat.welcomeChannel', { name: channelName }) : t('chat.welcomeDm')}
       </h3>
-      <p className="text-sm text-muted-foreground leading-relaxed">
+      <p className="text-sm text-muted-foreground leading-relaxed break-words">
         {isChannel
           ? t('chat.welcomeChannelDesc', { name: channelName })
           : t('chat.welcomeDmDesc')}
