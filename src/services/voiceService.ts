@@ -1907,9 +1907,9 @@ function cleanup(sendPresenceClear = true) {
     memberEventCleanup = null
   }
 
-  // Clear voice channel users from the local presence store
+  // Remove only ourselves from the local presence store (leave other participants visible)
   if (savedChannelId) {
-    usePresenceStore.getState().clearVoiceChannel(savedChannelId)
+    usePresenceStore.getState().removeUserFromVoiceChannel(savedChannelId, currentUserId())
   }
 
   if (sendPresenceClear) {
