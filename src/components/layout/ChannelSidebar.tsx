@@ -106,7 +106,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
   const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
 
-  const currentMember = members?.find((m) => m.user?.id === currentUser?.id)
+  const currentMember = members?.find((m) => String(m.user?.id) === String(currentUser?.id))
   const effectivePermissions = currentMember && roles
     ? calculateEffectivePermissions(currentMember as DtoMember, roles as DtoRole[])
     : 0

@@ -140,11 +140,19 @@ body {
 }
 
 /* Placeholder for the contenteditable editor */
+.mention-editor {
+  position: relative;
+}
 .mention-editor.is-empty::before {
   content: attr(data-placeholder);
   color: var(--color-muted-foreground);
   pointer-events: none;
   position: absolute;
+  left: 0;
+  right: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /*

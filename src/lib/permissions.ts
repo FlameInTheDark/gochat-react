@@ -50,17 +50,19 @@ export function isAdministrator(permissions: number): boolean {
 }
 
 /**
- * Calculate effective permissions for a member by combining all their role permissions
+ * Calculate effective permissions for a member by combining all their role permissions.
+ * @param guildPermissions - guild.permissions (the @everyone baseline); the backend has no
+ *   @everyone role row, so this must be passed separately and is OR-ed in as the base.
  */
-export function calculateEffectivePermissions(member: DtoMember, roles: DtoRole[]): number {
+export function calculateEffectivePermissions(member: DtoMember, roles: DtoRole[], guildPermissions = 0): number {
   if (!member.roles || member.roles.length === 0) {
-    return 0
+    return guildPermissions
   }
 
   return member.roles.reduce((acc, roleId) => {
     const role = roles.find((r) => r.id === roleId)
     return acc | (role?.permissions ?? 0)
-  }, 0)
+  }, guildPermissions)
 }
 
 /**

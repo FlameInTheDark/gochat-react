@@ -536,7 +536,7 @@ export default function ServerSettingsModal() {
     try {
       const res = await rolesApi.guildGuildIdRolesPost({
         guildId,
-        req: { name: newRoleName.trim(), color: hexToColor(newRoleColor) },
+        req: { name: newRoleName.trim(), color: hexToColor(newRoleColor), permissions: guild?.permissions ?? 0 },
       })
       await queryClient.invalidateQueries({ queryKey: ['roles', guildId] })
       setCreatingRole(false)

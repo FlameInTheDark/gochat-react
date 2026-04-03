@@ -168,6 +168,10 @@ const ru: Translation = {
         threadCreatedStarted: 'начал(а) тред:',
         threadCreatedSeeAll: 'Смотреть все',
         threadCreatedThreadsLink: 'треды',
+        joinThread: 'Вступить в тред',
+        leaveThread: 'Покинуть тред',
+        joinFailed: 'Не удалось вступить в тред',
+        leaveFailed: 'Не удалось покинуть тред',
     },
 
     // ── User settings (AppSettingsModal) ────────────────────────────────────

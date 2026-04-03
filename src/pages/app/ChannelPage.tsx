@@ -80,13 +80,18 @@ const DEFAULT_RIGHT_PANEL_WIDTHS: Record<RightPanelWidthKey, number> = {
   threadCreate: 352,
 }
 
-function getRightPanelMaxWidth(): number {
-  if (typeof window === 'undefined') return 640
-  return Math.max(260, Math.min(640, Math.floor(window.innerWidth * 0.7)))
+function getRightPanelMaxWidth(containerWidth?: number): number {
+  const base = containerWidth ?? (typeof window !== 'undefined' ? window.innerWidth : 1280)
+  return Math.max(260, Math.floor(base * 0.75))
 }
 
-function clampRightPanelWidth(width: number): number {
-  return Math.min(Math.max(Math.round(width), 220), getRightPanelMaxWidth())
+function getRightPanelMinWidth(containerWidth?: number): number {
+  const base = containerWidth ?? (typeof window !== 'undefined' ? window.innerWidth : 1280)
+  return Math.floor(base * 0.25)
+}
+
+function clampRightPanelWidth(width: number, containerWidth?: number): number {
+  return Math.min(Math.max(Math.round(width), getRightPanelMinWidth(containerWidth)), getRightPanelMaxWidth(containerWidth))
 }
 
 function loadRightPanelWidths(): Record<RightPanelWidthKey, number> {
@@ -102,8 +107,9 @@ function loadRightPanelWidths(): Record<RightPanelWidthKey, number> {
       search: clampRightPanelWidth(parsed.search ?? defaults.search),
       members: clampRightPanelWidth(parsed.members ?? defaults.members),
       threads: clampRightPanelWidth(parsed.threads ?? defaults.threads),
-      thread: clampRightPanelWidth(parsed.thread ?? defaults.thread),
-      threadCreate: clampRightPanelWidth(parsed.threadCreate ?? defaults.threadCreate),
+      // thread/threadCreate always open at their default width — not restored from storage
+      thread: defaults.thread,
+      threadCreate: defaults.threadCreate,
     }
   } catch {
     return defaults
@@ -186,6 +192,7 @@ export default function ChannelPage() {
   const searchBarRef = useRef<SearchBarHandle>(null)
   const messageInputRef = useRef<MessageInputHandle | null>(null)
   const rightPanelResizeCleanupRef = useRef<(() => void) | null>(null)
+  const contentContainerRef = useRef<HTMLDivElement>(null)
 
   // Insert mention from invalid invite embed
   useEffect(() => {
@@ -302,6 +309,12 @@ export default function ChannelPage() {
     (g) => String(g.id) === serverId,
   )
 
+  const { data: guildDetail } = useQuery({
+    queryKey: ['guild', serverId],
+    queryFn: () => guildApi.guildGuildIdGet({ guildId: serverId! }).then((r) => r.data),
+    enabled: !!serverId,
+    staleTime: 30_000,
+  })
   const { data: members } = useQuery({
     queryKey: ['members', serverId],
     queryFn: () =>
@@ -319,12 +332,16 @@ export default function ChannelPage() {
 
   const currentMember = members?.find((m) => String(m.user?.id) === String(currentUser?.id))
   const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
+  const guildPermissions = guildDetail?.permissions ?? 0
   const effectivePermissions = currentMember && roles
-    ? calculateEffectivePermissions(currentMember, roles)
-    : 0
+    ? calculateEffectivePermissions(currentMember, roles, guildPermissions)
+    : guildPermissions
   const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
-  const canCreateThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.CREATE_THREADS)
-  const canSendInThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.SEND_MESSAGES_IN_THREADS)
+  const memberRoleIds = new Set((currentMember?.roles ?? []).map(String))
+  const canAccessParentChannel = isOwner || isAdmin || !channel?.private ||
+    (channel?.roles ?? []).some((r) => memberRoleIds.has(String(r)))
+  const canCreateThreads = canAccessParentChannel && (isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.CREATE_THREADS))
+  const canSendInThreads = canAccessParentChannel && (isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.SEND_MESSAGES_IN_THREADS))
   const canManageThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_THREADS)
 
   const { data: threadListData = [], isLoading: isThreadsLoading } = useQuery({
@@ -1020,20 +1037,32 @@ export default function ChannelPage() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     try {
-      window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, JSON.stringify(rightPanelWidths))
+      // thread/threadCreate widths are intentionally excluded — they always open at their default
+      const { thread: _t, threadCreate: _tc, ...persistedWidths } = rightPanelWidths
+      window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, JSON.stringify(persistedWidths))
     } catch {
       // Ignore storage failures and keep the in-memory widths.
     }
   }, [rightPanelWidths])
 
+  // Reset thread/threadCreate widths to default each time they open
+  useEffect(() => {
+    if (rightPanelMode === 'thread') {
+      setRightPanelWidths((current) => ({ ...current, thread: DEFAULT_RIGHT_PANEL_WIDTHS.thread }))
+    } else if (rightPanelMode === 'thread-create') {
+      setRightPanelWidths((current) => ({ ...current, threadCreate: DEFAULT_RIGHT_PANEL_WIDTHS.threadCreate }))
+    }
+  }, [rightPanelMode])
+
   useEffect(() => {
     const handleResize = () => {
+      const containerWidth = contentContainerRef.current?.offsetWidth
       setRightPanelWidths((current) => {
         let changed = false
         const next = { ...current }
         RIGHT_PANEL_WIDTH_KEYS.forEach((key) => {
           const currentWidth = current[key] ?? DEFAULT_RIGHT_PANEL_WIDTHS[key]
-          const clamped = clampRightPanelWidth(currentWidth)
+          const clamped = clampRightPanelWidth(currentWidth, containerWidth)
           if (clamped !== currentWidth) {
             next[key] = clamped
             changed = true
@@ -1064,11 +1093,12 @@ export default function ChannelPage() {
     const widthKey = getRightPanelWidthKey(hasSearched, rightPanelMode)
     const startX = event.clientX
     const startWidth = rightPanelWidths[widthKey] ?? DEFAULT_RIGHT_PANEL_WIDTHS[widthKey]
+    const containerWidth = contentContainerRef.current?.offsetWidth
     const previousUserSelect = document.body.style.userSelect
     const previousCursor = document.body.style.cursor
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
-      const nextWidth = clampRightPanelWidth(startWidth + (startX - moveEvent.clientX))
+      const nextWidth = clampRightPanelWidth(startWidth + (startX - moveEvent.clientX), containerWidth)
       setRightPanelWidths((current) => {
         if ((current[widthKey] ?? DEFAULT_RIGHT_PANEL_WIDTHS[widthKey]) === nextWidth) {
           return current
@@ -1420,7 +1450,7 @@ export default function ChannelPage() {
           </div>
         )}
 
-        <div className="relative flex flex-1 min-h-0">
+        <div ref={contentContainerRef} className="relative flex flex-1 min-h-0 overflow-hidden">
           <ChatAttachmentDropZone
             className="flex-1 min-w-0"
             onFileDrop={(files) => {
