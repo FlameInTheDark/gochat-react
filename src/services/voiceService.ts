@@ -22,13 +22,13 @@
  *   - Attaches passthrough encoded transforms immediately (ready for key-material swap).
  *   - Drives DAVE state machine: Prepare Epoch (24), Execute Transition (22), Prepare
  *     Transition (21), Transition Ready (23) via JSON opcodes 21-31.
- *   - Binary opcodes 25-30 carry MLS material; handled via @snazzah/davey (OpenMLS/Rust WASM).
+ *   - Binary opcodes 25-30 carry MLS material; handled via go-dave WASM.
  *   - Requires COOP+COEP headers for SharedArrayBuffer (WASM threading).
  */
 
 import JSONBig from 'json-bigint'
 import { Buffer } from 'buffer'
-import { Codec, DAVESession, MediaType, ProposalsOperationType, SessionStatus } from '@snazzah/davey'
+import { Codec, DAVESession, MediaType, ProposalsOperationType, SessionStatus } from '@/lib/dave'
 import type { ModelUserSettingsData } from '@/client'
 import { queryClient } from '@/lib/queryClient'
 import { saveSettings } from '@/lib/settingsApi'
@@ -113,6 +113,8 @@ const daveTransformWarnAt: Record<string, number> = {}
 const pendingReceiverTransforms: Map<RTCRtpReceiver, { mediaType: MediaType; userId: string }> = new Map()
 // Receivers that have already had createEncodedStreams() called (spec: call only once).
 const transformedReceivers: Set<RTCRtpReceiver> = new Set()
+// Remote audio outputs held muted until the receiver transform is attached.
+const pendingReceiverAudioUnblocks: Map<RTCRtpReceiver, () => void> = new Map()
 
 // Pending audio setup: built in joinVoice, consumed in handleSfuReady
 // (PC creation is deferred until ice_servers are known from Ready)
@@ -320,6 +322,15 @@ function warnDaveTransformLimited(key: string, message: string, ...args: unknown
   vwarn(message, ...args)
 }
 
+function looksLikeDaveEncryptedFrame(data: ArrayBufferLike | Uint8Array): boolean {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data)
+  return bytes.length >= 2 && bytes[bytes.length - 2] === 0xfa && bytes[bytes.length - 1] === 0xfa
+}
+
+function shouldExpectDaveMediaPath(): boolean {
+  return sfuDaveEnabled && (sfuDaveRequired || daveProtocolVersion > 0 || daveMode !== 'passthrough')
+}
+
 function createDaveSession(protocolVersion = 1): DAVESession {
   const userId = currentUserId()
   const session = new DAVESession(protocolVersion, userId, currentChannelId ?? '')
@@ -333,9 +344,9 @@ function resetDaveTransitionState() {
 }
 
 function resetDaveSessions() {
-  davePendingSession?.reset()
+  davePendingSession?.dispose()
   davePendingSession = null
-  daveSession?.reset()
+  daveSession?.dispose()
   daveSession = null
   resetDaveTransitionState()
 }
@@ -349,9 +360,9 @@ function currentDaveControlSession(): DAVESession | null {
 }
 
 function initializeDaveSession(protocolVersion = 1): DAVESession {
-  davePendingSession?.reset()
+  davePendingSession?.dispose()
   davePendingSession = null
-  daveSession?.reset()
+  daveSession?.dispose()
   daveSession = createDaveSession(protocolVersion)
   resetDaveTransitionState()
   return daveSession
@@ -360,15 +371,15 @@ function initializeDaveSession(protocolVersion = 1): DAVESession {
 function beginDaveUpgrade(protocolVersion = 1): DAVESession {
   resetDaveTransitionState()
   if (daveProtocolVersion > 0 && daveSession) {
-    davePendingSession?.reset()
+    davePendingSession?.dispose()
     davePendingSession = createDaveSession(protocolVersion)
     vlog('DAVE: pending session created for epoch transition')
     return davePendingSession
   }
 
-  davePendingSession?.reset()
+  davePendingSession?.dispose()
   davePendingSession = null
-  daveSession?.reset()
+  daveSession?.dispose()
   daveSession = createDaveSession(protocolVersion)
   vlog('DAVE: active session initialized for first encrypted epoch')
   return daveSession
@@ -411,7 +422,7 @@ function attachPassthroughSenderTransform(
         new TransformStream({
           transform(frame: EncodedFrame, controller) {
             const activeSession = currentDaveMediaSession()
-            if (daveProtocolVersion > 0) {
+            if (shouldExpectDaveMediaPath()) {
               if (!activeSession?.ready) {
                 warnDaveTransformLimited('sender-not-ready', 'DAVE: dropping outbound frame while session is not ready')
                 return
@@ -423,6 +434,10 @@ function attachPassthroughSenderTransform(
                   return
                 }
                 const enc = activeSession.encrypt(mediaType, selectedCodec, Buffer.from(new Uint8Array(frame.data)))
+                if (!enc) {
+                  warnDaveTransformLimited(`sender-encrypt-${mediaType}-null`, 'DAVE: dropping outbound frame after recoverable encrypt skip')
+                  return
+                }
                 const buf = new ArrayBuffer(enc.byteLength)
                 new Uint8Array(buf).set(enc)
                 frame.data = buf
@@ -446,6 +461,7 @@ function attachPassthroughSenderTransform(
 /**
  * Attach an encoded transform to an RTP receiver.
  * Uses the active DAVE media session so late rekeys do not break the currently playing audio.
+ * Only plaintext frames are allowed through during passthrough windows.
  */
 function attachPassthroughReceiverTransform(receiver: RTCRtpReceiver, mediaType: MediaType, userId = ''): boolean {
   if (transformedReceivers.has(receiver)) return true  // already set up — don't call createEncodedStreams twice
@@ -458,24 +474,55 @@ function attachPassthroughReceiverTransform(receiver: RTCRtpReceiver, mediaType:
         new TransformStream({
           transform(frame: EncodedFrame, controller) {
             const activeSession = currentDaveMediaSession()
-            if (userId && daveProtocolVersion > 0) {
+            const rawFrame = new Uint8Array(frame.data)
+            const encryptedHint = looksLikeDaveEncryptedFrame(rawFrame)
+            const shouldUseDave = Boolean(userId) && (shouldExpectDaveMediaPath() || encryptedHint)
+            if (shouldUseDave) {
               if (!activeSession?.ready) {
-                warnDaveTransformLimited(`receiver-not-ready-${userId}`, 'DAVE: dropping inbound frame for userId=%s while session is not ready', userId)
+                warnDaveTransformLimited(
+                  `receiver-not-ready-${userId}-${encryptedHint ? 'encrypted' : 'pending'}`,
+                  encryptedHint
+                    ? 'DAVE: dropping encrypted inbound frame for userId=%s while session is not ready'
+                    : 'DAVE: dropping inbound frame for userId=%s while session is not ready',
+                  userId,
+                )
                 return
               }
               try {
-                const dec = activeSession.decrypt(userId, mediaType, Buffer.from(new Uint8Array(frame.data)))
+                const dec = activeSession.decrypt(userId, mediaType, Buffer.from(rawFrame))
+                if (!dec) {
+                  if (!encryptedHint && activeSession.canPassthrough(userId)) {
+                    controller.enqueue(frame)
+                    return
+                  }
+                  warnDaveTransformLimited(
+                    `receiver-decrypt-null-${userId}-${mediaType}-${encryptedHint ? 'encrypted' : 'plaintext'}`,
+                    encryptedHint
+                      ? 'DAVE: dropping undecryptable encrypted inbound frame for userId=%s (likely late epoch or missing decryptor)'
+                      : 'DAVE: dropping inbound frame after recoverable decrypt skip for userId=%s',
+                    userId,
+                  )
+                  return
+                }
                 const buf = new ArrayBuffer(dec.byteLength)
                 new Uint8Array(buf).set(dec)
                 frame.data = buf
                 controller.enqueue(frame)
                 return
               } catch (err) {
-                if (activeSession.canPassthrough(userId)) {
+                const encryptedHint = looksLikeDaveEncryptedFrame(frame.data)
+                if (!encryptedHint && activeSession.canPassthrough(userId)) {
                   controller.enqueue(frame)
                   return
                 }
-                warnDaveTransformLimited(`receiver-decrypt-${userId}-${mediaType}`, 'DAVE: dropping undecryptable inbound frame for userId=%s: %o', userId, err)
+                warnDaveTransformLimited(
+                  `receiver-decrypt-${userId}-${mediaType}-${encryptedHint ? 'encrypted' : 'plaintext'}`,
+                  encryptedHint
+                    ? 'DAVE: dropping undecryptable encrypted inbound frame for userId=%s: %o'
+                    : 'DAVE: dropping undecryptable inbound frame for userId=%s: %o',
+                  userId,
+                  err,
+                )
                 return
               }
             }
@@ -502,6 +549,8 @@ function retryPendingReceiverTransforms() {
   if (!sfuDaveEnabled || pendingReceiverTransforms.size === 0) return
   for (const [receiver, { mediaType, userId }] of Array.from(pendingReceiverTransforms.entries())) {
     if (attachPassthroughReceiverTransform(receiver, mediaType, userId)) {
+      pendingReceiverAudioUnblocks.get(receiver)?.()
+      pendingReceiverAudioUnblocks.delete(receiver)
       pendingReceiverTransforms.delete(receiver)
       vlog('DAVE: receiver transform attached on retry (userId=%s)', userId)
     }
@@ -976,7 +1025,7 @@ async function handleSfuReady(d: {
   useVoiceStore.getState().setDaveEnabled(sfuDaveEnabled)
   useVoiceStore.getState().setDaveState(0, false, 0)
 
-  // Initialize (or reinitialize) the davey DAVE session for this channel
+  // Initialize (or reinitialize) the DAVE session for this channel
   if (sfuDaveEnabled) {
     initializeDaveSession(1)
     negotiatedVideoCodec = Codec.UNKNOWN
@@ -1069,6 +1118,8 @@ async function handleSfuSessionDesc(d: {
   rtc_connection_id?: string
   dave_protocol_version?: 0 | 1
   dave_epoch?: number
+  audio_codec?: string
+  video_codec?: string
 }) {
   if (!peerConnection) { vwarn('handleSfuSessionDesc: no peerConnection'); return }
   vevt('SessionDescription type=%s dave_protocol_version=%s dave_epoch=%s', d.type, d.dave_protocol_version, d.dave_epoch)
@@ -1157,7 +1208,7 @@ function handleSfuBinaryMessage(data: ArrayBuffer) {
   switch (opcode) {
     case DAVE_BIN_EXTERNAL_SENDER: {
       // SFU sends the ExternalSender for this DAVE epoch.
-      // Transcode from GoChat varint format → MLS TLS format, then set on davey session.
+      // Transcode from GoChat varint format → MLS TLS format, then set on the DAVE session.
       vevt('DAVE: ExternalSender (%d bytes)', rest.length)
 
       const controlSession = currentDaveControlSession()
@@ -1178,7 +1229,7 @@ function handleSfuBinaryMessage(data: ArrayBuffer) {
       try {
         const kp = controlSession.getSerializedKeyPackage()
         sfuSocket!.send(encodeKeyPackage(new Uint8Array(kp)).buffer)
-        vlog('DAVE → KeyPackage (%d MLS bytes, davey)', kp.length)
+        vlog('DAVE → KeyPackage (%d MLS bytes)', kp.length)
       } catch (err) {
         verr('DAVE: getSerializedKeyPackage failed: %o', err)
       }
@@ -1211,7 +1262,7 @@ function handleSfuBinaryMessage(data: ArrayBuffer) {
           const welcome = result.welcome ? new Uint8Array(result.welcome) : undefined
           sfuSocket!.send(encodeCommitWelcome(commit, welcome).buffer)
           daveWeCommitted = true
-          vlog('DAVE → CommitWelcome (%d+%d bytes, davey)', commit.length, welcome?.length ?? 0)
+          vlog('DAVE → CommitWelcome (%d+%d bytes)', commit.length, welcome?.length ?? 0)
         }
 
         daveAwaitingWelcome = Boolean(result.welcome) && !daveWeCommitted
@@ -1421,7 +1472,7 @@ function onSfuMessage(event: MessageEvent) {
         daveProtocolVersion = 0
         daveMode = 'passthrough'
         davePendingTransitionId = null
-        davePendingSession?.reset()
+        davePendingSession?.dispose()
         davePendingSession = null
         currentDaveMediaSession()?.setPassthroughMode(true)
         useVoiceStore.getState().setDavePrivacyCode(null)
@@ -1436,7 +1487,7 @@ function onSfuMessage(event: MessageEvent) {
           daveSession = davePendingSession
           davePendingSession = null
           if (previousSession && previousSession !== daveSession) {
-            previousSession.reset()
+            previousSession.dispose()
           }
         }
         nextSession?.setPassthroughMode(false, DAVE_LATE_PACKET_WINDOW_SECONDS)
@@ -1591,6 +1642,7 @@ function createPeerConnection(): RTCPeerConnection {
     // Attach DAVE receiver transform immediately when DAVE is enabled.
     // createEncodedStreams() is sometimes unavailable when ontrack fires during
     // setRemoteDescription — queue for retry so we can attach before encryption starts.
+    let receiverTransformPending = false
     if (sfuDaveEnabled) {
       const mediaType = ev.track.kind === 'video' ? MediaType.VIDEO : MediaType.AUDIO
       if (attachPassthroughReceiverTransform(ev.receiver, mediaType, userId)) {
@@ -1598,6 +1650,7 @@ function createPeerConnection(): RTCPeerConnection {
         vlog('DAVE: receiver transform attached (userId=%s kind=%s)', userId, ev.track.kind)
       } else {
         pendingReceiverTransforms.set(ev.receiver, { mediaType, userId })
+        receiverTransformPending = true
         vwarn('DAVE: receiver transform unavailable, queued for retry (userId=%s kind=%s)', userId, ev.track.kind)
       }
     }
@@ -1681,7 +1734,20 @@ function createPeerConnection(): RTCPeerConnection {
     const source = ctx.createMediaStreamSource(stream)
     const gain = ctx.createGain()
     const effectiveGain = (settings.audioOutputLevel / 100) * (peerVolume / 100)
-    gain.gain.value = useVoiceStore.getState().localDeafened ? 0 : effectiveGain
+    const applyRemoteGain = () => {
+      gain.gain.value = useVoiceStore.getState().localDeafened ? 0 : effectiveGain
+    }
+
+    if (receiverTransformPending && shouldExpectDaveMediaPath()) {
+      gain.gain.value = 0
+      pendingReceiverAudioUnblocks.set(ev.receiver, () => {
+        applyRemoteGain()
+        vlog('DAVE: unmuted remote audio after receiver transform attached (userId=%s)', userId)
+      })
+      vlog('DAVE: temporarily muting remote audio until receiver transform attaches (userId=%s)', userId)
+    } else {
+      applyRemoteGain()
+    }
 
     source.connect(gain)
     gain.connect(ctx.destination)
@@ -1829,6 +1895,7 @@ function cleanup(sendPresenceClear = true) {
   davePendingTransitionId = null
   negotiatedVideoCodec = Codec.UNKNOWN
   pendingReceiverTransforms.clear()
+  pendingReceiverAudioUnblocks.clear()
   transformedReceivers.clear()
 
   // Save before nulling so we can clear the presence store for this channel
@@ -1840,9 +1907,9 @@ function cleanup(sendPresenceClear = true) {
     memberEventCleanup = null
   }
 
-  // Clear voice channel users from the local presence store
+  // Remove only ourselves from the local presence store (leave other participants visible)
   if (savedChannelId) {
-    usePresenceStore.getState().clearVoiceChannel(savedChannelId)
+    usePresenceStore.getState().removeUserFromVoiceChannel(savedChannelId, currentUserId())
   }
 
   if (sendPresenceClear) {
@@ -2485,6 +2552,7 @@ export function getVoiceDebugInfo() {
       protocolVersion: daveProtocolVersion,
       epoch: daveEpoch,
       mode: daveMode,
+      pendingTransitionId: davePendingTransitionId,
       activeStatus: daveSession?.status ?? null,
       pendingStatus: davePendingSession?.status ?? null,
       browserSupport: supportsEncodedTransforms(),

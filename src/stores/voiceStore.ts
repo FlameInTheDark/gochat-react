@@ -28,7 +28,7 @@ interface VoiceState {
   daveProtocolVersion: 0 | 1  // 0 = transport-only, 1 = E2EE active
   daveTransitioning: boolean   // true while a DAVE epoch/downgrade transition is in progress
   daveEpoch: number            // current DAVE epoch (0 = not started)
-  davePrivacyCode: string | null // voice privacy code from davey (null when not E2EE)
+  davePrivacyCode: string | null // voice privacy code from DAVE session (null when not E2EE)
   settings: {
     audioInputDevice: string
     audioOutputDevice: string
