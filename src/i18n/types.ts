@@ -512,6 +512,11 @@ export interface Translation {
     voicePanel: {
         connecting: string
         routing: string
+        dtls: string
+        dtlsLabel: string
+        dtlsEnabled: string
+        dtlsHandshake: string
+        dtlsDisabled: string
         connected: string
         disconnected: string
         ping: string

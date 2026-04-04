@@ -562,6 +562,11 @@ const ru: Translation = {
     voicePanel: {
         connecting: 'Подключение...',
         routing: 'Маршрутизация RTC',
+        dtls: 'Рукопожатие DTLS',
+        dtlsLabel: 'DTLS',
+        dtlsEnabled: 'Включён',
+        dtlsHandshake: 'Рукопожатие',
+        dtlsDisabled: 'Выключен',
         connected: 'Голос подключен',
         disconnected: 'Отключено',
         ping: '{{ping}}мс',

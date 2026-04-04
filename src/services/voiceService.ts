@@ -1533,9 +1533,10 @@ function createPeerConnection(): RTCPeerConnection {
   pc.oniceconnectionstatechange = () => {
     vevt('ICE connection state → %s', pc.iceConnectionState)
     if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
-      if (useVoiceStore.getState().connectionState !== 'connected') {
-        vlog('ICE CONNECTED/COMPLETED — setting voice state to connected')
-        useVoiceStore.getState().setConnectionState('connected')
+      const vs = useVoiceStore.getState()
+      if (vs.connectionState !== 'connected') {
+        vlog('ICE CONNECTED/COMPLETED — DTLS handshake in progress')
+        vs.setConnectionState('dtls')
       }
     }
     if (pc.iceConnectionState === 'failed') {

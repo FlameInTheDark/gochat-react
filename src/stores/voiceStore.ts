@@ -8,7 +8,7 @@ export interface VoicePeer {
   videoStream: MediaStream | null // remote video stream (null if camera off)
 }
 
-export type VoiceConnectionState = 'connecting' | 'routing' | 'connected' | 'disconnected'
+export type VoiceConnectionState = 'connecting' | 'routing' | 'dtls' | 'connected' | 'disconnected'
 
 interface VoiceState {
   channelId: string | null

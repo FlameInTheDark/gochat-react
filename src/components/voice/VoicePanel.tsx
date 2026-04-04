@@ -39,6 +39,8 @@ function getConnectionStatus(state: VoiceConnectionState, t: (key: string) => st
       return { text: t('voicePanel.connecting'), color: 'text-yellow-500', dotColor: 'bg-yellow-500' }
     case 'routing':
       return { text: t('voicePanel.routing'), color: 'text-orange-500', dotColor: 'bg-orange-500' }
+    case 'dtls':
+      return { text: t('voicePanel.dtls'), color: 'text-blue-400', dotColor: 'bg-blue-400' }
     case 'connected':
       return { text: t('voicePanel.connected'), color: 'text-green-400', dotColor: 'bg-green-500' }
     default:
@@ -106,7 +108,7 @@ export default function VoicePanel() {
   }
 
   const status = getConnectionStatus(connectionState, t)
-  const isTransient = connectionState === 'connecting' || connectionState === 'routing'
+  const isTransient = connectionState === 'connecting' || connectionState === 'routing' || connectionState === 'dtls'
   const pingValue = connectionState === 'connected' && displayPing > 0 ? displayPing : null
 
   const navigate = useNavigate()
@@ -201,6 +203,19 @@ export default function VoicePanel() {
                         <span className="text-[11px] font-medium font-mono">{sfuHost}</span>
                       </div>
                     )}
+                    <div className="flex items-center justify-between gap-4">
+                      <span className="text-[11px] text-muted-foreground">{t('voicePanel.dtlsLabel')}</span>
+                      <span className={cn(
+                        'text-[11px] font-medium',
+                        connectionState === 'connected' ? 'text-green-400'
+                          : connectionState === 'dtls' ? 'text-yellow-500'
+                          : 'text-muted-foreground',
+                      )}>
+                        {connectionState === 'connected' ? t('voicePanel.dtlsEnabled')
+                          : connectionState === 'dtls' ? t('voicePanel.dtlsHandshake')
+                          : t('voicePanel.dtlsDisabled')}
+                      </span>
+                    </div>
                     <div className="flex items-center justify-between gap-4">
                       <span className="text-[11px] text-muted-foreground">{t('voicePanel.encryption')}</span>
                       <span className={cn('text-[11px] font-medium flex items-center gap-1', encryptionInfo.color)}>

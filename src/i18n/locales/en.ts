@@ -559,6 +559,11 @@ const en: Translation = {
     voicePanel: {
         connecting: 'Connecting...',
         routing: 'RTC Routing',
+        dtls: 'DTLS Handshake',
+        dtlsLabel: 'DTLS',
+        dtlsEnabled: 'Enabled',
+        dtlsHandshake: 'Handshake',
+        dtlsDisabled: 'Disabled',
         connected: 'Voice Connected',
         disconnected: 'Disconnected',
         ping: '{{ping}}ms',
