@@ -7,6 +7,7 @@ import { useMentionStore } from '@/stores/mentionStore'
 import { useReadStateStore } from '@/stores/readStateStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useAuthStore } from '@/stores/authStore'
+import { performLogout } from '@/lib/logoutCleanup'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { playMentionSound } from '@/lib/sounds'
 import { axiosInstance } from '@/api/client'
@@ -243,7 +244,7 @@ async function refreshTokenAndReconnect() {
   } catch {
     // Both access and refresh tokens are invalid.
     // Logout clears authStore → useWebSocket observes token=null → calls disconnect().
-    useAuthStore.getState().logout()
+    performLogout()
     return
   } finally {
     isRefreshingToken = false

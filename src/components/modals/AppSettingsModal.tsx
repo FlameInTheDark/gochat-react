@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useAuthStore } from '@/stores/authStore'
+import { performLogout } from '@/lib/logoutCleanup'
 import { useUiStore } from '@/stores/uiStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useAppearanceStore, DEFAULT_CHAT_SPACING, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore'
@@ -86,7 +87,6 @@ export default function AppSettingsModal() {
   const close = useUiStore((s) => s.closeAppSettings)
   const user = useAuthStore((s) => s.user)
   const setUser = useAuthStore((s) => s.setUser)
-  const logout = useAuthStore((s) => s.logout)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { t } = useTranslation()
@@ -485,7 +485,7 @@ export default function AppSettingsModal() {
 
   function handleLogout() {
     close()
-    logout()
+    performLogout()
     navigate('/')
   }
 

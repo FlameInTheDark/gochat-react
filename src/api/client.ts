@@ -15,6 +15,7 @@ import {
 import JSONBig from 'json-bigint'
 import axios from 'axios'
 import { useAuthStore } from '@/stores/authStore'
+import { performLogout } from '@/lib/logoutCleanup'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { getDeviceKey } from '@/lib/deviceKey'
 
@@ -92,7 +93,7 @@ axiosInstance.interceptors.response.use(
 
     const refreshToken = useAuthStore.getState().refreshToken
     if (!refreshToken) {
-      useAuthStore.getState().logout()
+      performLogout()
       return Promise.reject(error)
     }
 
@@ -145,7 +146,7 @@ axiosInstance.interceptors.response.use(
     } catch (refreshError) {
       isRefreshing = false
       onRefreshFailed(refreshError)
-      useAuthStore.getState().logout()
+      performLogout()
       return Promise.reject(error)
     }
   },

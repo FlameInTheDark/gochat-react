@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { useAuthStore } from '@/stores/authStore'
+import { performLogout } from '@/lib/logoutCleanup'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 
 // Refresh the token this many ms before it actually expires.
@@ -30,7 +31,7 @@ async function doRefresh() {
   const store = useAuthStore.getState()
   const refreshToken = store.refreshToken
   if (!refreshToken) {
-    store.logout()
+    performLogout()
     return
   }
   try {
@@ -48,7 +49,7 @@ async function doRefresh() {
     store.setToken(newToken)
     if (newRefreshToken) store.setRefreshToken(newRefreshToken)
   } catch {
-    store.logout()
+    performLogout()
   }
 }
 

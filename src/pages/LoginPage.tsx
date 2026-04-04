@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { authApi, axiosInstance } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
+import { performLogout } from '@/lib/logoutCleanup'
 import { useTranslation } from 'react-i18next'
 import type { DtoUser } from '@/types'
 import type { AuthLoginChallengeResponse } from '@/client'
@@ -302,7 +303,7 @@ export default function LoginPage() {
             <Button onClick={() => navigate('/app')} className="w-full">
               {t('auth.openApp')}
             </Button>
-            <Button variant="outline" onClick={() => useAuthStore.getState().logout()} className="w-full">
+            <Button variant="outline" onClick={performLogout} className="w-full">
               {t('auth.switchAccount')}
             </Button>
           </>

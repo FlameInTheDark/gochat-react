@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
+import { performLogout } from '@/lib/logoutCleanup'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useIdlePresence } from '@/hooks/useIdlePresence'
 import { useDeepLink } from '@/hooks/useDeepLink'
@@ -91,7 +92,6 @@ export default function AppLayout() {
   const navigate = useNavigate()
   const token = useAuthStore((s) => s.token)
   const setUser = useAuthStore((s) => s.setUser)
-  const logout = useAuthStore((s) => s.logout)
 
   // Proactive token refresh: decodes the JWT expiry and schedules a refresh
   // 30 s before it expires so the WS and API never hit a stale token.
@@ -254,7 +254,7 @@ export default function AppLayout() {
         // Refresh also failed (or no refresh token) — clear everything and
         // send the user back to the login screen.
         validatedTokenRef.current = null
-        logout()
+        performLogout()
         navigate('/', { replace: true })
       })
       .finally(() => {
@@ -267,7 +267,7 @@ export default function AppLayout() {
     return () => {
       controller.abort()
     }
-    // token is the only real dependency; navigate/setUser/logout are stable refs
+    // token is the only real dependency; navigate/setUser/performLogout are stable refs
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
