@@ -32,7 +32,15 @@ import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { guildApi, inviteApi, rolesApi, uploadApi, axiosInstance } from '@/api/client'
 import type { DtoGuildInvite, DtoMember } from '@/types'
-import type { DtoGuildBan, DtoGuildEmoji, DtoRole, GuildBanMemberRequest } from '@/client'
+import type { DtoChannel, DtoGuildBan, DtoGuildEmoji, DtoRole, GuildBanMemberRequest } from '@/client'
+import { ModelChannelType } from '@/client'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { PermissionBits, hasPermission as hasPerm, calculateEffectivePermissions } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
@@ -210,6 +218,7 @@ export default function ServerSettingsModal() {
   // Overview
   const [name, setName] = useState('')
   const [isPublic, setIsPublic] = useState(false)
+  const [systemChannelId, setSystemChannelId] = useState('')
   const [savingOverview, setSavingOverview] = useState(false)
 
   // Roles — two-panel layout (list + editor); on mobile uses two-screen nav
@@ -418,6 +427,14 @@ export default function ServerSettingsModal() {
     staleTime: 30_000,
   })
 
+  const { data: allChannels = [] } = useQuery<DtoChannel[]>({
+    queryKey: ['channels', guildId],
+    queryFn: () => guildApi.guildGuildIdChannelGet({ guildId: guildId! }).then((r) => r.data ?? []),
+    enabled: open && !!guildId && section === 'overview',
+    staleTime: 60_000,
+  })
+  const textChannels = allChannels.filter((c) => c.type === ModelChannelType.ChannelTypeGuild)
+
   const roleMap = new Map<string, DtoRole>(roles.map((r) => [String(r.id), r]))
 
   // ── Effects ─────────────────────────────────────────────────────────────────
@@ -426,6 +443,7 @@ export default function ServerSettingsModal() {
     if (open && guild) {
       setName(guild.name ?? '')
       setIsPublic(guild.public ?? false)
+      setSystemChannelId(guild.system_channel_id ? String(guild.system_channel_id) : '')
     }
   }, [open, guild])
 
@@ -513,13 +531,30 @@ export default function ServerSettingsModal() {
   const serverInitials = (guild?.name ?? '?').charAt(0).toUpperCase()
   const overviewChanged =
     (name.trim() !== '' && name.trim() !== guild?.name) ||
-    isPublic !== (guild?.public ?? false)
+    isPublic !== (guild?.public ?? false) ||
+    systemChannelId !== (guild?.system_channel_id ? String(guild.system_channel_id) : '')
 
   async function handleSaveOverview() {
     if (!guildId || !name.trim()) return
     setSavingOverview(true)
     try {
-      await guildApi.guildGuildIdPatch({ guildId, request: { name: name.trim(), public: isPublic } })
+      const calls: Promise<unknown>[] = []
+
+      const nameOrPublicChanged =
+        name.trim() !== guild?.name || isPublic !== (guild?.public ?? false)
+      if (nameOrPublicChanged) {
+        calls.push(guildApi.guildGuildIdPatch({ guildId, request: { name: name.trim(), public: isPublic } }))
+      }
+
+      const systemChannelChanged = systemChannelId !== (guild?.system_channel_id ? String(guild.system_channel_id) : '')
+      if (systemChannelChanged) {
+        calls.push(guildApi.guildGuildIdSystemchPatch({
+          guildId,
+          request: { channel_id: (systemChannelId || null) as unknown as number },
+        }))
+      }
+
+      await Promise.all(calls)
       await queryClient.invalidateQueries({ queryKey: ['guilds'] })
       await queryClient.invalidateQueries({ queryKey: ['guild', guildId] })
       toast.success(t('serverSettings.overviewSaved'))
@@ -853,9 +888,9 @@ export default function ServerSettingsModal() {
           'bg-sidebar',
           isMobile
             ? mobileShowNav ? 'flex flex-col flex-1 min-h-0 overflow-y-auto' : 'hidden'
-            : 'flex flex-1 justify-end border-r border-sidebar-border',
+            : 'flex shrink-0 w-44 lg:w-[35%] lg:justify-end border-r border-sidebar-border',
         )}>
-          <div className={cn('shrink-0', isMobile ? 'w-full py-4 px-3' : 'w-52 py-16 px-3')}>
+          <div className={cn('shrink-0', isMobile ? 'w-full py-4 px-3' : 'w-full py-16 px-3 lg:w-52')}>
             <p className="px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-1 truncate">
               {guild?.name ?? t('serverSettings.title')}
             </p>
@@ -916,7 +951,7 @@ export default function ServerSettingsModal() {
               'flex-1 overflow-y-auto h-full',
               isMobile
                 ? 'py-4 px-4'
-                : section === 'roles' ? 'py-16 px-6' : 'py-16 px-10 max-w-2xl',
+                : section === 'roles' ? 'py-16 px-6 max-w-5xl' : 'py-16 px-8 max-w-3xl',
             )}
           >
 
@@ -1003,6 +1038,27 @@ export default function ServerSettingsModal() {
                       {t('serverSettings.copy')}
                     </Button>
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>{t('serverSettings.systemChannelLabel')}</Label>
+                  <p className="text-xs text-muted-foreground">{t('serverSettings.systemChannelDesc')}</p>
+                  <Select
+                    value={systemChannelId || '__none__'}
+                    onValueChange={(v) => setSystemChannelId(v === '__none__' ? '' : v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">{t('serverSettings.systemChannelNone')}</SelectItem>
+                      {textChannels.map((ch) => (
+                        <SelectItem key={String(ch.id)} value={String(ch.id)}>
+                          # {ch.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="flex justify-end pt-2">

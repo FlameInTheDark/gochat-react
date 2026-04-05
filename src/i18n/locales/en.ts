@@ -623,6 +623,7 @@ const en: Translation = {
         overviewTitle: 'Server Overview', changeIcon: 'Change server icon', publicServer: 'Public server', privateServer: 'Private server',
         serverNameLabel: 'Server Name', serverNamePlaceholder: 'Server name', publicServerLabel: 'Public Server', publicServerDesc: 'Allow anyone to discover and join this server', serverIdLabel: 'Server ID',
         copy: 'Copy', copied: 'Copied!', saving: 'Saving…', saveChanges: 'Save Changes', overviewSaved: 'Server updated', overviewFailed: 'Failed to update server',
+        systemChannelLabel: 'System Channel', systemChannelDesc: 'Channel that receives system messages and server notifications.', systemChannelNone: 'No channel (disabled)',
         iconUploaded: 'Server icon updated!', iconFailed: 'Failed to upload server icon', iconFileFailed: 'Failed to read icon file',
         membersTitle: 'Members', filterOf: 'of', filterPlaceholder: 'Filter by name or ID…', joined: 'Joined', kickMember: 'Kick Member', banMember: 'Ban Member',
         kickSuccess: 'Member kicked', kickFailed: 'Failed to kick member', banSuccess: 'Member banned', banFailed: 'Failed to ban member', noMembersMatch: 'No members match "{{filter}}"', noMembers: 'No members found',

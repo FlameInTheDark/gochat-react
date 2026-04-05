@@ -5,7 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { userApi } from '@/api/client'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { useFolderStore } from '@/stores/folderStore'
-import { ChannelType, type DtoChannel } from '@/types'
+import { ChannelType, type DtoChannel, type DtoGuild } from '@/types'
 import { useAppearanceStore, DEFAULT_CHAT_SPACING, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore'
 import { useNotificationSettingsStore } from '@/stores/notificationSettingsStore'
 import i18n from '@/i18n'
@@ -288,8 +288,24 @@ export function useWebSocket() {
     function onGuildCreate() {
       void queryClient.invalidateQueries({ queryKey: ['guilds'] })
     }
-    function onGuildUpdate() {
-      void queryClient.invalidateQueries({ queryKey: ['guilds'] })
+    function onGuildUpdate(e: Event) {
+      const updated = (e as CustomEvent<{ guild?: DtoGuild }>).detail?.guild
+      if (!updated) {
+        void queryClient.invalidateQueries({ queryKey: ['guilds'] })
+        return
+      }
+      const guildId = String(updated.id)
+      const merge = (g: DtoGuild): DtoGuild => ({
+        ...g,
+        ...updated,
+        system_channel_id: 'system_channel_id' in updated ? updated.system_channel_id : undefined,
+      })
+      queryClient.setQueryData<DtoGuild[]>(['guilds'], (old) =>
+        old?.map((g) => String(g.id) === guildId ? merge(g) : g) ?? old,
+      )
+      queryClient.setQueryData<DtoGuild>(['guild', guildId], (old) =>
+        old ? merge(old) : old,
+      )
     }
     function onGuildDelete() {
       void queryClient.invalidateQueries({ queryKey: ['guilds'] })

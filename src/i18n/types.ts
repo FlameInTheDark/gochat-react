@@ -572,6 +572,7 @@ export interface Translation {
         overviewTitle: string; changeIcon: string; publicServer: string; privateServer: string
         serverNameLabel: string; serverNamePlaceholder: string; publicServerLabel: string; publicServerDesc: string; serverIdLabel: string
         copy: string; copied: string; saving: string; saveChanges: string; overviewSaved: string; overviewFailed: string
+        systemChannelLabel: string; systemChannelDesc: string; systemChannelNone: string
         iconUploaded: string; iconFailed: string; iconFileFailed: string
         membersTitle: string; filterOf: string; filterPlaceholder: string; joined: string; kickMember: string; banMember: string
         kickSuccess: string; kickFailed: string; banSuccess: string; banFailed: string; noMembersMatch: string; noMembers: string

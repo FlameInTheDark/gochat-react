@@ -373,12 +373,12 @@ export default function AppSettingsModal() {
     bannerColor !== savedBannerColor ||
     panelColor !== savedPanelColor
 
-  const NAV: { key: Section; label: string; danger?: boolean }[] = [
+  const NAV: { key: Section; label: string; danger?: boolean; separator?: boolean }[] = [
     { key: 'account', label: t('settings.myAccount') },
     { key: 'appearance', label: t('settings.appearance') },
     { key: 'voice', label: t('settings.voiceVideo') },
     { key: 'language', label: t('settings.language') },
-    { key: 'security', label: t('settings.security') },
+    { key: 'security', label: t('settings.security'), separator: true },
     { key: 'danger', label: t('settings.dangerZone'), danger: true },
   ]
 
@@ -625,17 +625,16 @@ export default function AppSettingsModal() {
             'bg-sidebar',
             isMobile
               ? mobileShowNav ? 'flex flex-col flex-1 min-h-0 overflow-y-auto' : 'hidden'
-              : 'flex flex-1 justify-end border-r border-sidebar-border',
+              : 'flex shrink-0 w-44 lg:w-[35%] lg:justify-end border-r border-sidebar-border',
           )}>
-            <div className={cn('shrink-0', isMobile ? 'w-full py-4 px-3' : 'w-52 py-16 px-3')}>
+            <div className={cn('shrink-0', isMobile ? 'w-full py-4 px-3' : 'w-full py-16 px-3 lg:w-52')}>
               <p className="px-3 py-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider mb-1">
                 {t('settings.userSettings')}
               </p>
               <div className="space-y-0.5">
                 {NAV.map((s, i) => (
                   <div key={s.key}>
-                    {/* Separator before Danger Zone */}
-                    {s.danger && i > 0 && (
+                    {s.separator && i > 0 && (
                       <div className="my-2 h-px bg-border mx-3" />
                     )}
                     <button
@@ -666,7 +665,7 @@ export default function AppSettingsModal() {
             'flex flex-1 min-w-0 min-h-0',
             isMobile && (mobileShowNav ? 'hidden' : 'flex'),
           )}>
-            <div className={cn('flex-1 max-w-2xl overflow-y-auto h-full', isMobile ? 'py-4 px-4' : 'py-16 px-10')}>
+            <div className={cn('flex-1 max-w-3xl overflow-y-auto h-full', isMobile ? 'py-4 px-4' : 'py-16 px-8')}>
 
               {/* My Account */}
               {section === 'account' && (

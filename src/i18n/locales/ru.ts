@@ -626,6 +626,7 @@ const ru: Translation = {
         overviewTitle: 'Обзор сервера', changeIcon: 'Изменить иконку сервера', publicServer: 'Публичный сервер', privateServer: 'Приватный сервер',
         serverNameLabel: 'Название сервера', serverNamePlaceholder: 'Название сервера', publicServerLabel: 'Публичный сервер', publicServerDesc: 'Позволить всем находить и вступать в этот сервер', serverIdLabel: 'ID сервера',
         copy: 'Копировать', copied: 'Скопировано!', saving: 'Сохранение…', saveChanges: 'Сохранить изменения', overviewSaved: 'Сервер обновлён', overviewFailed: 'Не удалось обновить сервер',
+        systemChannelLabel: 'Системный канал', systemChannelDesc: 'Канал, который получает системные сообщения и уведомления сервера.', systemChannelNone: 'Нет канала (отключено)',
         iconUploaded: 'Иконка сервера обновлена!', iconFailed: 'Не удалось загрузить иконку', iconFileFailed: 'Не удалось прочитать файл иконки',
         membersTitle: 'Участники', filterOf: 'из', filterPlaceholder: 'Фильтр по имени или ID…', joined: 'Вступил', kickMember: 'Кикнуть', banMember: 'Забанить',
         kickSuccess: 'Участник кикнут', kickFailed: 'Не удалось кикнуть участника', banSuccess: 'Участник забанен', banFailed: 'Не удалось забанить участника', noMembersMatch: 'Нет участников по запросу «{{filter}}»', noMembers: 'Участники не найдены',
