@@ -2,12 +2,13 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { Hash, Spool, Volume2, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, Search, X } from 'lucide-react'
+import { Hash, Spool, Volume2, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, Search, X, Monitor, Loader2, RotateCcw } from 'lucide-react'
 import axios from 'axios'
 import { Separator } from '@/components/ui/separator'
 import { guildApi, messageApi, rolesApi, searchApi } from '@/api/client'
 import { SearchMessageSearchRequestHasEnum } from '@/client'
 import { useVoiceStore } from '@/stores/voiceStore'
+import { useStreamStore, type StreamConnectionState } from '@/stores/streamStore'
 import { ChannelType } from '@/types'
 import type { DtoChannel, DtoGuild, DtoMessage } from '@/types'
 import type { ServerOutletContext } from './ServerLayout'
@@ -23,6 +24,7 @@ import ThreadListPanel from '@/components/chat/ThreadListPanel'
 import ThreadPanel from '@/components/chat/ThreadPanel'
 import { activateChannel, deactivateChannel } from '@/services/wsService'
 import { joinVoice, leaveVoice, setMuted, setDeafened, enableCamera, disableCamera } from '@/services/voiceService'
+import { reconnectStream, stopWatchingStream, syncChannelStreams, watchStream } from '@/services/streamService'
 import { toast } from 'sonner'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -63,6 +65,7 @@ interface MissingThreadLookupResult {
 }
 
 const EMPTY_MESSAGES: DtoMessage[] = []
+const EMPTY_STREAMS: readonly import('@/services/streamApi').VoiceStreamSummary[] = []
 const THREAD_PREVIEW_FETCH_LIMIT = 20
 const RIGHT_PANEL_WIDTH_STORAGE_KEY = 'channel-page.right-panel-widths'
 const RIGHT_PANEL_WIDTH_KEYS: RightPanelWidthKey[] = [
@@ -299,6 +302,9 @@ export default function ChannelPage() {
   const localSpeaking = useVoiceStore((s) => s.localSpeaking)
   const localCameraEnabled = useVoiceStore((s) => s.localCameraEnabled)
   const localVideoStream = useVoiceStore((s) => s.localVideoStream)
+  const publishing = useStreamStore((s) => s.publishing)
+  const channelStreams = useStreamStore((s) => channelId ? (s.channelStreams[channelId] ?? EMPTY_STREAMS) : EMPTY_STREAMS)
+  const watchedStreams = useStreamStore((s) => s.watched)
 
   const [spotlightId, setSpotlightId] = useState<string | null>(null)
   // Reset spotlight when navigating away from a channel
@@ -639,6 +645,11 @@ export default function ChannelPage() {
       deactivateChannel(channelId)
     }
   }, [channelId, isVoice])
+
+  useEffect(() => {
+    if (!isVoice || !serverId || !channelId || voiceChannelId !== channelId) return
+    void syncChannelStreams(serverId, channelId)
+  }, [channelId, isVoice, serverId, voiceChannelId])
 
   // Clear search when navigating to a different channel
   useEffect(() => {
@@ -1129,6 +1140,54 @@ export default function ChannelPage() {
     const isConnected = voiceChannelId === channelId
     const currentUserId = String(currentUser?.id ?? '')
     const peerEntries = Object.entries(voicePeers).filter(([userId]) => userId !== currentUserId)
+    const streamByOwnerId = new Map(channelStreams.map((stream) => [stream.ownerUserId, stream]))
+    const localStreamPreview = publishing?.channelId === channelId && publishing.previewStream
+      ? {
+          id: 'local-stream',
+          label: `${currentUser?.name ?? t('channel.you')} · ${t('streams.liveBadge')}`,
+          avatarUrl: currentUser?.avatar?.url,
+          speaking: false,
+          muted: false,
+          deafened: false,
+          videoStream: publishing.previewStream,
+          isLocal: true as const,
+          mirrorVideo: false,
+          streamSummary: null,
+          streamConnectionState: null,
+          streamError: null,
+          isWatchingStream: false,
+          videoMuted: true,
+          videoVolume: 1,
+        }
+      : null
+
+    async function handleWatchParticipantStream(participantId: string, streamId: string) {
+      if (!serverId || !channelId) return
+      const stream = channelStreams.find((item) => item.id === streamId)
+      if (!stream) return
+      try {
+        await watchStream(serverId, channelId, stream)
+        setSpotlightId(participantId)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to watch stream')
+      }
+    }
+
+    function handleStopParticipantStream(participantId: string, streamId: string) {
+      stopWatchingStream(streamId)
+      if (spotlightId === participantId) {
+        setSpotlightId(null)
+      }
+    }
+
+    async function handleReconnectParticipantStream(participantId: string, streamId: string) {
+      try {
+        await reconnectStream(streamId)
+        setSpotlightId(participantId)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to reconnect stream')
+      }
+    }
 
     // Normalised list of all voice participants
     const allParticipants = [
@@ -1141,9 +1200,17 @@ export default function ChannelPage() {
         deafened: localDeafened,
         videoStream: localCameraEnabled ? localVideoStream : null,
         isLocal: true as const,
+        streamSummary: null,
+        streamConnectionState: null,
+        streamError: null,
+        isWatchingStream: false,
+        videoMuted: true,
+        videoVolume: 1,
       },
       ...peerEntries.map(([userId, peer]) => {
         const member = members?.find((m) => String(m.user?.id) === userId)
+        const activeStream = streamByOwnerId.get(userId) ?? null
+        const watchedStream = activeStream ? watchedStreams[activeStream.id] : null
         return {
           id: userId,
           label: member?.username ?? member?.user?.name ?? `User ${userId.slice(0, 6)}`,
@@ -1151,14 +1218,23 @@ export default function ChannelPage() {
           speaking: peer.speaking,
           muted: peer.muted,
           deafened: peer.deafened,
-          videoStream: peer.videoStream,
+          videoStream: watchedStream ? watchedStream.mediaStream : peer.videoStream,
           isLocal: false as const,
+          streamSummary: activeStream,
+          streamConnectionState: watchedStream?.connectionState ?? null,
+          streamError: watchedStream?.error ?? null,
+          isWatchingStream: !!watchedStream,
+          videoMuted: watchedStream ? watchedStream.muted : true,
+          videoVolume: watchedStream ? watchedStream.volume / 100 : 1,
         }
       }),
     ]
+    const visibleParticipants = localStreamPreview
+      ? [...allParticipants, localStreamPreview]
+      : allParticipants
 
-    const spotlightParticipant = spotlightId ? allParticipants.find((p) => p.id === spotlightId) ?? null : null
-    const stripParticipants = spotlightId ? allParticipants.filter((p) => p.id !== spotlightId) : []
+    const spotlightParticipant = spotlightId ? visibleParticipants.find((p) => p.id === spotlightId) ?? null : null
+    const stripParticipants = spotlightId ? visibleParticipants.filter((p) => p.id !== spotlightId) : []
 
     return (
       <div className="flex flex-col flex-1 min-h-0">
@@ -1196,14 +1272,38 @@ export default function ChannelPage() {
               </div>
               {/* Bottom strip */}
               <div className="shrink-0 flex gap-3 px-4 pb-3 overflow-x-auto border-t border-sidebar-border pt-3">
-                {stripParticipants.map((p) => (
-                  <VoiceParticipant
-                    key={p.id}
-                    {...p}
-                    size="compact"
-                    onClick={p.videoStream ? () => setSpotlightId(p.id) : undefined}
-                  />
-                ))}
+                {stripParticipants.map((p) => {
+                  const streamId = p.streamSummary?.id ?? null
+                  return (
+                    <VoiceParticipant
+                      key={p.id}
+                      {...p}
+                      size="compact"
+                      onClick={
+                        streamId && !p.isWatchingStream
+                          ? () => { void handleWatchParticipantStream(p.id, streamId) }
+                          : p.videoStream
+                            ? () => setSpotlightId(p.id)
+                            : undefined
+                      }
+                      onWatchStream={
+                        streamId && !p.isWatchingStream
+                          ? () => { void handleWatchParticipantStream(p.id, streamId) }
+                          : undefined
+                      }
+                      onStopWatching={
+                        streamId && p.isWatchingStream
+                          ? () => handleStopParticipantStream(p.id, streamId)
+                          : undefined
+                      }
+                      onReconnectStream={
+                        streamId && p.streamConnectionState === 'error'
+                          ? () => { void handleReconnectParticipantStream(p.id, streamId) }
+                          : undefined
+                      }
+                    />
+                  )
+                })}
               </div>
             </div>
           ) : (
@@ -1215,13 +1315,37 @@ export default function ChannelPage() {
                   : t('channel.connected_plural', { count: peerEntries.length + 1 })}
               </p>
               <div className="flex flex-wrap justify-center gap-4 w-full">
-                {allParticipants.map((p) => (
-                  <VoiceParticipant
-                    key={p.id}
-                    {...p}
-                    onClick={p.videoStream ? () => setSpotlightId(p.id) : undefined}
-                  />
-                ))}
+                {visibleParticipants.map((p) => {
+                  const streamId = p.streamSummary?.id ?? null
+                  return (
+                    <VoiceParticipant
+                      key={p.id}
+                      {...p}
+                      onClick={
+                        streamId && !p.isWatchingStream
+                          ? () => { void handleWatchParticipantStream(p.id, streamId) }
+                          : p.videoStream
+                            ? () => setSpotlightId(p.id)
+                            : undefined
+                      }
+                      onWatchStream={
+                        streamId && !p.isWatchingStream
+                          ? () => { void handleWatchParticipantStream(p.id, streamId) }
+                          : undefined
+                      }
+                      onStopWatching={
+                        streamId && p.isWatchingStream
+                          ? () => handleStopParticipantStream(p.id, streamId)
+                          : undefined
+                      }
+                      onReconnectStream={
+                        streamId && p.streamConnectionState === 'error'
+                          ? () => { void handleReconnectParticipantStream(p.id, streamId) }
+                          : undefined
+                      }
+                    />
+                  )
+                })}
               </div>
             </div>
           )
@@ -1612,12 +1736,18 @@ export default function ChannelPage() {
 function VideoFeed({
   stream,
   mirror = false,
+  muted = true,
+  volume = 1,
+  fit = 'cover',
   onAspect,
   onFrozen,
   onActive,
 }: {
   stream: MediaStream
   mirror?: boolean
+  muted?: boolean
+  volume?: number
+  fit?: 'cover' | 'contain'
   onAspect?: (ratio: number) => void
   onFrozen?: () => void
   onActive?: () => void
@@ -1631,6 +1761,13 @@ function VideoFeed({
     el.play().catch(() => {})
     return () => { el.srcObject = null }
   }, [stream])
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    el.muted = muted
+    el.volume = Math.max(0, Math.min(1, volume))
+  }, [muted, volume])
 
   useEffect(() => {
     if (!onFrozen && !onActive) return
@@ -1664,12 +1801,15 @@ function VideoFeed({
       ref={videoRef}
       autoPlay
       playsInline
-      muted
       onLoadedMetadata={(e) => {
         const { videoWidth: w, videoHeight: h } = e.currentTarget
         if (w && h) onAspect?.(w / h)
       }}
-      className={cn('w-full h-full object-cover rounded-lg', mirror && '[transform:scaleX(-1)]')}
+      className={cn(
+        'w-full h-full rounded-lg',
+        fit === 'contain' ? 'object-contain' : 'object-cover',
+        mirror && '[transform:scaleX(-1)]',
+      )}
     />
   )
 }
@@ -1684,8 +1824,18 @@ function VoiceParticipant({
   deafened,
   videoStream,
   isLocal,
+  mirrorVideo,
+  streamSummary,
+  streamConnectionState,
+  streamError,
+  isWatchingStream,
+  videoMuted,
+  videoVolume,
   size = 'normal',
   onClick,
+  onWatchStream,
+  onStopWatching,
+  onReconnectStream,
 }: {
   label: string
   avatarUrl?: string
@@ -1694,24 +1844,30 @@ function VoiceParticipant({
   deafened?: boolean
   videoStream?: MediaStream | null
   isLocal?: boolean
+  mirrorVideo?: boolean
+  streamSummary?: { id: string } | null
+  streamConnectionState?: StreamConnectionState | null
+  streamError?: string | null
+  isWatchingStream?: boolean
+  videoMuted?: boolean
+  videoVolume?: number
   size?: ParticipantSize
   onClick?: () => void
+  onWatchStream?: () => void
+  onStopWatching?: () => void
+  onReconnectStream?: () => void
 }) {
+  const { t } = useTranslation()
   const initials = label.charAt(0).toUpperCase()
   const streamId = videoStream?.id ?? null
   const [frozenStreamId, setFrozenStreamId] = useState<string | null>(null)
-  const [videoAspectState, setVideoAspectState] = useState<{ streamId: string | null; ratio: number | null }>({
-    streamId: null,
-    ratio: null,
-  })
-  const videoAspect = videoAspectState.streamId === streamId ? videoAspectState.ratio : null
   const handleFrozen = useCallback(() => setFrozenStreamId(streamId), [streamId])
   const handleActive = useCallback(() => setFrozenStreamId(null), [])
-  const handleAspect = useCallback(
-    (ratio: number) => setVideoAspectState({ streamId, ratio }),
-    [streamId],
-  )
   const hasVideo = !!videoStream && (isLocal || frozenStreamId !== streamId)
+  const shouldMirrorVideo = mirrorVideo ?? isLocal
+  const hasActiveStream = !!streamSummary
+  const isStreamConnecting = hasActiveStream && isWatchingStream && !hasVideo && (streamConnectionState === 'connecting' || streamConnectionState === 'reconnecting')
+  const isStreamErrored = hasActiveStream && isWatchingStream && !hasVideo && streamConnectionState === 'error'
 
   const avatarCls = size === 'spotlight' ? 'w-24 h-24' : size === 'compact' ? 'w-12 h-12' : 'w-20 h-20'
   const fallbackCls = size === 'spotlight' ? 'text-3xl' : size === 'compact' ? 'text-base' : 'text-xl'
@@ -1719,17 +1875,10 @@ function VoiceParticipant({
   const badgeIconCls = size === 'spotlight' ? 'w-4 h-4' : 'w-3 h-3'
   const labelCls = size === 'compact' ? 'text-[10px] max-w-[80px]' : 'text-xs max-w-[100px]'
 
-  // Spotlight: full height, width derived from the camera's native aspect ratio.
-  // This means the video is never cropped and never letterboxed — it's exactly
-  // as wide as the AR dictates at the available height.
-  const spotlightContainerStyle = size === 'spotlight' && hasVideo
-    ? { height: '100%', aspectRatio: videoAspect ? String(videoAspect) : '16 / 9' }
-    : undefined
-
   return (
     <div className={cn(
       'flex flex-col items-center gap-2',
-      size === 'spotlight' && hasVideo && 'h-full',
+      size === 'spotlight' && hasVideo && 'h-full w-full min-w-0',
     )}>
       {/*
         Outer wrapper has NO overflow-hidden — speaking ring and mute/deafen badges
@@ -1738,25 +1887,58 @@ function VoiceParticipant({
       <div
         className={cn(
           'relative transition-all duration-150',
+          size === 'spotlight' && hasVideo && 'h-full w-full min-w-0',
           hasVideo && onClick && 'cursor-pointer',
         )}
-        style={spotlightContainerStyle}
         onClick={onClick}
       >
         {hasVideo ? (
           /* Video: overflow-hidden is scoped to the video container, not the wrapper */
           <div className={cn(
             'rounded-lg bg-zinc-900 overflow-hidden relative',
-            size === 'spotlight' ? 'w-full h-full' : size === 'compact' ? 'w-36 h-24' : 'w-56 h-40',
+            size === 'spotlight' ? 'w-full h-full max-w-full max-h-full' : size === 'compact' ? 'w-36 h-24' : 'w-56 h-40',
           )}>
             <VideoFeed
               key={videoStream!.id}
               stream={videoStream!}
-              mirror={isLocal}
-              onAspect={size === 'spotlight' ? handleAspect : undefined}
+              mirror={shouldMirrorVideo}
+              muted={videoMuted}
+              volume={videoVolume}
+              fit={size === 'spotlight' ? 'contain' : 'cover'}
               onFrozen={isLocal ? undefined : handleFrozen}
               onActive={isLocal ? undefined : handleActive}
             />
+            {hasActiveStream && (
+              <div className="absolute left-2 top-2 rounded-full bg-red-500/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white shadow-sm">
+                {t('streams.liveBadge')}
+              </div>
+            )}
+            {hasActiveStream && !isWatchingStream && onWatchStream && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onWatchStream()
+                }}
+                className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-background/90 px-2 py-1 text-[10px] font-medium text-foreground shadow-sm transition-colors hover:bg-background"
+              >
+                <Monitor className="h-3 w-3" />
+                {t('streams.watch')}
+              </button>
+            )}
+            {hasActiveStream && isWatchingStream && onStopWatching && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onStopWatching()
+                }}
+                className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-background/90 px-2 py-1 text-[10px] font-medium text-foreground shadow-sm transition-colors hover:bg-background"
+              >
+                <X className="h-3 w-3" />
+                {t('streams.stopWatching')}
+              </button>
+            )}
             {/* Label + icon bar inside the video */}
             <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-black/50 flex items-center justify-between gap-1">
               <span className="text-xs text-white truncate">{label}</span>
@@ -1800,7 +1982,36 @@ function VoiceParticipant({
         )}
       </div>
       {!hasVideo && (
-        <span className={cn('text-muted-foreground truncate', labelCls)}>{label}</span>
+        <div className="flex flex-col items-center gap-1">
+          <span className={cn('text-muted-foreground truncate', labelCls)}>{label}</span>
+          {hasActiveStream && !isWatchingStream && onWatchStream && (
+            <button
+              type="button"
+              onClick={onWatchStream}
+              className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] font-medium text-red-400 transition-colors hover:bg-red-500/15"
+            >
+              <Monitor className="h-3 w-3" />
+              {t('streams.clickToWatch')}
+            </button>
+          )}
+          {isStreamConnecting && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/70 px-2 py-1 text-[10px] font-medium text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t('streams.connecting')}
+            </span>
+          )}
+          {isStreamErrored && onReconnectStream && (
+            <button
+              type="button"
+              onClick={onReconnectStream}
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/70 px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-accent"
+              title={streamError ?? undefined}
+            >
+              <RotateCcw className="h-3 w-3" />
+              {t('streams.reconnect')}
+            </button>
+          )}
+        </div>
       )}
     </div>
   )

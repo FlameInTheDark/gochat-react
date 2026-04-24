@@ -33,6 +33,7 @@ export type Codec = number
 export type MediaType = number
 export type ProposalsOperationType = number
 export type SessionStatus = number
+export type { SigningKeyPair }
 
 export interface CommitWelcome {
   commit: Uint8Array | null
@@ -43,6 +44,10 @@ export const Codec = Object.freeze({ ...GoDave.Codec })
 export const MediaType = Object.freeze({ ...GoDave.MediaType })
 export const ProposalsOperationType = Object.freeze({ ...GoDave.ProposalsOperationType })
 export const SessionStatus = Object.freeze({ ...GoDave.SessionStatus })
+
+export function generateP256Keypair(): SigningKeyPair {
+  return GoDave.generateP256Keypair()
+}
 
 export class DAVESession {
   #session: GoDaveSession
@@ -92,6 +97,10 @@ export class DAVESession {
 
   get voicePrivacyCode(): string {
     return this.#safeState().voicePrivacyCode
+  }
+
+  get userIds(): string[] {
+    return [...this.#safeState().userIds]
   }
 
   dispose(): void {

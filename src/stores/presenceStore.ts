@@ -2,6 +2,14 @@ import { create } from 'zustand'
 
 export type UserStatus = 'online' | 'idle' | 'dnd' | 'offline'
 
+export interface ActiveStreamPresence {
+  id: string
+  channelId: string
+  sourceType: 'screen' | 'application'
+  audioMode: 'desktop' | 'application' | 'none'
+  startedAt: number
+}
+
 // Status display metadata
 export const STATUS_META: Record<UserStatus, { label: string; color: string }> = {
   online: { label: 'Online', color: 'bg-green-500' },
@@ -29,6 +37,8 @@ interface PresenceState {
   customStatusText: string
   /** Map of channelId (string) → array of users in that voice channel */
   voiceChannelUsers: Record<string, VoiceChannelUser[]>
+  /** Map of userId (string) → active stream metadata */
+  activeStreams: Record<string, ActiveStreamPresence | null>
 
   setPresence: (userId: string, status: UserStatus) => void
   setCustomStatus: (userId: string, text: string) => void
@@ -42,6 +52,7 @@ interface PresenceState {
   removeUserFromAllVoiceChannels: (userId: string) => void
   clearVoiceChannel: (channelId: string) => void
   clearAllVoiceChannels: () => void
+  setActiveStream: (userId: string, stream: ActiveStreamPresence | null) => void
 }
 
 export const usePresenceStore = create<PresenceState>((set) => ({
@@ -50,6 +61,7 @@ export const usePresenceStore = create<PresenceState>((set) => ({
   ownStatus: 'online',
   customStatusText: '',
   voiceChannelUsers: {},
+  activeStreams: {},
 
   setPresence: (userId, status) =>
     set((state) => ({ statuses: { ...state.statuses, [userId]: status } })),
@@ -70,7 +82,7 @@ export const usePresenceStore = create<PresenceState>((set) => ({
 
   setCustomStatusText: (text) => set({ customStatusText: text }),
 
-  clearAll: () => set({ statuses: {}, customStatuses: {}, voiceChannelUsers: {} }),
+  clearAll: () => set({ statuses: {}, customStatuses: {}, voiceChannelUsers: {}, activeStreams: {} }),
 
   addUserToVoiceChannel: (channelId, user) =>
     set((state) => {
@@ -112,11 +124,18 @@ export const usePresenceStore = create<PresenceState>((set) => ({
       const filtered = currentUsers.filter((u) => u.userId !== userId)
       // Only update if the user was actually removed
       if (filtered.length === currentUsers.length) return state
+      const stillInVoice = Object.entries(state.voiceChannelUsers).some(([id, users]) =>
+        id !== channelId && users.some((u) => u.userId === userId),
+      )
+      const nextActiveStreams = stillInVoice ? state.activeStreams : Object.fromEntries(
+        Object.entries(state.activeStreams).filter(([id]) => id !== userId),
+      )
       return {
         voiceChannelUsers: {
           ...state.voiceChannelUsers,
           [channelId]: filtered,
         },
+        activeStreams: nextActiveStreams,
       }
     }),
 
@@ -135,16 +154,35 @@ export const usePresenceStore = create<PresenceState>((set) => ({
       }
       // Only update if something actually changed
       if (!changed) return state
-      return { voiceChannelUsers: next }
+      const nextActiveStreams = Object.fromEntries(
+        Object.entries(state.activeStreams).filter(([id]) => id !== userId),
+      )
+      return { voiceChannelUsers: next, activeStreams: nextActiveStreams }
     }),
 
   clearVoiceChannel: (channelId) =>
     set((state) => {
-      if (!state.voiceChannelUsers[channelId]) return state
+      const users = state.voiceChannelUsers[channelId]
+      if (!users) return state
       const next = { ...state.voiceChannelUsers }
       delete next[channelId]
-      return { voiceChannelUsers: next }
+      const removedUserIds = new Set(users.map((user) => user.userId))
+      const usersStillInVoice = new Set(
+        Object.values(next).flatMap((channelUsers) => channelUsers.map((user) => user.userId)),
+      )
+      const nextActiveStreams = Object.fromEntries(
+        Object.entries(state.activeStreams).filter(([id]) => !removedUserIds.has(id) || usersStillInVoice.has(id)),
+      )
+      return { voiceChannelUsers: next, activeStreams: nextActiveStreams }
     }),
 
-  clearAllVoiceChannels: () => set({ voiceChannelUsers: {} }),
+  clearAllVoiceChannels: () => set({ voiceChannelUsers: {}, activeStreams: {} }),
+
+  setActiveStream: (userId, stream) =>
+    set((state) => ({
+      activeStreams: {
+        ...state.activeStreams,
+        [userId]: stream,
+      },
+    })),
 }))

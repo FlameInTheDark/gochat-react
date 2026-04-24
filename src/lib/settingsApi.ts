@@ -1,5 +1,5 @@
 import { axiosInstance } from '@/api/client'
-import type { ModelUserSettingsData } from '@/client'
+import type { ModelUserSettingsData, UserUserSettingsResponse } from '@/client'
 import { queryClient } from '@/lib/queryClient'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { useFolderStore } from '@/stores/folderStore'
@@ -12,9 +12,11 @@ import { useFolderStore } from '@/stores/folderStore'
  * payload can contain BigInt Snowflake IDs that JSON.stringify() cannot handle.
  */
 export async function saveSettings(patch: Partial<ModelUserSettingsData>): Promise<void> {
-  const existing = queryClient.getQueryData<ModelUserSettingsData>(['user-settings']) ?? {}
-  const merged = useFolderStore.getState().flushPendingInto({ ...existing, ...patch })
   const baseUrl = getApiBaseUrl()
+  const existing = queryClient.getQueryData<ModelUserSettingsData>(['user-settings'])
+    ?? (await axiosInstance.get<UserUserSettingsResponse>(`${baseUrl}/user/me/settings`)).data.settings
+    ?? {}
+  const merged = useFolderStore.getState().flushPendingInto({ ...existing, ...patch })
   await axiosInstance.post(`${baseUrl}/user/me/settings`, merged)
   queryClient.setQueryData(['user-settings'], merged)
 }

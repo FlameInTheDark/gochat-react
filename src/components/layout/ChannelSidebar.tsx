@@ -42,7 +42,9 @@ import { useMentionStore } from '@/stores/mentionStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
+import { useStreamStore } from '@/stores/streamStore'
 import { guildApi, rolesApi, userApi } from '@/api/client'
+import { syncChannelStreams } from '@/services/streamService'
 import { setPeerVolume } from '@/services/voiceService'
 import { ChannelType } from '@/types'
 import type { DtoChannel, DtoGuild } from '@/types'
@@ -229,6 +231,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
       })
       if (res.data.sfu_url && res.data.sfu_token) {
         await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token, serverName, channel.voice_region ?? undefined)
+        void syncChannelStreams(serverId, channelId)
       }
     } catch {
       toast.error(t('channelSidebar.joinVoiceFailed'))
@@ -803,7 +806,10 @@ function ChannelItemWithUnread(props: Omit<ChannelItemProps, 'isUnread' | 'menti
   const voiceUsers = usePresenceStore((s) =>
     isVoice ? s.voiceChannelUsers[channelId] : undefined,
   )
-  return <ChannelItem {...props} isUnread={isUnread} mentionCount={mentionCount} voiceUsers={voiceUsers} />
+  const streamCount = useStreamStore((s) =>
+    isVoice ? (s.channelStreams[channelId]?.length ?? 0) : 0,
+  )
+  return <ChannelItem {...props} isUnread={isUnread} mentionCount={mentionCount} voiceUsers={voiceUsers} streamCount={streamCount} />
 }
 
 interface ChannelItemProps {
@@ -828,6 +834,7 @@ interface ChannelItemProps {
   onEditSave: () => void
   onEditCancel: () => void
   canManageChannels: boolean
+  streamCount?: number
   voiceUsers?: { userId: string; username: string; avatarUrl?: string; muted?: boolean; deafened?: boolean }[]
   members?: { user?: { id?: string | number; name?: string; avatar?: { url?: string } }; username?: string }[] | undefined
 }
@@ -854,6 +861,7 @@ function ChannelItem({
   onEditSave,
   onEditCancel,
   canManageChannels,
+  streamCount,
   voiceUsers,
   members,
 }: ChannelItemProps) {
@@ -863,6 +871,7 @@ function ChannelItem({
   const isVoice = channel.type === ChannelType.ChannelTypeGuildVoice
   const Icon = isVoice ? Volume2 : Hash
   const hasVoiceUsers = isVoice && voiceUsers && voiceUsers.length > 0
+  const hasLiveStreams = isVoice && (streamCount ?? 0) > 0
 
   // Resolve voice user display info from members data
   const resolvedVoiceUsers: {
@@ -939,6 +948,11 @@ function ChannelItem({
             ) : (
               <>
                 <span className="truncate flex-1">{channel.name}</span>
+                {hasLiveStreams && (
+                  <span className="shrink-0 rounded-full bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-red-400">
+                    {t('streams.liveCount', { count: streamCount })}
+                  </span>
+                )}
                 {/* Mention badge (red, with count) takes priority over unread dot */}
                 {mentionCount > 0 && !isActive && (
                   <span className="ml-auto shrink-0 min-w-[1.125rem] h-[1.125rem] rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center px-1 leading-none">
@@ -1095,6 +1109,7 @@ function VoiceChannelUserItem({
   const peerVolume = useVoiceStore((s) => s.peers[user.userId]?.volume ?? 100)
   const peerSpeaking = useVoiceStore((s) => s.peers[user.userId]?.speaking ?? false)
   const localSpeaking = useVoiceStore((s) => s.localSpeaking)
+  const activeStream = usePresenceStore((s) => s.activeStreams[user.userId] ?? null)
   const lastPosRef = useRef({ x: 0, y: 0 })
   const isCurrentUser = currentUser?.id !== undefined && String(currentUser.id) === user.userId
   const isSpeaking = isCurrentUser ? localSpeaking : peerSpeaking
@@ -1141,6 +1156,11 @@ function VoiceChannelUserItem({
           <span className="truncate text-xs flex-1">
             {user.username}
           </span>
+          {activeStream && (
+            <span className="rounded-full bg-red-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-red-400">
+              {t('streams.liveBadge')}
+            </span>
+          )}
           {/* Mute/Deafen icons on the right side */}
           <div className="flex items-center gap-1 shrink-0">
             {user.muted && <MicOff className="w-3 h-3 text-destructive" />}

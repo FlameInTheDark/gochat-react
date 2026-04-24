@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router'
-import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity, Video, VideoOff, ShieldCheck, ShieldOff, ShieldAlert, Copy, Check } from 'lucide-react'
+import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity, Video, VideoOff, ShieldCheck, ShieldOff, ShieldAlert, Copy, Check, Monitor } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useVoiceStore } from '@/stores/voiceStore'
+import { useStreamStore } from '@/stores/streamStore'
 import type { VoiceConnectionState } from '@/stores/voiceStore'
 import { leaveVoice, setMuted, setDeafened, enableCamera, disableCamera } from '@/services/voiceService'
+import { startScreenShare, stopScreenShare } from '@/services/streamService'
+import type { StreamAudioMode, StreamQualitySettings, StreamSourceType } from '@/services/streamApi'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { voiceApi } from '@/api/client'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import StartStreamDialog from './StartStreamDialog'
 
 interface VoiceRegion {
   id?: string
@@ -67,6 +72,23 @@ export default function VoicePanel() {
   const daveTransitioning = useVoiceStore((s) => s.daveTransitioning)
   const daveEpoch = useVoiceStore((s) => s.daveEpoch)
   const davePrivacyCode = useVoiceStore((s) => s.davePrivacyCode)
+  const publishing = useStreamStore((s) => s.publishing)
+  const isStreamingHere = publishing?.channelId === channelId
+  const streamQualityLabel = isStreamingHere && publishing
+    ? t('streams.qualityBadge', { resolution: publishing.resolution, frameRate: publishing.frameRate })
+    : null
+  const streamSourceLabel = isStreamingHere && publishing
+    ? publishing.sourceType === 'application'
+      ? t('streams.sourceApplication')
+      : t('streams.sourceScreen')
+    : null
+  const streamAudioLabel = isStreamingHere && publishing
+    ? publishing.audioMode === 'application'
+      ? t('streams.audioApplication')
+      : publishing.audioMode === 'desktop'
+        ? t('streams.audioDesktop')
+        : t('streams.audioNone')
+    : null
 
   const { data: voiceRegions = [] } = useQuery<VoiceRegion[]>({
     queryKey: ['voice-regions'],
@@ -89,6 +111,8 @@ export default function VoicePanel() {
         : { label: t('voicePanel.encryptionTransport'), Icon: ShieldOff, color: 'text-muted-foreground', detail: null }
   const [displayPing, setDisplayPing] = useState(0)
   const [privacyCodeCopied, setPrivacyCodeCopied] = useState(false)
+  const [streamDialogOpen, setStreamDialogOpen] = useState(false)
+  const [isStartingStream, setIsStartingStream] = useState(false)
 
   // Update display ping when store ping changes, but keep previous value if it drops to 0
   useEffect(() => {
@@ -140,6 +164,31 @@ export default function VoicePanel() {
     }
   }
 
+  async function handleStartStream(
+    sourceType: StreamSourceType,
+    audioMode: StreamAudioMode,
+    quality: StreamQualitySettings,
+  ) {
+    if (!guildId || !channelId) return
+    setIsStartingStream(true)
+    try {
+      await startScreenShare(guildId, channelId, sourceType, audioMode, quality)
+      setStreamDialogOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('common.error'))
+    } finally {
+      setIsStartingStream(false)
+    }
+  }
+
+  async function handleToggleStream() {
+    if (isStreamingHere) {
+      await stopScreenShare()
+      return
+    }
+    setStreamDialogOpen(true)
+  }
+
   return (
     <AnimatePresence>
       {channelId && (
@@ -151,6 +200,34 @@ export default function VoicePanel() {
           style={{ overflow: 'hidden' }}
         >
           <div className="px-2 py-2 bg-sidebar-accent border-t border-sidebar-border shrink-0">
+            {isStreamingHere && publishing && (
+              <div className="mb-2 rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1.5">
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <Monitor className="h-3.5 w-3.5 shrink-0 text-red-400" />
+                    <span className="rounded-full bg-red-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-red-300">
+                      {t('streams.liveBadge')}
+                    </span>
+                    {streamSourceLabel && (
+                      <span className="truncate text-[10px] font-medium text-foreground">
+                        {streamSourceLabel}
+                      </span>
+                    )}
+                  </div>
+                  {streamQualityLabel && (
+                    <span className="shrink-0 rounded-full bg-background/60 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">
+                      {streamQualityLabel}
+                    </span>
+                  )}
+                </div>
+                {streamAudioLabel && (
+                  <div className="mt-1 truncate text-[10px] text-muted-foreground">
+                    {streamAudioLabel}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Status line */}
             <div className="flex items-center gap-2 mb-1.5 px-1">
               <span
@@ -162,12 +239,14 @@ export default function VoicePanel() {
               />
               <div className="flex-1 min-w-0">
                 <p className={cn('text-xs font-medium leading-tight', status.color)}>{status.text}</p>
-                <button
-                  onClick={handleChannelClick}
-                  className="text-[10px] text-muted-foreground truncate leading-tight hover:text-foreground hover:underline transition-colors text-left w-full block"
-                >
-                  {guildName ? `${guildName} / ${channelName ?? channelId}` : (channelName ?? channelId)}
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleChannelClick}
+                    className="min-w-0 text-[10px] text-muted-foreground truncate leading-tight hover:text-foreground hover:underline transition-colors text-left block"
+                  >
+                    {guildName ? `${guildName} / ${channelName ?? channelId}` : (channelName ?? channelId)}
+                  </button>
+                </div>
               </div>
               {/* Ping indicator with tooltip */}
               <Tooltip>
@@ -310,6 +389,20 @@ export default function VoicePanel() {
               </button>
 
               <button
+                onClick={() => { void handleToggleStream() }}
+                title={isStreamingHere ? t('streams.stop') : t('streams.start')}
+                aria-label={isStreamingHere ? t('streams.stop') : t('streams.start')}
+                className={cn(
+                  'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
+                  isStreamingHere
+                    ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                    : 'hover:bg-accent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Monitor className="w-4 h-4" />
+              </button>
+
+              <button
                 onClick={leaveVoice}
                 title={t('voicePanel.disconnect')}
                 aria-label={t('voicePanel.disconnect')}
@@ -319,6 +412,12 @@ export default function VoicePanel() {
               </button>
             </div>
           </div>
+          <StartStreamDialog
+            open={streamDialogOpen}
+            isStarting={isStartingStream}
+            onOpenChange={setStreamDialogOpen}
+            onStart={handleStartStream}
+          />
         </motion.div>
       )}
     </AnimatePresence>

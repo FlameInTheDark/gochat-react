@@ -10,6 +10,21 @@ export interface VoicePeer {
 
 export type VoiceConnectionState = 'connecting' | 'routing' | 'dtls' | 'connected' | 'disconnected'
 
+export interface VoiceSettings {
+  audioInputDevice: string
+  audioOutputDevice: string
+  audioInputLevel: number
+  audioOutputLevel: number
+  autoGainControl: boolean
+  echoCancellation: boolean
+  noiseSuppression: boolean
+  inputMode: 'voice_activity' | 'push_to_talk'
+  voiceActivityThreshold: number
+  pushToTalkKey: string
+  videoInputDevice: string
+  denoiserType: 'default' | 'rnnoise' | 'speex'
+}
+
 interface VoiceState {
   channelId: string | null
   guildId: string | null
@@ -29,24 +44,11 @@ interface VoiceState {
   daveTransitioning: boolean   // true while a DAVE epoch/downgrade transition is in progress
   daveEpoch: number            // current DAVE epoch (0 = not started)
   davePrivacyCode: string | null // voice privacy code from DAVE session (null when not E2EE)
-  settings: {
-    audioInputDevice: string
-    audioOutputDevice: string
-    audioInputLevel: number
-    audioOutputLevel: number
-    autoGainControl: boolean
-    echoCancellation: boolean
-    noiseSuppression: boolean
-    inputMode: 'voice_activity' | 'push_to_talk'
-    voiceActivityThreshold: number // 0–100, sensitivity threshold for voice activity
-    pushToTalkKey: string          // key code for PTT, e.g. 'KeyV'
-    videoInputDevice: string       // deviceId for camera, '' = default
-    denoiserType: 'default' | 'rnnoise' | 'speex'  // noise suppression backend
-  }
+  settings: VoiceSettings
   peers: Record<string, VoicePeer> // keyed by userId string
 
   setVoiceChannel: (guildId: string, channelId: string, channelName: string, guildName?: string, sfuUrl?: string, voiceRegion?: string) => void
-  setSettings: (settings: Partial<VoiceState['settings']>) => void
+  setSettings: (settings: Partial<VoiceSettings>) => void
   addPeer: (userId: string) => void
   removePeer: (userId: string) => void
   setPeerSpeaking: (userId: string, speaking: boolean) => void
