@@ -28,13 +28,21 @@
 
 import JSONBig from 'json-bigint'
 import { Buffer } from 'buffer'
-import { Codec, DAVESession, MediaType, ProposalsOperationType, SessionStatus } from '@/lib/dave'
+import { Codec, DAVESession, MediaType, ProposalsOperationType, SessionStatus, generateP256Keypair, type SigningKeyPair } from '@/lib/dave'
+import {
+  DaveScriptTransformRuntime,
+  supportsAnyEncodedTransforms,
+  supportsDirectEncodedTransforms,
+  supportsScriptEncodedTransforms,
+} from '@/lib/daveScriptTransform'
 import type { ModelUserSettingsData } from '@/client'
 import { queryClient } from '@/lib/queryClient'
 import { saveSettings } from '@/lib/settingsApi'
+import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/authStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
+import { handleVoiceDisconnect } from './streamService'
 import { sendRaw, sendPresenceStatus, setPresenceVoiceChannel } from './wsService'
 import {
   buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression,
@@ -100,15 +108,24 @@ let daveProtocolVersion: 0 | 1 = 0
 let daveEpoch = 0
 let daveSession: DAVESession | null = null
 let davePendingSession: DAVESession | null = null
+let daveSessionKeyPair: SigningKeyPair | null = null
+let davePendingSessionKeyPair: SigningKeyPair | null = null
 let daveWeCommitted = false
 let daveAwaitingWelcome = false
 let davePendingTransitionId: number | null = null
 let negotiatedVideoCodec: Codec = Codec.UNKNOWN
+let daveScriptRuntime: DaveScriptTransformRuntime | null = null
 
 const DAVE_LATE_PACKET_WINDOW_SECONDS = 10
 const DAVE_TRANSFORM_WARN_INTERVAL_MS = 2_000
 const daveTransformWarnAt: Record<string, number> = {}
 
+type DaveCodecResolver = () => Codec
+
+// Senders where createEncodedStreams() was unavailable when the track was attached.
+const pendingSenderTransforms: Map<RTCRtpSender, { mediaType: MediaType; codec: DaveCodecResolver }> = new Map()
+// Senders that already had an encoded transform installed.
+const transformedSenders: Set<RTCRtpSender> = new Set()
 // Receivers where createEncodedStreams() was unavailable at ontrack time — retried later.
 const pendingReceiverTransforms: Map<RTCRtpReceiver, { mediaType: MediaType; userId: string }> = new Map()
 // Receivers that have already had createEncodedStreams() called (spec: call only once).
@@ -174,18 +191,7 @@ let mutedBeforeDeafen = false
 
 /** Detect browser support for WebRTC encoded transforms (insertable streams). */
 function supportsEncodedTransforms(): boolean {
-  try {
-    const anyWindow = window as typeof window & { RTCRtpScriptTransform?: unknown }
-    const senderProto = RTCRtpSender.prototype as RTCRtpSender & { createEncodedStreams?: unknown }
-    const receiverProto = RTCRtpReceiver.prototype as RTCRtpReceiver & { createEncodedStreams?: unknown }
-    return Boolean(
-      anyWindow.RTCRtpScriptTransform ||
-      (typeof senderProto.createEncodedStreams === 'function' &&
-       typeof receiverProto.createEncodedStreams === 'function')
-    )
-  } catch {
-    return false
-  }
+  return supportsAnyEncodedTransforms()
 }
 
 type WithEncodedStreams = {
@@ -194,6 +200,30 @@ type WithEncodedStreams = {
 
 type EncodedFrame = {
   data: ArrayBuffer
+}
+
+function shouldUseScriptEncodedTransforms(): boolean {
+  return !supportsDirectEncodedTransforms() && supportsScriptEncodedTransforms()
+}
+
+function ensureDaveScriptRuntime(): DaveScriptTransformRuntime | null {
+  if (!shouldUseScriptEncodedTransforms()) {
+    return null
+  }
+  if (!daveScriptRuntime) {
+    daveScriptRuntime = new DaveScriptTransformRuntime('[Voice][DAVE worker]')
+  }
+  return daveScriptRuntime
+}
+
+function syncDaveScriptRuntimeState() {
+  daveScriptRuntime?.setState({
+    enabled: sfuDaveEnabled,
+    required: sfuDaveRequired,
+    mode: daveMode,
+    protocolVersion: daveProtocolVersion,
+    negotiatedVideoCodec,
+  })
 }
 
 function currentUserId(): string {
@@ -331,9 +361,13 @@ function shouldExpectDaveMediaPath(): boolean {
   return sfuDaveEnabled && (sfuDaveRequired || daveProtocolVersion > 0 || daveMode !== 'passthrough')
 }
 
-function createDaveSession(protocolVersion = 1): DAVESession {
+function currentDaveControlTarget(): 'active' | 'pending' {
+  return davePendingSession ? 'pending' : 'active'
+}
+
+function createDaveSession(protocolVersion = 1, keyPair: SigningKeyPair): DAVESession {
   const userId = currentUserId()
-  const session = new DAVESession(protocolVersion, userId, currentChannelId ?? '')
+  const session = new DAVESession(protocolVersion, userId, currentChannelId ?? '', keyPair)
   session.setPassthroughMode(true)
   return session
 }
@@ -344,10 +378,13 @@ function resetDaveTransitionState() {
 }
 
 function resetDaveSessions() {
+  daveScriptRuntime?.disposeSessions('all')
   davePendingSession?.dispose()
   davePendingSession = null
   daveSession?.dispose()
   daveSession = null
+  daveSessionKeyPair = null
+  davePendingSessionKeyPair = null
   resetDaveTransitionState()
 }
 
@@ -362,8 +399,12 @@ function currentDaveControlSession(): DAVESession | null {
 function initializeDaveSession(protocolVersion = 1): DAVESession {
   davePendingSession?.dispose()
   davePendingSession = null
+  davePendingSessionKeyPair = null
   daveSession?.dispose()
-  daveSession = createDaveSession(protocolVersion)
+  daveSessionKeyPair = generateP256Keypair()
+  daveSession = createDaveSession(protocolVersion, daveSessionKeyPair)
+  daveScriptRuntime?.createSession('active', protocolVersion, currentUserId(), currentChannelId ?? '', daveSessionKeyPair)
+  syncDaveScriptRuntimeState()
   resetDaveTransitionState()
   return daveSession
 }
@@ -372,17 +413,50 @@ function beginDaveUpgrade(protocolVersion = 1): DAVESession {
   resetDaveTransitionState()
   if (daveProtocolVersion > 0 && daveSession) {
     davePendingSession?.dispose()
-    davePendingSession = createDaveSession(protocolVersion)
+    davePendingSessionKeyPair = generateP256Keypair()
+    davePendingSession = createDaveSession(protocolVersion, davePendingSessionKeyPair)
+    daveScriptRuntime?.createSession('pending', protocolVersion, currentUserId(), currentChannelId ?? '', davePendingSessionKeyPair)
+    syncDaveScriptRuntimeState()
     vlog('DAVE: pending session created for epoch transition')
     return davePendingSession
   }
 
   davePendingSession?.dispose()
   davePendingSession = null
+  davePendingSessionKeyPair = null
   daveSession?.dispose()
-  daveSession = createDaveSession(protocolVersion)
+  daveSessionKeyPair = generateP256Keypair()
+  daveSession = createDaveSession(protocolVersion, daveSessionKeyPair)
+  daveScriptRuntime?.createSession('active', protocolVersion, currentUserId(), currentChannelId ?? '', daveSessionKeyPair)
+  syncDaveScriptRuntimeState()
   vlog('DAVE: active session initialized for first encrypted epoch')
   return daveSession
+}
+
+function syncDaveProtocolFromSessionDescription(sessionProtocolVersion: 0 | 1 | undefined) {
+  if (sessionProtocolVersion === undefined || sessionProtocolVersion === daveProtocolVersion) {
+    return
+  }
+
+  if (sessionProtocolVersion === 1) {
+    if (daveMode === 'pending_upgrade') {
+      vlog('DAVE: deferring protocol version 1 from session description until ExecuteTransition')
+      return
+    }
+    if (daveProtocolVersion === 0) {
+      vwarn('DAVE: ignoring session description protocol version 1 outside transition flow')
+    }
+    return
+  }
+
+  if (daveMode === 'pending_downgrade') {
+    vlog('DAVE: deferring protocol version 0 from session description until ExecuteTransition')
+    return
+  }
+
+  if (daveProtocolVersion === 1) {
+    vwarn('DAVE: ignoring stale transport-only session description while encrypted session is active')
+  }
 }
 
 function mapCodecNameToDaveCodec(name?: string): Codec {
@@ -413,8 +487,17 @@ function attachPassthroughSenderTransform(
   mediaType: MediaType,
   codec: () => Codec,
 ): boolean {
+  if (transformedSenders.has(sender)) return true
   const s = sender as RTCRtpSender & WithEncodedStreams
-  if (typeof s.createEncodedStreams !== 'function') return false
+  if (typeof s.createEncodedStreams !== 'function') {
+    const scriptRuntime = ensureDaveScriptRuntime()
+    if (!scriptRuntime?.attachSender(sender, mediaType)) {
+      return false
+    }
+    transformedSenders.add(sender)
+    pendingSenderTransforms.delete(sender)
+    return true
+  }
   try {
     const { readable, writable } = s.createEncodedStreams()
     readable
@@ -452,10 +535,24 @@ function attachPassthroughSenderTransform(
       )
       .pipeTo(writable)
       .catch(() => {})
+    transformedSenders.add(sender)
+    pendingSenderTransforms.delete(sender)
     return true
   } catch {
     return false
   }
+}
+
+function ensurePassthroughSenderTransform(
+  sender: RTCRtpSender,
+  mediaType: MediaType,
+  codec: DaveCodecResolver,
+): boolean {
+  if (attachPassthroughSenderTransform(sender, mediaType, codec)) {
+    return true
+  }
+  pendingSenderTransforms.set(sender, { mediaType, codec })
+  return false
 }
 
 /**
@@ -466,7 +563,17 @@ function attachPassthroughSenderTransform(
 function attachPassthroughReceiverTransform(receiver: RTCRtpReceiver, mediaType: MediaType, userId = ''): boolean {
   if (transformedReceivers.has(receiver)) return true  // already set up — don't call createEncodedStreams twice
   const r = receiver as RTCRtpReceiver & WithEncodedStreams
-  if (typeof r.createEncodedStreams !== 'function') return false
+  if (typeof r.createEncodedStreams !== 'function') {
+    const scriptRuntime = ensureDaveScriptRuntime()
+    if (!scriptRuntime?.attachReceiver(receiver, mediaType, userId)) {
+      return false
+    }
+    transformedReceivers.add(receiver)
+    pendingReceiverTransforms.delete(receiver)
+    pendingReceiverAudioUnblocks.get(receiver)?.()
+    pendingReceiverAudioUnblocks.delete(receiver)
+    return true
+  }
   try {
     const { readable, writable } = r.createEncodedStreams()
     readable
@@ -553,6 +660,15 @@ function retryPendingReceiverTransforms() {
       pendingReceiverAudioUnblocks.delete(receiver)
       pendingReceiverTransforms.delete(receiver)
       vlog('DAVE: receiver transform attached on retry (userId=%s)', userId)
+    }
+  }
+}
+
+function retryPendingSenderTransforms() {
+  if (!sfuDaveEnabled || pendingSenderTransforms.size === 0) return
+  for (const [sender, { mediaType, codec }] of Array.from(pendingSenderTransforms.entries())) {
+    if (attachPassthroughSenderTransform(sender, mediaType, codec)) {
+      vlog('DAVE: sender transform attached on retry (kind=%s)', sender.track?.kind)
     }
   }
 }
@@ -660,6 +776,24 @@ function shouldBeCommitter(): boolean {
   }
 }
 
+function buildProcessedMicStream(ctx: AudioContext, postDenoiseNode: AudioNode, inputGain: GainNode): MediaStream {
+  postDenoiseNode.connect(inputGain)
+
+  // Normalize microphone input to mono first so single-channel mics do not end up
+  // only on the left side, then duplicate that mono signal into both stereo channels.
+  inputGain.channelCount = 1
+  inputGain.channelCountMode = 'explicit'
+  inputGain.channelInterpretation = 'speakers'
+
+  const merger = ctx.createChannelMerger(2)
+  inputGain.connect(merger, 0, 0)
+  inputGain.connect(merger, 0, 1)
+
+  const destination = ctx.createMediaStreamDestination()
+  merger.connect(destination)
+  return destination.stream
+}
+
 // ── Debug logging ─────────────────────────────────────────────────────────────
 
 const TAG = '%c[Voice]'
@@ -683,10 +817,6 @@ export function thresholdToDb(threshold: number): number {
   return threshold
 }
 
-/**
- * Enable or disable the sent tracks, honouring the user's manual mute state.
- * Also updates the localSpeaking store flag for UI indicators.
- */
 function setTransmitting(active: boolean) {
   if (isTransmitting === active) return
   isTransmitting = active
@@ -1025,11 +1155,16 @@ async function handleSfuReady(d: {
   useVoiceStore.getState().setDaveEnabled(sfuDaveEnabled)
   useVoiceStore.getState().setDaveState(0, false, 0)
 
+  if (sfuDaveEnabled && shouldUseScriptEncodedTransforms()) {
+    ensureDaveScriptRuntime()
+  }
+
   // Initialize (or reinitialize) the DAVE session for this channel
   if (sfuDaveEnabled) {
     initializeDaveSession(1)
     negotiatedVideoCodec = Codec.UNKNOWN
     davePendingTransitionId = null
+    syncDaveScriptRuntimeState()
     vlog('DAVE: DAVESession initialized (userId=%s channelId=%s)', currentUserId(), currentChannelId)
   }
 
@@ -1050,18 +1185,20 @@ async function handleSfuReady(d: {
 
   // Add pending audio tracks (built in joinVoice before socket connected)
   sentTracks = []
-  if (pendingAudioTracks.length > 0 && pendingAudioStream) {
-    for (const track of pendingAudioTracks) {
-      peerConnection.addTrack(track, pendingAudioStream)
-      sentTracks.push(track)
-    }
+    if (pendingAudioTracks.length > 0 && pendingAudioStream) {
+      for (const track of pendingAudioTracks) {
+        peerConnection.addTrack(track, pendingAudioStream)
+        sentTracks.push(track)
+      }
     vlog('handleSfuReady: added %d pending audio track(s)', pendingAudioTracks.length)
 
     // Attach DAVE passthrough transforms to all audio senders immediately
     if (sfuDaveEnabled) {
       for (const sender of peerConnection.getSenders()) {
-        if (attachPassthroughSenderTransform(sender, MediaType.AUDIO, () => Codec.OPUS)) {
+        if (ensurePassthroughSenderTransform(sender, MediaType.AUDIO, () => Codec.OPUS)) {
           vlog('DAVE: passthrough sender transform attached (kind=%s)', sender.track?.kind)
+        } else {
+          vwarn('DAVE: sender transform unavailable, queued for retry (kind=%s)', sender.track?.kind)
         }
       }
     }
@@ -1124,16 +1261,7 @@ async function handleSfuSessionDesc(d: {
   if (!peerConnection) { vwarn('handleSfuSessionDesc: no peerConnection'); return }
   vevt('SessionDescription type=%s dave_protocol_version=%s dave_epoch=%s', d.type, d.dave_protocol_version, d.dave_epoch)
 
-  // Sync DAVE state from session description
-  if (d.dave_protocol_version !== undefined && d.dave_protocol_version !== daveProtocolVersion) {
-    if (d.dave_protocol_version === 1 && daveMode === 'pending_upgrade') {
-      vlog('DAVE: deferring protocol version 1 from session description until ExecuteTransition')
-    } else {
-      daveProtocolVersion = d.dave_protocol_version
-      useVoiceStore.getState().setDaveState(daveProtocolVersion, daveMode !== 'passthrough')
-      vlog('DAVE: protocol version updated to %d', daveProtocolVersion)
-    }
-  }
+  syncDaveProtocolFromSessionDescription(d.dave_protocol_version)
   if (d.dave_epoch !== undefined) {
     daveEpoch = d.dave_epoch
   }
@@ -1144,6 +1272,7 @@ async function handleSfuSessionDesc(d: {
     negotiatedVideoCodec = mapCodecNameToDaveCodec(d.video_codec)
     vlog('DAVE: negotiated video codec=%s -> %d', d.video_codec, negotiatedVideoCodec)
   }
+  syncDaveScriptRuntimeState()
 
   if (d.type === 'answer') {
     // Initial bootstrap response or client-initiated renegotiation answer
@@ -1152,6 +1281,7 @@ async function handleSfuSessionDesc(d: {
       // createEncodedStreams() becomes available after setRemoteDescription resolves —
       // retry any transforms that were unavailable during ontrack.
       retryPendingReceiverTransforms()
+      retryPendingSenderTransforms()
       vlog('handleSfuSessionDesc: remote answer applied, pcState=%s', peerConnection.connectionState)
     } else {
       vwarn('handleSfuSessionDesc: answer arrived in signalingState=%s — ignoring', peerConnection.signalingState)
@@ -1166,12 +1296,15 @@ async function handleSfuSessionDesc(d: {
   }
   await peerConnection.setRemoteDescription({ type: 'offer', sdp: d.sdp })
   retryPendingReceiverTransforms()
+  retryPendingSenderTransforms()
   const answer = await peerConnection.createAnswer()
   // MDN: createEncodedStreams() must be called BEFORE setLocalDescription.
   retryPendingReceiverTransforms()
+  retryPendingSenderTransforms()
   await peerConnection.setLocalDescription(answer)
   // Also retry after setLocalDescription — some browsers allow it post-set.
   retryPendingReceiverTransforms()
+  retryPendingSenderTransforms()
   await waitForIceGatheringComplete(peerConnection)
 
   sfuSend({
@@ -1220,6 +1353,7 @@ function handleSfuBinaryMessage(data: ArrayBuffer) {
       try {
         // GoChat uses the same varint encoding as MLS TLS (RFC 9420 §2.1) — pass through directly
         controlSession.setExternalSender(Buffer.from(rest))
+        daveScriptRuntime?.setExternalSender(currentDaveControlTarget(), rest)
         vlog('DAVE: ExternalSender set on session (%d bytes)', rest.length)
       } catch (err) {
         vwarn('DAVE: setExternalSender failed: %o', err)
@@ -1253,7 +1387,19 @@ function handleSfuBinaryMessage(data: ArrayBuffer) {
           ...(ownId ? [ownId] : []),
           ...Object.keys(useVoiceStore.getState().peers).filter(id => /^\d+$/.test(id)),
         ]
-        const result = controlSession.processProposals(opType, proposalsPayload, recognizedUserIds)
+        let mirroredRecognizedUserIds: string[] | undefined = recognizedUserIds
+        let result: ReturnType<DAVESession['processProposals']>
+        try {
+          result = controlSession.processProposals(opType, proposalsPayload, recognizedUserIds)
+        } catch (err) {
+          if (err instanceof Error && err.message.includes('proposal contained unexpected user')) {
+            mirroredRecognizedUserIds = undefined
+            result = controlSession.processProposals(opType, proposalsPayload, undefined)
+          } else {
+            throw err
+          }
+        }
+        daveScriptRuntime?.processProposals(currentDaveControlTarget(), opType, rest.slice(1), mirroredRecognizedUserIds)
         vlog('DAVE: processProposals %d bytes → commit=%s welcome=%s',
           proposalsPayload.length, !!result.commit, !!result.welcome)
 
@@ -1292,6 +1438,7 @@ function handleSfuBinaryMessage(data: ArrayBuffer) {
         try {
           const { bytes: commitBytes } = daveReadOpaqueVec(rest, 2)
           controlSession.processCommit(Buffer.from(commitBytes))
+          daveScriptRuntime?.processCommit(currentDaveControlTarget(), commitBytes)
           vlog('DAVE: committer processCommit ok (transitionId=%d)', transitionId)
         } catch (err) {
           vwarn('DAVE: committer processCommit failed: %o', err)
@@ -1309,6 +1456,7 @@ function handleSfuBinaryMessage(data: ArrayBuffer) {
       try {
         const { bytes: commitBytes } = daveReadOpaqueVec(rest, 2)
         controlSession.processCommit(Buffer.from(commitBytes))
+        daveScriptRuntime?.processCommit(currentDaveControlTarget(), commitBytes)
         daveAwaitingWelcome = false
         vlog('DAVE: processCommit ok (transitionId=%d)', transitionId)
         sendDaveTransitionReady(transitionId)
@@ -1332,6 +1480,7 @@ function handleSfuBinaryMessage(data: ArrayBuffer) {
       try {
         const { bytes: welcomeBytes } = daveReadOpaqueVec(rest, 2)
         controlSession.processWelcome(Buffer.from(welcomeBytes))
+        daveScriptRuntime?.processWelcome(currentDaveControlTarget(), welcomeBytes)
         daveAwaitingWelcome = false
         vlog('DAVE: processWelcome ok (transitionId=%d)', transitionId)
         sendDaveTransitionReady(transitionId)
@@ -1457,6 +1606,8 @@ function onSfuMessage(event: MessageEvent) {
         davePendingTransitionId = td.transition_id
         daveMode = 'pending_downgrade'
         currentDaveMediaSession()?.setPassthroughMode(true)
+        daveScriptRuntime?.setPassthrough('active', true)
+        syncDaveScriptRuntimeState()
         useVoiceStore.getState().setDaveState(daveProtocolVersion, true, daveEpoch)
         sendDaveTransitionReady(td.transition_id)
       }
@@ -1468,13 +1619,17 @@ function onSfuMessage(event: MessageEvent) {
       vevt('DAVE Execute Transition (current mode=%s transition_id=%s)', daveMode, ed.transition_id)
       // Ensure all receiver transforms are in place before encryption is activated.
       retryPendingReceiverTransforms()
+      retryPendingSenderTransforms()
       if (daveMode === 'pending_downgrade') {
         daveProtocolVersion = 0
         daveMode = 'passthrough'
         davePendingTransitionId = null
         davePendingSession?.dispose()
         davePendingSession = null
+        davePendingSessionKeyPair = null
         currentDaveMediaSession()?.setPassthroughMode(true)
+        daveScriptRuntime?.disposeSessions('pending')
+        daveScriptRuntime?.setPassthrough('active', true)
         useVoiceStore.getState().setDavePrivacyCode(null)
         vlog('DAVE: downgrade complete — transport-only mode')
       } else if (daveMode === 'pending_upgrade') {
@@ -1485,16 +1640,21 @@ function onSfuMessage(event: MessageEvent) {
         if (nextSession && davePendingSession) {
           const previousSession = daveSession
           daveSession = davePendingSession
+          daveSessionKeyPair = davePendingSessionKeyPair
           davePendingSession = null
+          davePendingSessionKeyPair = null
           if (previousSession && previousSession !== daveSession) {
             previousSession.dispose()
           }
+          daveScriptRuntime?.promotePendingSession()
         }
         nextSession?.setPassthroughMode(false, DAVE_LATE_PACKET_WINDOW_SECONDS)
+        daveScriptRuntime?.setPassthrough('active', false, DAVE_LATE_PACKET_WINDOW_SECONDS)
         resetDaveTransitionState()
         vlog('DAVE: upgrade transition executed — encryption enabled')
         useVoiceStore.getState().setDavePrivacyCode(nextSession?.voicePrivacyCode ?? null)
       }
+      syncDaveScriptRuntimeState()
       useVoiceStore.getState().setDaveState(daveProtocolVersion, false, daveEpoch)
       break
     }
@@ -1507,6 +1667,7 @@ function onSfuMessage(event: MessageEvent) {
         daveMode = 'pending_upgrade'
         davePendingTransitionId = null
         beginDaveUpgrade(1)
+        syncDaveScriptRuntimeState()
         useVoiceStore.getState().setDaveState(daveProtocolVersion, true, daveEpoch)
         vlog('DAVE: epoch %d upgrade starting (waiting for binary 25)', daveEpoch)
       }
@@ -1527,7 +1688,7 @@ function createPeerConnection(): RTCPeerConnection {
   vlog('createPeerConnection: %d ICE server(s), encodedInsertableStreams=%s', iceServers.length, sfuDaveEnabled)
   const pc = new RTCPeerConnection({
     iceServers,
-    ...(sfuDaveEnabled ? { encodedInsertableStreams: true } : {}),
+    ...(sfuDaveEnabled && supportsDirectEncodedTransforms() ? { encodedInsertableStreams: true } : {}),
   } as RTCConfiguration & { encodedInsertableStreams?: boolean })
 
   pc.oniceconnectionstatechange = () => {
@@ -1557,6 +1718,7 @@ function createPeerConnection(): RTCPeerConnection {
       // createEncodedStreams() becomes available once the DTLS/ICE connection is up.
       // Retry any transforms that were unavailable at ontrack time.
       retryPendingReceiverTransforms()
+      retryPendingSenderTransforms()
     } else if (state === 'connecting') {
       vlog('WebRTC CONNECTING — establishing connection')
     } else if (state === 'failed') {
@@ -1846,7 +2008,6 @@ function cleanup(sendPresenceClear = true) {
     localInputGain.disconnect()
     localInputGain = null
   }
-
   cleanupDenoiserNode()
 
   const gainCount = Object.keys(audioGains).length
@@ -1894,10 +2055,14 @@ function cleanup(sendPresenceClear = true) {
   daveEpoch = 0
   resetDaveSessions()
   davePendingTransitionId = null
-  negotiatedVideoCodec = Codec.UNKNOWN
+  daveScriptRuntime?.dispose()
+  daveScriptRuntime = null
+  pendingSenderTransforms.clear()
+  transformedSenders.clear()
   pendingReceiverTransforms.clear()
-  pendingReceiverAudioUnblocks.clear()
   transformedReceivers.clear()
+  pendingReceiverAudioUnblocks.clear()
+  negotiatedVideoCodec = Codec.UNKNOWN
 
   // Save before nulling so we can clear the presence store for this channel
   const savedChannelId = currentChannelId
@@ -1947,7 +2112,7 @@ export async function joinVoice(
   // Tear down any existing voice connection first
   if (sfuSocket || peerConnection) {
     vlog('joinVoice: tearing down previous connection before joining')
-    leaveVoice()
+    await leaveVoice()
   }
 
   currentChannelId = channelId
@@ -1958,7 +2123,14 @@ export async function joinVoice(
   daveEpoch = 0
   resetDaveSessions()
   davePendingTransitionId = null
+  daveScriptRuntime?.dispose()
+  daveScriptRuntime = null
   negotiatedVideoCodec = Codec.UNKNOWN
+  pendingSenderTransforms.clear()
+  transformedSenders.clear()
+  pendingReceiverTransforms.clear()
+  transformedReceivers.clear()
+  pendingReceiverAudioUnblocks.clear()
   sfuSessionId = null
   sfuRtcConnectionId = ''
 
@@ -2035,17 +2207,12 @@ export async function joinVoice(
     const source = ctx.createMediaStreamSource(localStream)
     localInputGain = ctx.createGain()
     localInputGain.gain.value = settings.audioInputLevel / 100
-
     cleanupDenoiserNode()
     const denoiserType = effectiveDenoiserType(settings.denoiserType ?? 'default', settings.noiseSuppression)
     vlog('joinVoice: denoiserType=%s', denoiserType)
     denoiserNode = await buildDenoiserNode(denoiserType, ctx, source)
     const preGainNode: AudioNode = denoiserNode ?? source
-    preGainNode.connect(localInputGain)
-
-    const destination = ctx.createMediaStreamDestination()
-    localInputGain.connect(destination)
-    pendingAudioStream = destination.stream
+    pendingAudioStream = buildProcessedMicStream(ctx, preGainNode, localInputGain)
     pendingAudioTracks = pendingAudioStream.getAudioTracks()
 
     vlog('joinVoice: audio pipeline built, %d processed track(s) pending PC creation', pendingAudioTracks.length)
@@ -2073,6 +2240,12 @@ export async function joinVoice(
   sfuSocket.addEventListener('close', (ev) => {
     vwarn('joinVoice: SFU WebSocket CLOSED code=%d reason=%s wasClean=%s',
       ev.code, ev.reason || '(none)', ev.wasClean)
+    if (ev.code === 4017) {
+      const message = supportsEncodedTransforms()
+        ? 'Voice encryption is required, but this browser failed to initialize the encoded media pipeline.'
+        : 'Voice encryption is required. Use a Chromium-based browser, or run the local SFU with dave_required_default: false for Firefox testing.'
+      toast.error(message)
+    }
     if (currentChannelId === channelId) {
       vlog('joinVoice: cleaning up after unexpected close')
       cleanup()
@@ -2154,8 +2327,11 @@ export async function joinVoice(
   vlog('joinVoice: setup complete, waiting for Hello + Ready from SFU...')
 }
 
-export function leaveVoice() {
+export async function leaveVoice() {
   vlog('leaveVoice: disconnecting')
+  if (currentChannelId) {
+    await handleVoiceDisconnect(currentChannelId)
+  }
   if (sfuSocket) {
     sfuSocket.close()
     sfuSocket = null
@@ -2289,8 +2465,11 @@ export async function enableCamera(): Promise<void> {
 
     // Attach DAVE passthrough transform to the new video sender
     if (sfuDaveEnabled) {
-      attachPassthroughSenderTransform(localVideoSender, MediaType.VIDEO, () => negotiatedVideoCodec)
-      vlog('DAVE: passthrough sender transform attached to video sender')
+      if (ensurePassthroughSenderTransform(localVideoSender, MediaType.VIDEO, () => negotiatedVideoCodec)) {
+        vlog('DAVE: passthrough sender transform attached to video sender')
+      } else {
+        vwarn('DAVE: video sender transform unavailable, queued for retry')
+      }
     }
 
     // In v=2 the client drives renegotiation (not `{ event: 'negotiate' }`)
@@ -2424,11 +2603,7 @@ async function reacquireMicrophone(): Promise<void> {
     const denoiserType = effectiveDenoiserType(settings.denoiserType ?? 'default', settings.noiseSuppression)
     denoiserNode = await buildDenoiserNode(denoiserType, ctx, source)
     const preGainNode: AudioNode = denoiserNode ?? source
-    preGainNode.connect(localInputGain)
-
-    const destination = ctx.createMediaStreamDestination()
-    localInputGain.connect(destination)
-    const processedStream = destination.stream
+    const processedStream = buildProcessedMicStream(ctx, preGainNode, localInputGain)
     const processedTracks = processedStream.getAudioTracks()
 
     for (const track of processedTracks) {
@@ -2436,7 +2611,7 @@ async function reacquireMicrophone(): Promise<void> {
       sentTracks.push(track)
       // Attach DAVE passthrough transform to the new sender
       if (sfuDaveEnabled) {
-        attachPassthroughSenderTransform(sender, MediaType.AUDIO, () => Codec.OPUS)
+        ensurePassthroughSenderTransform(sender, MediaType.AUDIO, () => Codec.OPUS)
       }
     }
 
@@ -2483,18 +2658,14 @@ async function reacquireMicrophone(): Promise<void> {
       const denoiserType2 = effectiveDenoiserType(settings.denoiserType ?? 'default', settings.noiseSuppression)
       denoiserNode = await buildDenoiserNode(denoiserType2, ctx, source)
       const preGainNode2: AudioNode = denoiserNode ?? source
-      preGainNode2.connect(localInputGain)
-
-      const destination = ctx.createMediaStreamDestination()
-      localInputGain.connect(destination)
-      const processedStream = destination.stream
+      const processedStream = buildProcessedMicStream(ctx, preGainNode2, localInputGain)
       const processedTracks = processedStream.getAudioTracks()
 
       for (const track of processedTracks) {
         const sender = peerConnection.addTrack(track, processedStream)
         sentTracks.push(track)
         if (sfuDaveEnabled) {
-          attachPassthroughSenderTransform(sender, MediaType.AUDIO, () => Codec.OPUS)
+          ensurePassthroughSenderTransform(sender, MediaType.AUDIO, () => Codec.OPUS)
         }
       }
 

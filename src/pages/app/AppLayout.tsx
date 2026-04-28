@@ -27,6 +27,7 @@ import i18n from '@/i18n'
 import { setupTokenRefreshScheduler } from '@/lib/tokenRefresh'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { compareSnowflakes } from '@/lib/snowflake'
+import { voiceSettingsFromDevices } from '@/lib/voiceSettings'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 
@@ -235,17 +236,9 @@ export default function AppLayout() {
           void i18n.changeLanguage(savedLanguage)
         }
         // Restore voice settings
-        if (settingsRes?.data?.settings?.devices) {
-          const d = settingsRes.data.settings.devices
-          useVoiceStore.getState().setSettings({
-            audioInputDevice: d.audio_input_device ?? '',
-            audioOutputDevice: d.audio_output_device ?? '',
-            audioInputLevel: d.audio_input_level || 100,
-            audioOutputLevel: d.audio_output_level || 100,
-            autoGainControl: d.auto_gain_control ?? true,
-            echoCancellation: d.echo_cancellation ?? true,
-            noiseSuppression: d.noise_suppression ?? true,
-          })
+        const voiceSettings = voiceSettingsFromDevices(settingsRes?.data?.settings?.devices)
+        if (voiceSettings) {
+          useVoiceStore.getState().setSettings(voiceSettings)
         }
       })
       .catch(() => {

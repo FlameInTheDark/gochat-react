@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { axiosInstance } from '@/api/client'
-import type { ModelUserSettingsData, ModelUserSettingsGuildFolders, ModelUserSettingsGuilds } from '@/client'
+import type { ModelUserSettingsData, ModelUserSettingsGuildFolders, ModelUserSettingsGuilds, UserUserSettingsResponse } from '@/client'
 import { queryClient } from '@/lib/queryClient'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 
@@ -451,11 +451,13 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   saveToSettings: async () => {
     try {
       const { folders, itemOrder, selectedChannels } = get()
-      const existing = queryClient.getQueryData<ModelUserSettingsData>(['user-settings']) ?? {}
       // Use axiosInstance directly — generated client's serializeDataIfNeeded()
       // calls JSON.stringify() which cannot handle BigInt Snowflake IDs.
-      const updated = buildFolderPayload(existing, folders, itemOrder, selectedChannels)
       const baseUrl = getApiBaseUrl()
+      const existing = queryClient.getQueryData<ModelUserSettingsData>(['user-settings'])
+        ?? (await axiosInstance.get<UserUserSettingsResponse>(`${baseUrl}/user/me/settings`)).data.settings
+        ?? {}
+      const updated = buildFolderPayload(existing, folders, itemOrder, selectedChannels)
       await axiosInstance.post(`${baseUrl}/user/me/settings`, updated)
       queryClient.setQueryData(['user-settings'], updated)
     } catch {

@@ -1,13 +1,14 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, type ChangeEvent, type MouseEvent } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { Hash, Spool, Volume2, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, Search, X } from 'lucide-react'
+import { Hash, Spool, Volume2, VolumeX, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, Search, X, Monitor, Loader2, RotateCcw } from 'lucide-react'
 import axios from 'axios'
 import { Separator } from '@/components/ui/separator'
 import { guildApi, messageApi, rolesApi, searchApi } from '@/api/client'
 import { SearchMessageSearchRequestHasEnum } from '@/client'
 import { useVoiceStore } from '@/stores/voiceStore'
+import { useStreamStore, type StreamConnectionState } from '@/stores/streamStore'
 import { ChannelType } from '@/types'
 import type { DtoChannel, DtoGuild, DtoMessage } from '@/types'
 import type { ServerOutletContext } from './ServerLayout'
@@ -23,6 +24,19 @@ import ThreadListPanel from '@/components/chat/ThreadListPanel'
 import ThreadPanel from '@/components/chat/ThreadPanel'
 import { activateChannel, deactivateChannel } from '@/services/wsService'
 import { joinVoice, leaveVoice, setMuted, setDeafened, enableCamera, disableCamera } from '@/services/voiceService'
+import {
+  STREAM_DEBUG_OVERLAY_EVENT,
+  getStreamDebugStats,
+  isStreamDebugOverlayEnabled,
+  reconnectStream,
+  startScreenShare,
+  stopWatchingStream,
+  stopScreenShare,
+  syncChannelStreams,
+  watchStream,
+  type StreamDebugStats,
+} from '@/services/streamService'
+import type { StreamAudioMode, StreamQualitySettings, StreamSourceType, VoiceStreamSummary } from '@/services/streamApi'
 import { toast } from 'sonner'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -42,6 +56,7 @@ import { createJumpRequest, type JumpBehavior, type JumpRequest } from '@/lib/me
 import { isAutoThreadFollowup, isThreadChannel, sortThreadsByActivity } from '@/lib/threads'
 import { buildMessagePreviewText } from '@/lib/messagePreview'
 import { useClientMode } from '@/hooks/useClientMode'
+import StartStreamDialog from '@/components/voice/StartStreamDialog'
 
 type RightPanelMode = 'members' | 'none' | 'threads' | 'thread' | 'thread-create'
 type NonThreadRightPanelMode = Exclude<RightPanelMode, 'threads' | 'thread' | 'thread-create'>
@@ -63,6 +78,7 @@ interface MissingThreadLookupResult {
 }
 
 const EMPTY_MESSAGES: DtoMessage[] = []
+const EMPTY_STREAMS: readonly import('@/services/streamApi').VoiceStreamSummary[] = []
 const THREAD_PREVIEW_FETCH_LIMIT = 20
 const RIGHT_PANEL_WIDTH_STORAGE_KEY = 'channel-page.right-panel-widths'
 const RIGHT_PANEL_WIDTH_KEYS: RightPanelWidthKey[] = [
@@ -293,16 +309,28 @@ export default function ChannelPage() {
   )
 
   const voiceChannelId = useVoiceStore((s) => s.channelId)
+  const voiceConnectionState = useVoiceStore((s) => s.connectionState)
   const voicePeers = useVoiceStore((s) => s.peers)
   const localMuted = useVoiceStore((s) => s.localMuted)
   const localDeafened = useVoiceStore((s) => s.localDeafened)
   const localSpeaking = useVoiceStore((s) => s.localSpeaking)
   const localCameraEnabled = useVoiceStore((s) => s.localCameraEnabled)
   const localVideoStream = useVoiceStore((s) => s.localVideoStream)
+  const publishing = useStreamStore((s) => s.publishing)
+  const channelStreams = useStreamStore((s) => channelId ? (s.channelStreams[channelId] ?? EMPTY_STREAMS) : EMPTY_STREAMS)
+  const watchedStreams = useStreamStore((s) => s.watched)
+  const isStreamingHere = publishing?.channelId === channelId
 
   const [spotlightId, setSpotlightId] = useState<string | null>(null)
+  const [streamDialogOpen, setStreamDialogOpen] = useState(false)
+  const [isStartingStream, setIsStartingStream] = useState(false)
   // Reset spotlight when navigating away from a channel
   useEffect(() => { setSpotlightId(null) }, [channelId])
+  useEffect(() => {
+    if (!isVoice || voiceChannelId !== channelId) {
+      setStreamDialogOpen(false)
+    }
+  }, [channelId, isVoice, voiceChannelId])
 
   const currentUser = useAuthStore((s) => s.user)
   const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find(
@@ -343,6 +371,31 @@ export default function ChannelPage() {
   const canCreateThreads = canAccessParentChannel && (isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.CREATE_THREADS))
   const canSendInThreads = canAccessParentChannel && (isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.SEND_MESSAGES_IN_THREADS))
   const canManageThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_THREADS)
+
+  async function handleStartChannelStream(
+    sourceType: StreamSourceType,
+    audioMode: StreamAudioMode,
+    quality: StreamQualitySettings,
+  ) {
+    if (!serverId || !channelId) return
+    setIsStartingStream(true)
+    try {
+      await startScreenShare(serverId, channelId, sourceType, audioMode, quality)
+      setStreamDialogOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('common.error'))
+    } finally {
+      setIsStartingStream(false)
+    }
+  }
+
+  async function handleToggleChannelStream() {
+    if (isStreamingHere) {
+      await stopScreenShare()
+      return
+    }
+    setStreamDialogOpen(true)
+  }
 
   const { data: threadListData = [], isLoading: isThreadsLoading } = useQuery({
     queryKey: ['channel-threads', serverId, channelId],
@@ -639,6 +692,11 @@ export default function ChannelPage() {
       deactivateChannel(channelId)
     }
   }, [channelId, isVoice])
+
+  useEffect(() => {
+    if (!isVoice || !serverId || !channelId || voiceChannelId !== channelId || voiceConnectionState !== 'connected') return
+    void syncChannelStreams(serverId, channelId)
+  }, [channelId, isVoice, serverId, voiceChannelId, voiceConnectionState])
 
   // Clear search when navigating to a different channel
   useEffect(() => {
@@ -1129,36 +1187,148 @@ export default function ChannelPage() {
     const isConnected = voiceChannelId === channelId
     const currentUserId = String(currentUser?.id ?? '')
     const peerEntries = Object.entries(voicePeers).filter(([userId]) => userId !== currentUserId)
+    const localDisplayName = currentUser?.name ?? t('channel.you')
+    const streamTileId = (streamId: string) => `stream:${streamId}`
+    const memberByUserId = (userId: string) => members?.find((m) => String(m.user?.id) === userId)
+    const displayNameForUser = (userId: string) => {
+      if (userId === currentUserId) return localDisplayName
+      const member = memberByUserId(userId)
+      return member?.username ?? member?.user?.name ?? `User ${userId.slice(0, 6)}`
+    }
+    const avatarForUser = (userId: string) => {
+      if (userId === currentUserId) return currentUser?.avatar?.url
+      return memberByUserId(userId)?.user?.avatar?.url
+    }
 
-    // Normalised list of all voice participants
-    const allParticipants = [
+    async function handleWatchParticipantStream(participantId: string, streamId: string) {
+      if (!serverId || !channelId) return
+      const stream = channelStreams.find((item) => item.id === streamId)
+      if (!stream) return
+      try {
+        await watchStream(serverId, channelId, stream)
+        setSpotlightId(participantId)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to watch stream')
+      }
+    }
+
+    function handleStopParticipantStream(participantId: string, streamId: string) {
+      stopWatchingStream(streamId)
+      if (spotlightId === participantId) {
+        setSpotlightId(null)
+      }
+    }
+
+    async function handleReconnectParticipantStream(participantId: string, streamId: string) {
+      try {
+        await reconnectStream(streamId)
+        setSpotlightId(participantId)
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to reconnect stream')
+      }
+    }
+
+    // Normalised list of all voice participants. Camera/avatar tiles stay separate
+    // from stream tiles so a screen share never replaces the user's webcam feed.
+    const userParticipants: VoiceParticipantItem[] = [
       {
-        id: 'local',
-        label: currentUser?.name ?? '',
+        id: 'user:local',
+        label: localDisplayName,
         avatarUrl: currentUser?.avatar?.url,
         speaking: localSpeaking,
         muted: localMuted,
         deafened: localDeafened,
         videoStream: localCameraEnabled ? localVideoStream : null,
         isLocal: true as const,
+        streamSummary: null,
+        streamConnectionState: null,
+        streamError: null,
+        isWatchingStream: false,
+        videoMuted: true,
+        videoVolume: 1,
       },
       ...peerEntries.map(([userId, peer]) => {
-        const member = members?.find((m) => String(m.user?.id) === userId)
         return {
-          id: userId,
-          label: member?.username ?? member?.user?.name ?? `User ${userId.slice(0, 6)}`,
-          avatarUrl: member?.user?.avatar?.url,
+          id: `user:${userId}`,
+          label: displayNameForUser(userId),
+          avatarUrl: avatarForUser(userId),
           speaking: peer.speaking,
           muted: peer.muted,
           deafened: peer.deafened,
           videoStream: peer.videoStream,
           isLocal: false as const,
+          streamSummary: null,
+          streamConnectionState: null,
+          streamError: null,
+          isWatchingStream: false,
+          videoMuted: true,
+          videoVolume: 1,
         }
       }),
     ]
+    const hasLocalPublishedStreamTile = !!publishing?.streamId && channelStreams.some((stream) => stream.id === publishing.streamId)
+    const localPublishingStreamSummary: ParticipantStreamSummary | null =
+      publishing?.channelId === channelId && publishing.streamId
+        ? {
+            id: publishing.streamId,
+            ownerUserId: publishing.ownerUserId,
+            audioMode: publishing.audioMode,
+          }
+        : null
+    const channelStreamTiles: VoiceParticipantItem[] = channelStreams.map((stream) => {
+      const watchedStream = watchedStreams[stream.id] ?? null
+      const isOwnerLocal = stream.ownerUserId === currentUserId
+      const localPreviewStream = isOwnerLocal && publishing?.streamId === stream.id ? publishing.previewStream : null
+      return {
+        id: streamTileId(stream.id),
+        label: `${displayNameForUser(stream.ownerUserId)} · ${t('streams.liveBadge')}`,
+        avatarUrl: avatarForUser(stream.ownerUserId),
+        speaking: false,
+        muted: isOwnerLocal ? localMuted : voicePeers[stream.ownerUserId]?.muted ?? false,
+        deafened: isOwnerLocal ? localDeafened : voicePeers[stream.ownerUserId]?.deafened ?? false,
+        videoStream: localPreviewStream ?? watchedStream?.mediaStream ?? null,
+        isLocal: isOwnerLocal,
+        mirrorVideo: false,
+        streamSummary: stream,
+        streamConnectionState: watchedStream?.connectionState ?? (isOwnerLocal && publishing?.streamId === stream.id ? publishing.connectionState : null),
+        streamError: watchedStream?.error ?? (isOwnerLocal && publishing?.streamId === stream.id ? publishing.error : null),
+        isWatchingStream: !!watchedStream,
+        videoMuted: watchedStream ? watchedStream.muted : true,
+        videoVolume: watchedStream ? watchedStream.volume / 100 : 1,
+        isStreamTile: true,
+      }
+    })
+    const localStreamPreview: VoiceParticipantItem | null =
+      publishing?.channelId === channelId && publishing.previewStream && localPublishingStreamSummary && !hasLocalPublishedStreamTile
+        ? {
+            id: streamTileId(publishing.streamId),
+            label: `${localDisplayName} · ${t('streams.liveBadge')}`,
+            avatarUrl: currentUser?.avatar?.url,
+            speaking: false,
+            muted: localMuted,
+            deafened: localDeafened,
+            videoStream: publishing.previewStream,
+            isLocal: true,
+            mirrorVideo: false,
+            streamSummary: localPublishingStreamSummary,
+            streamConnectionState: publishing.connectionState,
+            streamError: publishing.error,
+            isWatchingStream: false,
+            videoMuted: true,
+            videoVolume: 1,
+            isStreamTile: true,
+          }
+        : null
+    const streamParticipants = localStreamPreview
+      ? [...channelStreamTiles, localStreamPreview]
+      : channelStreamTiles
+    const visibleParticipants = [...userParticipants, ...streamParticipants]
+    const canControlStreamTile = (participant: VoiceParticipantItem) =>
+      !!participant.isStreamTile && !!participant.streamSummary && participant.streamSummary.ownerUserId !== currentUserId
 
-    const spotlightParticipant = spotlightId ? allParticipants.find((p) => p.id === spotlightId) ?? null : null
-    const stripParticipants = spotlightId ? allParticipants.filter((p) => p.id !== spotlightId) : []
+    const spotlightParticipant = spotlightId ? visibleParticipants.find((p) => p.id === spotlightId) ?? null : null
+    const stripParticipants = spotlightId ? visibleParticipants.filter((p) => p.id !== spotlightId) : []
+    const streamButtonDisabled = isStartingStream || (!isStreamingHere && voiceConnectionState !== 'connected')
 
     return (
       <div className="flex flex-col flex-1 min-h-0">
@@ -1196,14 +1366,39 @@ export default function ChannelPage() {
               </div>
               {/* Bottom strip */}
               <div className="shrink-0 flex gap-3 px-4 pb-3 overflow-x-auto border-t border-sidebar-border pt-3">
-                {stripParticipants.map((p) => (
-                  <VoiceParticipant
-                    key={p.id}
-                    {...p}
-                    size="compact"
-                    onClick={p.videoStream ? () => setSpotlightId(p.id) : undefined}
-                  />
-                ))}
+                {stripParticipants.map((p) => {
+                  const streamId = p.streamSummary?.id ?? ''
+                  const canControlStream = !!streamId && canControlStreamTile(p)
+                  return (
+                    <VoiceParticipant
+                      key={p.id}
+                      {...p}
+                      size="compact"
+                      onClick={
+                        canControlStream && !p.isWatchingStream
+                          ? () => { void handleWatchParticipantStream(p.id, streamId) }
+                          : p.videoStream
+                            ? () => setSpotlightId(p.id)
+                            : undefined
+                      }
+                      onWatchStream={
+                        canControlStream && !p.isWatchingStream
+                          ? () => { void handleWatchParticipantStream(p.id, streamId) }
+                          : undefined
+                      }
+                      onStopWatching={
+                        canControlStream && p.isWatchingStream
+                          ? () => handleStopParticipantStream(p.id, streamId)
+                          : undefined
+                      }
+                      onReconnectStream={
+                        canControlStream && p.streamConnectionState === 'error'
+                          ? () => { void handleReconnectParticipantStream(p.id, streamId) }
+                          : undefined
+                      }
+                    />
+                  )
+                })}
               </div>
             </div>
           ) : (
@@ -1215,13 +1410,38 @@ export default function ChannelPage() {
                   : t('channel.connected_plural', { count: peerEntries.length + 1 })}
               </p>
               <div className="flex flex-wrap justify-center gap-4 w-full">
-                {allParticipants.map((p) => (
-                  <VoiceParticipant
-                    key={p.id}
-                    {...p}
-                    onClick={p.videoStream ? () => setSpotlightId(p.id) : undefined}
-                  />
-                ))}
+                {visibleParticipants.map((p) => {
+                  const streamId = p.streamSummary?.id ?? ''
+                  const canControlStream = !!streamId && canControlStreamTile(p)
+                  return (
+                    <VoiceParticipant
+                      key={p.id}
+                      {...p}
+                      onClick={
+                        canControlStream && !p.isWatchingStream
+                          ? () => { void handleWatchParticipantStream(p.id, streamId) }
+                          : p.videoStream
+                            ? () => setSpotlightId(p.id)
+                            : undefined
+                      }
+                      onWatchStream={
+                        canControlStream && !p.isWatchingStream
+                          ? () => { void handleWatchParticipantStream(p.id, streamId) }
+                          : undefined
+                      }
+                      onStopWatching={
+                        canControlStream && p.isWatchingStream
+                          ? () => handleStopParticipantStream(p.id, streamId)
+                          : undefined
+                      }
+                      onReconnectStream={
+                        canControlStream && p.streamConnectionState === 'error'
+                          ? () => { void handleReconnectParticipantStream(p.id, streamId) }
+                          : undefined
+                      }
+                    />
+                  )
+                })}
               </div>
             </div>
           )
@@ -1280,6 +1500,19 @@ export default function ChannelPage() {
                 {localCameraEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
               </button>
               <button
+                onClick={() => { void handleToggleChannelStream() }}
+                disabled={streamButtonDisabled}
+                title={isStreamingHere ? t('streams.stop') : t('streams.start')}
+                className={cn(
+                  'flex items-center justify-center w-10 h-10 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                  isStreamingHere
+                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                    : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {isStartingStream ? <Loader2 className="w-5 h-5 animate-spin" /> : <Monitor className="w-5 h-5" />}
+              </button>
+              <button
                 onClick={leaveVoice}
                 title={t('voicePanel.disconnect')}
                 className="flex items-center justify-center w-10 h-10 rounded-full bg-muted hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
@@ -1296,6 +1529,12 @@ export default function ChannelPage() {
             </button>
           )}
         </div>
+        <StartStreamDialog
+          open={streamDialogOpen}
+          isStarting={isStartingStream}
+          onOpenChange={setStreamDialogOpen}
+          onStart={handleStartChannelStream}
+        />
       </div>
     )
   }
@@ -1612,12 +1851,18 @@ export default function ChannelPage() {
 function VideoFeed({
   stream,
   mirror = false,
+  muted = true,
+  volume = 1,
+  fit = 'cover',
   onAspect,
   onFrozen,
   onActive,
 }: {
   stream: MediaStream
   mirror?: boolean
+  muted?: boolean
+  volume?: number
+  fit?: 'cover' | 'contain'
   onAspect?: (ratio: number) => void
   onFrozen?: () => void
   onActive?: () => void
@@ -1633,13 +1878,20 @@ function VideoFeed({
   }, [stream])
 
   useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    el.muted = muted
+    el.volume = Math.max(0, Math.min(1, volume))
+  }, [muted, volume])
+
+  useEffect(() => {
     if (!onFrozen && !onActive) return
     const el = videoRef.current
     if (!el) return
 
     let lastFrames = -1
     let staleCount = 0
-    const STALE_LIMIT = 3
+    const STALE_LIMIT = 6
 
     const check = () => {
       const q = el.getVideoPlaybackQuality?.()
@@ -1664,17 +1916,98 @@ function VideoFeed({
       ref={videoRef}
       autoPlay
       playsInline
-      muted
       onLoadedMetadata={(e) => {
         const { videoWidth: w, videoHeight: h } = e.currentTarget
         if (w && h) onAspect?.(w / h)
       }}
-      className={cn('w-full h-full object-cover rounded-lg', mirror && '[transform:scaleX(-1)]')}
+      className={cn(
+        'w-full h-full rounded-lg',
+        fit === 'contain' ? 'object-contain' : 'object-cover',
+        mirror && '[transform:scaleX(-1)]',
+      )}
     />
   )
 }
 
+function formatDebugBitrate(value: number | null | undefined): string {
+  if (value == null) return '--'
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)} Mbps`
+  if (value >= 1_000) return `${Math.round(value / 1_000)} kbps`
+  return `${Math.round(value)} bps`
+}
+
+function formatDebugNumber(value: number | null | undefined, suffix = ''): string {
+  if (value == null) return '--'
+  return `${Math.round(value)}${suffix}`
+}
+
+function formatDebugCodec(value: string | null | undefined): string {
+  return value ?? '--'
+}
+
+function StreamDebugOverlay({ stats }: { stats: StreamDebugStats | null }) {
+  const video = stats?.video
+  const audio = stats?.audio
+  const resolution = video?.frameWidth && video.frameHeight
+    ? `${Math.round(video.frameWidth)}x${Math.round(video.frameHeight)}`
+    : '--'
+
+  return (
+    <div className="pointer-events-none absolute left-2 top-10 z-10 min-w-[190px] max-w-[260px] rounded-lg border border-cyan-300/25 bg-black/75 px-2.5 py-2 font-mono text-[10px] leading-relaxed text-cyan-50 shadow-xl backdrop-blur">
+      <div className="mb-1 flex items-center justify-between gap-3 border-b border-cyan-200/20 pb-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-cyan-200">
+        <span>Stream Stats</span>
+        <span>{stats?.connectionState ?? 'waiting'}</span>
+      </div>
+      <div className="grid grid-cols-[auto_1fr] gap-x-2">
+        <span className="text-cyan-200/75">Video</span>
+        <span>{formatDebugCodec(video?.codec)}</span>
+        <span className="text-cyan-200/75">Size</span>
+        <span>{resolution}</span>
+        <span className="text-cyan-200/75">FPS</span>
+        <span>{formatDebugNumber(video?.framesPerSecond)}</span>
+        <span className="text-cyan-200/75">V Bitrate</span>
+        <span>{formatDebugBitrate(video?.bitrateBps)}</span>
+        <span className="text-cyan-200/75">Frames</span>
+        <span>{formatDebugNumber(video?.framesDecoded)} decoded / {formatDebugNumber(video?.framesDropped)} dropped</span>
+        <span className="text-cyan-200/75">Audio</span>
+        <span>{formatDebugCodec(audio?.codec)}</span>
+        <span className="text-cyan-200/75">A Bitrate</span>
+        <span>{formatDebugBitrate(audio?.bitrateBps)}</span>
+        <span className="text-cyan-200/75">Loss</span>
+        <span>v {formatDebugNumber(video?.packetsLost)} / a {formatDebugNumber(audio?.packetsLost)}</span>
+        <span className="text-cyan-200/75">Jitter</span>
+        <span>v {formatDebugNumber(video?.jitterMs, 'ms')} / a {formatDebugNumber(audio?.jitterMs, 'ms')}</span>
+        <span className="text-cyan-200/75">RTT</span>
+        <span>{formatDebugNumber(stats?.currentRoundTripTimeMs, 'ms')}</span>
+        <span className="text-cyan-200/75">Avail In</span>
+        <span>{formatDebugBitrate(stats?.availableIncomingBitrateBps)}</span>
+      </div>
+    </div>
+  )
+}
+
 type ParticipantSize = 'normal' | 'compact' | 'spotlight'
+
+type ParticipantStreamSummary = Pick<VoiceStreamSummary, 'id' | 'ownerUserId' | 'audioMode'>
+
+interface VoiceParticipantItem {
+  id: string
+  label: string
+  avatarUrl?: string
+  speaking: boolean
+  muted: boolean
+  deafened?: boolean
+  videoStream?: MediaStream | null
+  isLocal?: boolean
+  mirrorVideo?: boolean
+  streamSummary?: ParticipantStreamSummary | null
+  streamConnectionState?: StreamConnectionState | null
+  streamError?: string | null
+  isWatchingStream?: boolean
+  videoMuted?: boolean
+  videoVolume?: number
+  isStreamTile?: boolean
+}
 
 function VoiceParticipant({
   label,
@@ -1684,8 +2017,19 @@ function VoiceParticipant({
   deafened,
   videoStream,
   isLocal,
+  mirrorVideo,
+  streamSummary,
+  streamConnectionState,
+  streamError,
+  isWatchingStream,
+  isStreamTile,
+  videoMuted,
+  videoVolume,
   size = 'normal',
   onClick,
+  onWatchStream,
+  onStopWatching,
+  onReconnectStream,
 }: {
   label: string
   avatarUrl?: string
@@ -1694,24 +2038,126 @@ function VoiceParticipant({
   deafened?: boolean
   videoStream?: MediaStream | null
   isLocal?: boolean
+  mirrorVideo?: boolean
+  streamSummary?: ParticipantStreamSummary | null
+  streamConnectionState?: StreamConnectionState | null
+  streamError?: string | null
+  isWatchingStream?: boolean
+  isStreamTile?: boolean
+  videoMuted?: boolean
+  videoVolume?: number
   size?: ParticipantSize
   onClick?: () => void
+  onWatchStream?: () => void
+  onStopWatching?: () => void
+  onReconnectStream?: () => void
 }) {
+  const { t } = useTranslation()
   const initials = label.charAt(0).toUpperCase()
   const streamId = videoStream?.id ?? null
-  const [frozenStreamId, setFrozenStreamId] = useState<string | null>(null)
-  const [videoAspectState, setVideoAspectState] = useState<{ streamId: string | null; ratio: number | null }>({
-    streamId: null,
-    ratio: null,
-  })
-  const videoAspect = videoAspectState.streamId === streamId ? videoAspectState.ratio : null
-  const handleFrozen = useCallback(() => setFrozenStreamId(streamId), [streamId])
-  const handleActive = useCallback(() => setFrozenStreamId(null), [])
-  const handleAspect = useCallback(
-    (ratio: number) => setVideoAspectState({ streamId, ratio }),
-    [streamId],
-  )
-  const hasVideo = !!videoStream && (isLocal || frozenStreamId !== streamId)
+  const activeStreamId = streamSummary?.id ?? null
+  const streamControlsEnabled = !!isStreamTile
+  const streamHasAudio = streamControlsEnabled && !!activeStreamId && isWatchingStream && streamSummary?.audioMode !== 'none'
+  const currentVolume = Math.max(0, Math.min(100, Math.round((videoVolume ?? 1) * 100)))
+  const streamAudioMuted = !!videoMuted
+  const [streamAudioMenu, setStreamAudioMenu] = useState<{ x: number; y: number } | null>(null)
+  const [streamDebugEnabled, setStreamDebugEnabled] = useState(() => activeStreamId ? isStreamDebugOverlayEnabled(activeStreamId) : false)
+  const [streamDebugStats, setStreamDebugStats] = useState<StreamDebugStats | null>(null)
+  const [videoStalled, setVideoStalled] = useState(false)
+  const handleFrozen = useCallback(() => setVideoStalled(true), [])
+  const handleActive = useCallback(() => setVideoStalled(false), [])
+  const hasVideo = !!videoStream
+  const shouldMirrorVideo = mirrorVideo ?? isLocal
+  const hasActiveStream = !!streamSummary
+  const isStreamConnecting = streamControlsEnabled && hasActiveStream && isWatchingStream && !hasVideo && (streamConnectionState === 'connecting' || streamConnectionState === 'reconnecting')
+  const isStreamErrored = streamControlsEnabled && hasActiveStream && isWatchingStream && !hasVideo && streamConnectionState === 'error'
+
+  useEffect(() => {
+    setVideoStalled(false)
+  }, [streamId, activeStreamId])
+
+  useEffect(() => {
+    setStreamDebugEnabled(activeStreamId ? isStreamDebugOverlayEnabled(activeStreamId) : false)
+    setStreamDebugStats(null)
+  }, [activeStreamId])
+
+  useEffect(() => {
+    const handleDebugOverlayChange = () => {
+      setStreamDebugEnabled(activeStreamId ? isStreamDebugOverlayEnabled(activeStreamId) : false)
+    }
+
+    window.addEventListener(STREAM_DEBUG_OVERLAY_EVENT, handleDebugOverlayChange)
+    return () => window.removeEventListener(STREAM_DEBUG_OVERLAY_EVENT, handleDebugOverlayChange)
+  }, [activeStreamId])
+
+  useEffect(() => {
+    if (!streamControlsEnabled || !streamDebugEnabled || !activeStreamId || !isWatchingStream || !hasVideo) {
+      setStreamDebugStats(null)
+      return
+    }
+
+    let cancelled = false
+    const refresh = () => {
+      void getStreamDebugStats(activeStreamId)
+        .then((stats) => {
+          if (!cancelled) setStreamDebugStats(stats)
+        })
+        .catch(() => {
+          if (!cancelled) setStreamDebugStats(null)
+        })
+    }
+
+    refresh()
+    const timer = window.setInterval(refresh, 1_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [activeStreamId, hasVideo, isWatchingStream, streamControlsEnabled, streamDebugEnabled])
+
+  useEffect(() => {
+    if (!streamAudioMenu) return
+
+    const closeMenu = () => setStreamAudioMenu(null)
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu()
+    }
+
+    window.addEventListener('click', closeMenu)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('click', closeMenu)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [streamAudioMenu])
+
+  function handleStreamContextMenu(event: MouseEvent<HTMLDivElement>) {
+    if (!streamControlsEnabled || !activeStreamId || !isWatchingStream) return
+    event.preventDefault()
+    event.stopPropagation()
+
+    const menuWidth = 188
+    const menuHeight = streamHasAudio ? 112 : 52
+    const x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8))
+    const y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))
+    setStreamAudioMenu({ x, y })
+  }
+
+  function handleToggleWatchedStreamAudio(event?: MouseEvent<HTMLButtonElement>) {
+    event?.stopPropagation()
+    if (!activeStreamId || !streamHasAudio) return
+    useStreamStore.getState().setWatchedMuted(activeStreamId, !streamAudioMuted)
+  }
+
+  function handleWatchedStreamVolumeChange(event: ChangeEvent<HTMLInputElement>) {
+    event.stopPropagation()
+    if (!activeStreamId || !streamHasAudio) return
+    const nextVolume = Number(event.currentTarget.value)
+    useStreamStore.getState().setWatchedVolume(activeStreamId, nextVolume)
+    if (nextVolume > 0 && streamAudioMuted) {
+      useStreamStore.getState().setWatchedMuted(activeStreamId, false)
+    }
+  }
 
   const avatarCls = size === 'spotlight' ? 'w-24 h-24' : size === 'compact' ? 'w-12 h-12' : 'w-20 h-20'
   const fallbackCls = size === 'spotlight' ? 'text-3xl' : size === 'compact' ? 'text-base' : 'text-xl'
@@ -1719,17 +2165,10 @@ function VoiceParticipant({
   const badgeIconCls = size === 'spotlight' ? 'w-4 h-4' : 'w-3 h-3'
   const labelCls = size === 'compact' ? 'text-[10px] max-w-[80px]' : 'text-xs max-w-[100px]'
 
-  // Spotlight: full height, width derived from the camera's native aspect ratio.
-  // This means the video is never cropped and never letterboxed — it's exactly
-  // as wide as the AR dictates at the available height.
-  const spotlightContainerStyle = size === 'spotlight' && hasVideo
-    ? { height: '100%', aspectRatio: videoAspect ? String(videoAspect) : '16 / 9' }
-    : undefined
-
   return (
     <div className={cn(
       'flex flex-col items-center gap-2',
-      size === 'spotlight' && hasVideo && 'h-full',
+      size === 'spotlight' && hasVideo && 'h-full w-full min-w-0',
     )}>
       {/*
         Outer wrapper has NO overflow-hidden — speaking ring and mute/deafen badges
@@ -1738,25 +2177,110 @@ function VoiceParticipant({
       <div
         className={cn(
           'relative transition-all duration-150',
+          size === 'spotlight' && hasVideo && 'h-full w-full min-w-0',
           hasVideo && onClick && 'cursor-pointer',
         )}
-        style={spotlightContainerStyle}
         onClick={onClick}
       >
         {hasVideo ? (
           /* Video: overflow-hidden is scoped to the video container, not the wrapper */
           <div className={cn(
             'rounded-lg bg-zinc-900 overflow-hidden relative',
-            size === 'spotlight' ? 'w-full h-full' : size === 'compact' ? 'w-36 h-24' : 'w-56 h-40',
-          )}>
+            size === 'spotlight' ? 'w-full h-full max-w-full max-h-full' : size === 'compact' ? 'w-36 h-24' : 'w-56 h-40',
+          )}
+          onContextMenu={handleStreamContextMenu}
+          >
             <VideoFeed
               key={videoStream!.id}
               stream={videoStream!}
-              mirror={isLocal}
-              onAspect={size === 'spotlight' ? handleAspect : undefined}
+              mirror={shouldMirrorVideo}
+              muted={videoMuted}
+              volume={videoVolume}
+              fit={size === 'spotlight' ? 'contain' : 'cover'}
               onFrozen={isLocal ? undefined : handleFrozen}
               onActive={isLocal ? undefined : handleActive}
             />
+            {hasActiveStream && (
+              <div className="absolute left-2 top-2 rounded-full bg-red-500/90 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white shadow-sm">
+                {t('streams.liveBadge')}
+              </div>
+            )}
+            {streamControlsEnabled && streamDebugEnabled && activeStreamId && isWatchingStream && (
+              <StreamDebugOverlay stats={streamDebugStats} />
+            )}
+            {streamControlsEnabled && videoStalled && hasActiveStream && isWatchingStream && (
+              <div className="absolute bottom-9 left-2 z-10 inline-flex items-center gap-1.5 rounded-full border border-amber-300/30 bg-amber-950/75 px-2 py-1 text-[10px] font-medium text-amber-100 shadow-sm backdrop-blur">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                {t('streams.videoStalled')}
+              </div>
+            )}
+            {hasActiveStream && !isWatchingStream && onWatchStream && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onWatchStream()
+                }}
+                className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-background/90 px-2 py-1 text-[10px] font-medium text-foreground shadow-sm transition-colors hover:bg-background"
+              >
+                <Monitor className="h-3 w-3" />
+                {t('streams.watch')}
+              </button>
+            )}
+            {hasActiveStream && isWatchingStream && onStopWatching && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onStopWatching()
+                }}
+                className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-background/90 px-2 py-1 text-[10px] font-medium text-foreground shadow-sm transition-colors hover:bg-background"
+              >
+                <X className="h-3 w-3" />
+                {t('streams.stopWatching')}
+              </button>
+            )}
+            {streamAudioMenu && (
+              <div
+                className="fixed z-50 w-[188px] rounded-lg border border-border/70 bg-popover/95 p-2 text-popover-foreground shadow-xl backdrop-blur"
+                style={{ left: streamAudioMenu.x, top: streamAudioMenu.y }}
+                onClick={(event) => event.stopPropagation()}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                {streamHasAudio ? (
+                  <div className="space-y-2">
+                    <button
+                      type="button"
+                      onClick={handleToggleWatchedStreamAudio}
+                      className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-xs font-medium transition-colors hover:bg-accent"
+                    >
+                      <span>{streamAudioMuted ? t('streams.unmuteAudio') : t('streams.muteAudio')}</span>
+                      {streamAudioMuted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                    </button>
+                    <label className="block px-2">
+                      <span className="mb-1 flex items-center justify-between text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                        <span>{t('streams.volume')}</span>
+                        <span>{currentVolume}%</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={currentVolume}
+                        onChange={handleWatchedStreamVolumeChange}
+                        className="h-1.5 w-full accent-primary"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
+                    <VolumeX className="h-3.5 w-3.5" />
+                    <span>{t('streams.noStreamAudio')}</span>
+                  </div>
+                )}
+              </div>
+            )}
             {/* Label + icon bar inside the video */}
             <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-black/50 flex items-center justify-between gap-1">
               <span className="text-xs text-white truncate">{label}</span>
@@ -1800,7 +2324,36 @@ function VoiceParticipant({
         )}
       </div>
       {!hasVideo && (
-        <span className={cn('text-muted-foreground truncate', labelCls)}>{label}</span>
+        <div className="flex flex-col items-center gap-1">
+          <span className={cn('text-muted-foreground truncate', labelCls)}>{label}</span>
+          {hasActiveStream && !isWatchingStream && onWatchStream && (
+            <button
+              type="button"
+              onClick={onWatchStream}
+              className="inline-flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2 py-1 text-[10px] font-medium text-red-400 transition-colors hover:bg-red-500/15"
+            >
+              <Monitor className="h-3 w-3" />
+              {t('streams.clickToWatch')}
+            </button>
+          )}
+          {isStreamConnecting && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/70 px-2 py-1 text-[10px] font-medium text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {t('streams.connecting')}
+            </span>
+          )}
+          {isStreamErrored && onReconnectStream && (
+            <button
+              type="button"
+              onClick={onReconnectStream}
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/70 px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-accent"
+              title={streamError ?? undefined}
+            >
+              <RotateCcw className="h-3 w-3" />
+              {t('streams.reconnect')}
+            </button>
+          )}
+        </div>
       )}
     </div>
   )

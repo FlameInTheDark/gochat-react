@@ -197,6 +197,9 @@ export interface Translation {
         inputVolume: string
         outputVolume: string
         defaultDevice: string
+        savedInputDeviceUnavailable: string
+        savedOutputDeviceUnavailable: string
+        savedVideoDeviceUnavailable: string
         audioProcessing: string
         echoCancellation: string
         echoCancellationDesc: string
@@ -537,6 +540,64 @@ export interface Translation {
         encryptionWaitingDetail: string
         privacyCode: string
         privacyCodeHint: string
+    }
+    streams: {
+        dialogTitle: string
+        dialogDescription: string
+        sourceLabel: string
+        sourceScreen: string
+        sourceScreenHint: string
+        sourceScreenDescription: string
+        sourceApplication: string
+        sourceApplicationHint: string
+        sourceApplicationDescription: string
+        audioLabel: string
+        shareAudio: string
+        audioNone: string
+        audioNoneDescription: string
+        audioDesktop: string
+        audioDesktopDescription: string
+        audioApplication: string
+        audioApplicationDescription: string
+        audioOff: string
+        soundOn: string
+        soundOff: string
+        turnSoundOn: string
+        turnSoundOff: string
+        muteAudio: string
+        unmuteAudio: string
+        volume: string
+        noStreamAudio: string
+        resolutionLabel: string
+        resolution720p: string
+        resolution720pDescription: string
+        resolution1080p: string
+        resolution1080pDescription: string
+        resolution1440p: string
+        resolution1440pDescription: string
+        resolution2160p: string
+        resolution2160pDescription: string
+        frameRateLabel: string
+        frameRate15: string
+        frameRate15Description: string
+        frameRate30: string
+        frameRate30Description: string
+        frameRate60: string
+        frameRate60Description: string
+        qualityHint: string
+        qualityBadge: string
+        browserCaptureHint: string
+        starting: string
+        start: string
+        stop: string
+        watch: string
+        clickToWatch: string
+        connecting: string
+        reconnect: string
+        videoStalled: string
+        stopWatching: string
+        liveBadge: string
+        liveCount: string
     }
     userProfile: {
         memberSince: string

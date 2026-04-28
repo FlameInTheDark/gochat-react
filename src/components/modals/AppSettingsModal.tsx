@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { X, Camera, LogOut, Trash2, AlertTriangle, RotateCcw, Globe, ChevronLeft, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -29,6 +29,8 @@ import { useClientMode } from '@/hooks/useClientMode'
 import ProfileCardBody, { userColor } from '@/components/layout/ProfileCardBody'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import SecuritySection from '@/components/settings/SecuritySection'
+import { devicesFromVoiceSettings, voiceSettingsFromDevices } from '@/lib/voiceSettings'
+import type { VoiceSettings } from '@/stores/voiceStore'
 
 type Section = 'account' | 'appearance' | 'voice' | 'language' | 'security' | 'danger'
 
@@ -82,13 +84,16 @@ function Toggle({ value, onToggle }: { value: boolean; onToggle: () => void }) {
   )
 }
 
+function hasDevice(devices: MediaDeviceInfo[], deviceId: string): boolean {
+  return devices.some((device) => device.deviceId === deviceId)
+}
+
 export default function AppSettingsModal() {
   const open = useUiStore((s) => s.appSettingsOpen)
   const close = useUiStore((s) => s.closeAppSettings)
   const user = useAuthStore((s) => s.user)
   const setUser = useAuthStore((s) => s.setUser)
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const { t } = useTranslation()
 
   const [section, setSection] = useState<Section>('account')
@@ -196,31 +201,29 @@ export default function AppSettingsModal() {
 
   // Init voice from loaded settings
   useEffect(() => {
-    if (settingsData?.devices) {
-      const d = settingsData.devices
-      setAudioInputDevice(d.audio_input_device ?? '')
-      setAudioOutputDevice(d.audio_output_device ?? '')
-      setInputLevel(d.audio_input_level || 100)
-      setOutputLevel(d.audio_output_level || 100)
-      setAutoGainControl(d.auto_gain_control ?? true)
-      setEchoCancellation(d.echo_cancellation ?? true)
-      setNoiseSuppression(d.noise_suppression ?? true)
+    if (!open) {
+      setVoiceDirty(false)
+      return
     }
-    if (settingsData?.devices) {
-      const d = settingsData.devices
-      if (d.video_device) setVideoInputDevice(d.video_device)
-      const dt = d.denoiser_type
-      if (dt === 'rnnoise' || dt === 'speex') setDenoiserType(dt)
-      else setDenoiserType('default')
-      // Fields not yet in ModelDevices schema — cast needed
-      const dx = d as Record<string, unknown>
-      if (dx.input_mode === 'push_to_talk') setInputMode('push_to_talk')
-      else setInputMode('voice_activity')
-      if (typeof dx.audio_input_threshold === 'number') setVoiceActivityThreshold(dx.audio_input_threshold || -60)
-      if (typeof dx.push_to_talk_key === 'string') setPushToTalkKey(dx.push_to_talk_key)
-    }
+    if (voiceDirty) return
+
+    const next = voiceSettingsFromDevices(settingsData?.devices)
+    if (!next) return
+
+    setAudioInputDevice(next.audioInputDevice ?? '')
+    setAudioOutputDevice(next.audioOutputDevice ?? '')
+    setInputLevel(next.audioInputLevel ?? 100)
+    setOutputLevel(next.audioOutputLevel ?? 100)
+    setAutoGainControl(next.autoGainControl ?? true)
+    setEchoCancellation(next.echoCancellation ?? true)
+    setNoiseSuppression(next.noiseSuppression ?? true)
+    setVideoInputDevice(next.videoInputDevice ?? '')
+    setDenoiserType(next.denoiserType ?? 'default')
+    setInputMode(next.inputMode ?? 'voice_activity')
+    setVoiceActivityThreshold(next.voiceActivityThreshold ?? -60)
+    setPushToTalkKey(next.pushToTalkKey ?? '')
     setVoiceDirty(false)
-  }, [settingsData])
+  }, [open, settingsData?.devices, voiceDirty])
 
   // Enumerate audio/video devices when switching to Voice section.
   // On mobile, device labels/IDs are empty until permission is granted — request
@@ -519,23 +522,7 @@ export default function AppSettingsModal() {
   async function handleSaveVoice() {
     setSavingVoice(true)
     try {
-      await patchSettings({
-        devices: {
-          audio_input_device: audioInputDevice || undefined,
-          audio_output_device: audioOutputDevice || undefined,
-          audio_input_level: inputLevel,
-          audio_output_level: outputLevel,
-          auto_gain_control: autoGainControl,
-          echo_cancellation: echoCancellation,
-          noise_suppression: noiseSuppression,
-          input_mode: inputMode,
-          audio_input_threshold: voiceActivityThreshold,
-          push_to_talk_key: pushToTalkKey,
-          video_device: videoInputDevice || undefined,
-          denoiser_type: denoiserType,
-        },
-      })
-      useVoiceStore.getState().setSettings({
+      const nextVoiceSettings: VoiceSettings = {
         audioInputDevice,
         audioOutputDevice,
         audioInputLevel: inputLevel,
@@ -548,7 +535,11 @@ export default function AppSettingsModal() {
         pushToTalkKey,
         videoInputDevice,
         denoiserType,
+      }
+      await patchSettings({
+        devices: devicesFromVoiceSettings(nextVoiceSettings),
       })
+      useVoiceStore.getState().setSettings(nextVoiceSettings)
       applyVoiceSettings()
       setVoiceDirty(false)
       toast.success(t('settings.voiceSaved'))
@@ -956,6 +947,9 @@ export default function AppSettingsModal() {
                       className={selectClass}
                     >
                       <option value="">{t('settings.defaultDevice')}</option>
+                      {audioInputDevice && !hasDevice(audioInputDevices, audioInputDevice) && (
+                        <option value={audioInputDevice}>{t('settings.savedInputDeviceUnavailable')}</option>
+                      )}
                       {audioInputDevices.map((d) => (
                         <option key={d.deviceId} value={d.deviceId}>
                           {d.label || `Microphone (${d.deviceId.slice(0, 8)}…)`}
@@ -989,6 +983,9 @@ export default function AppSettingsModal() {
                       className={selectClass}
                     >
                       <option value="">{t('settings.defaultDevice')}</option>
+                      {audioOutputDevice && !hasDevice(audioOutputDevices, audioOutputDevice) && (
+                        <option value={audioOutputDevice}>{t('settings.savedOutputDeviceUnavailable')}</option>
+                      )}
                       {audioOutputDevices.map((d) => (
                         <option key={d.deviceId} value={d.deviceId}>
                           {d.label || `Speaker (${d.deviceId.slice(0, 8)}…)`}
@@ -1028,6 +1025,9 @@ export default function AppSettingsModal() {
                       className={selectClass}
                     >
                       <option value="">{t('settings.defaultDevice')}</option>
+                      {videoInputDevice && !hasDevice(videoDevices, videoInputDevice) && (
+                        <option value={videoInputDevice}>{t('settings.savedVideoDeviceUnavailable')}</option>
+                      )}
                       {videoDevices.map((d) => (
                         <option key={d.deviceId} value={d.deviceId}>
                           {d.label || `Camera (${d.deviceId.slice(0, 8)}…)`}
