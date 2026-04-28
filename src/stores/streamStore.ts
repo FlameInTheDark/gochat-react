@@ -18,6 +18,8 @@ export interface PublishingStreamState {
   resolution: StreamResolution
   frameRate: StreamFrameRate
   previewStream: MediaStream | null
+  hasAudio: boolean
+  audioEnabled: boolean
   connectionState: StreamConnectionState
   error: string | null
 }

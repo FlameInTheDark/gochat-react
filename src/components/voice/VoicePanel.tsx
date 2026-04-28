@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router'
-import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity, Video, VideoOff, ShieldCheck, ShieldOff, ShieldAlert, Copy, Check, Monitor } from 'lucide-react'
+import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity, Video, VideoOff, ShieldCheck, ShieldOff, ShieldAlert, Copy, Check, Monitor, Volume2, VolumeX } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useStreamStore } from '@/stores/streamStore'
 import type { VoiceConnectionState } from '@/stores/voiceStore'
 import { leaveVoice, setMuted, setDeafened, enableCamera, disableCamera } from '@/services/voiceService'
-import { startScreenShare, stopScreenShare } from '@/services/streamService'
+import { setPublishingStreamAudioEnabled, startScreenShare, stopScreenShare } from '@/services/streamService'
 import type { StreamAudioMode, StreamQualitySettings, StreamSourceType } from '@/services/streamApi'
 import { cn } from '@/lib/utils'
 import { useTranslation } from 'react-i18next'
@@ -82,13 +82,22 @@ export default function VoicePanel() {
       ? t('streams.sourceApplication')
       : t('streams.sourceScreen')
     : null
-  const streamAudioLabel = isStreamingHere && publishing
-    ? publishing.audioMode === 'application'
-      ? t('streams.audioApplication')
-      : publishing.audioMode === 'desktop'
-        ? t('streams.audioDesktop')
-        : t('streams.audioNone')
-    : null
+  const streamHasAudio = !!(isStreamingHere && publishing?.hasAudio)
+  const streamAudioEnabled = !!(streamHasAudio && publishing?.audioEnabled)
+  let streamAudioLabel: string | null = null
+  if (isStreamingHere && publishing) {
+    if (!streamHasAudio) {
+      streamAudioLabel = t('streams.audioNone')
+    } else if (!streamAudioEnabled) {
+      streamAudioLabel = t('streams.audioOff')
+    } else if (publishing.audioMode === 'application') {
+      streamAudioLabel = t('streams.audioApplication')
+    } else if (publishing.audioMode === 'desktop') {
+      streamAudioLabel = t('streams.audioDesktop')
+    } else {
+      streamAudioLabel = t('streams.audioNone')
+    }
+  }
 
   const { data: voiceRegions = [] } = useQuery<VoiceRegion[]>({
     queryKey: ['voice-regions'],
@@ -189,6 +198,14 @@ export default function VoicePanel() {
     setStreamDialogOpen(true)
   }
 
+  function handleToggleStreamAudio() {
+    if (!streamHasAudio) return
+    const changed = setPublishingStreamAudioEnabled(!streamAudioEnabled)
+    if (!changed) {
+      toast.message(t('streams.noStreamAudio'))
+    }
+  }
+
   return (
     <AnimatePresence>
       {channelId && (
@@ -220,11 +237,28 @@ export default function VoicePanel() {
                     </span>
                   )}
                 </div>
-                {streamAudioLabel && (
-                  <div className="mt-1 truncate text-[10px] text-muted-foreground">
-                    {streamAudioLabel}
-                  </div>
-                )}
+                <div className="mt-1 flex min-w-0 items-center justify-between gap-2">
+                  {streamAudioLabel && (
+                    <div className="truncate text-[10px] text-muted-foreground">
+                      {streamAudioLabel}
+                    </div>
+                  )}
+                  {streamHasAudio && (
+                    <button
+                      type="button"
+                      onClick={handleToggleStreamAudio}
+                      title={streamAudioEnabled ? t('streams.turnSoundOff') : t('streams.turnSoundOn')}
+                      aria-label={streamAudioEnabled ? t('streams.turnSoundOff') : t('streams.turnSoundOn')}
+                      className={cn(
+                        'inline-flex shrink-0 items-center gap-1 rounded bg-background/60 px-1.5 py-0.5 text-[9px] font-medium transition-colors hover:bg-background',
+                        streamAudioEnabled ? 'text-muted-foreground hover:text-foreground' : 'text-red-300',
+                      )}
+                    >
+                      {streamAudioEnabled ? <Volume2 className="h-3 w-3" /> : <VolumeX className="h-3 w-3" />}
+                      {streamAudioEnabled ? t('streams.soundOn') : t('streams.soundOff')}
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 

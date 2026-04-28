@@ -559,6 +559,15 @@ export interface Translation {
         audioDesktopDescription: string
         audioApplication: string
         audioApplicationDescription: string
+        audioOff: string
+        soundOn: string
+        soundOff: string
+        turnSoundOn: string
+        turnSoundOff: string
+        muteAudio: string
+        unmuteAudio: string
+        volume: string
+        noStreamAudio: string
         resolutionLabel: string
         resolution720p: string
         resolution720pDescription: string
@@ -585,6 +594,7 @@ export interface Translation {
         clickToWatch: string
         connecting: string
         reconnect: string
+        videoStalled: string
         stopWatching: string
         liveBadge: string
         liveCount: string

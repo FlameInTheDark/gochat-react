@@ -132,11 +132,26 @@ interface PublisherRuntime extends BaseRuntime {
   role: 'publisher'
   captureStream: MediaStream
   quality: StreamQualitySettings
+  senderQualities: Map<RTCRtpSender, PublisherSenderQuality>
+  qualityMonitorTimer: number | null
 }
 
 interface ViewerRuntime extends BaseRuntime {
   role: 'viewer'
   mediaStream: MediaStream
+}
+
+interface PublisherSenderQuality {
+  targetFrameRate: number
+  maxBitrateBps: number
+  minBitrateBps: number
+  currentBitrateBps: number
+  stableSamples: number
+  pressureSamples: number
+  lastAdjustmentAt: number
+  lastTimestamp: number | null
+  lastFramesEncoded: number | null
+  lastBytesSent: number | null
 }
 
 interface StreamRebindDetail {
@@ -179,32 +194,90 @@ const STREAM_QUALITY_DIMENSIONS: Record<StreamResolution, { width: number; heigh
 
 const STREAM_VIDEO_BITRATE_CAPS_BPS: Record<StreamResolution, Record<StreamFrameRate, number>> = {
   '720p': {
-    15: 6_000_000,
-    30: 10_000_000,
-    60: 16_000_000,
+    15: 1_500_000,
+    30: 3_000_000,
+    60: 4_500_000,
   },
   '1080p': {
-    15: 12_000_000,
-    30: 20_000_000,
-    60: 30_000_000,
+    15: 2_500_000,
+    30: 5_000_000,
+    60: 7_000_000,
   },
   '1440p': {
-    15: 24_000_000,
-    30: 40_000_000,
-    60: 60_000_000,
+    15: 4_000_000,
+    30: 6_000_000,
+    60: 8_000_000,
   },
   '2160p': {
-    15: 40_000_000,
-    30: 70_000_000,
-    60: 100_000_000,
+    15: 5_000_000,
+    30: 8_000_000,
+    60: 12_000_000,
   },
 }
 
 const STREAM_AUDIO_BITRATE_CAP_BPS = 256_000
+const STREAM_VIDEO_BITRATE_MIN_FACTOR = 0.45
+const STREAM_VIDEO_BITRATE_BACKOFF_FACTOR = 0.78
+const STREAM_VIDEO_BITRATE_RECOVERY_FACTOR = 1.08
+const STREAM_VIDEO_QUALITY_MONITOR_INTERVAL_MS = 4_000
+const STREAM_VIDEO_QUALITY_ADJUST_COOLDOWN_MS = 10_000
+export const STREAM_DEBUG_OVERLAY_EVENT = 'gochat:stream-debug-overlay-change'
+
+export interface StreamDebugTrackStats {
+  kind: 'audio' | 'video'
+  codec: string | null
+  bitrateBps: number | null
+  packetsReceived: number | null
+  packetsLost: number | null
+  jitterMs: number | null
+  framesPerSecond?: number | null
+  frameWidth?: number | null
+  frameHeight?: number | null
+  framesDecoded?: number | null
+  framesDropped?: number | null
+  totalSamplesReceived?: number | null
+  concealedSamples?: number | null
+}
+
+export interface StreamDebugStats {
+  streamId: string
+  role: RuntimeRole
+  connectionState: RTCPeerConnectionState | null
+  iceConnectionState: RTCIceConnectionState | null
+  signalingState: RTCSignalingState | null
+  currentRoundTripTimeMs: number | null
+  availableIncomingBitrateBps: number | null
+  video: StreamDebugTrackStats | null
+  audio: StreamDebugTrackStats | null
+  updatedAt: number
+}
+
+interface StreamDebugConsole {
+  enableOverlay: (streamId?: string) => void
+  disableOverlay: () => void
+  toggleOverlay: (streamId?: string) => void
+  isOverlayEnabled: (streamId?: string) => boolean
+  stats: (streamId: string) => Promise<StreamDebugStats | null>
+}
+
+declare global {
+  interface Window {
+    gochatStreamDebug?: StreamDebugConsole
+    enableStreamDebugOverlay?: (streamId?: string) => void
+    disableStreamDebugOverlay?: () => void
+    toggleStreamDebugOverlay?: (streamId?: string) => void
+  }
+}
 
 let publisherRuntime: PublisherRuntime | null = null
 const viewerRuntimes = new Map<string, ViewerRuntime>()
 let eventBindingsInitialized = false
+const channelStreamSyncRetryTimers = new Map<string, number>()
+const streamDebugBitrateSamples = new Map<string, { bytes: number; timestamp: number }>()
+const streamDebugOverlayState: { enabled: boolean; streamId: string | null } = {
+  enabled: false,
+  streamId: null,
+}
 
 const TAG = '%c[Stream]'
 const STYLE = 'color:#0f766e;font-weight:bold'
@@ -215,6 +288,185 @@ function slog(message: string, ...args: unknown[]) {
 
 function swarn(message: string, ...args: unknown[]) {
   console.warn(`${TAG} ${message}`, WARN_STYLE, ...args)
+}
+
+function emitStreamDebugOverlayChange() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(STREAM_DEBUG_OVERLAY_EVENT, {
+    detail: {
+      enabled: streamDebugOverlayState.enabled,
+      streamId: streamDebugOverlayState.streamId,
+    },
+  }))
+}
+
+export function setStreamDebugOverlayEnabled(enabled: boolean, streamId?: string) {
+  streamDebugOverlayState.enabled = enabled
+  streamDebugOverlayState.streamId = enabled && streamId ? String(streamId) : null
+  emitStreamDebugOverlayChange()
+  slog(
+    'debug overlay %s%s',
+    enabled ? 'enabled' : 'disabled',
+    streamDebugOverlayState.streamId ? ` for stream ${streamDebugOverlayState.streamId}` : '',
+  )
+}
+
+export function isStreamDebugOverlayEnabled(streamId?: string): boolean {
+  if (!streamDebugOverlayState.enabled) return false
+  if (!streamDebugOverlayState.streamId || !streamId) return true
+  return streamDebugOverlayState.streamId === streamId
+}
+
+function installStreamDebugConsole() {
+  if (typeof window === 'undefined') return
+  const api: StreamDebugConsole = {
+    enableOverlay: (streamId?: string) => setStreamDebugOverlayEnabled(true, streamId),
+    disableOverlay: () => setStreamDebugOverlayEnabled(false),
+    toggleOverlay: (streamId?: string) => setStreamDebugOverlayEnabled(!isStreamDebugOverlayEnabled(streamId), streamId),
+    isOverlayEnabled: (streamId?: string) => isStreamDebugOverlayEnabled(streamId),
+    stats: (streamId: string) => getStreamDebugStats(streamId),
+  }
+  window.gochatStreamDebug = api
+  window.enableStreamDebugOverlay = api.enableOverlay
+  window.disableStreamDebugOverlay = api.disableOverlay
+  window.toggleStreamDebugOverlay = api.toggleOverlay
+}
+
+installStreamDebugConsole()
+
+type RtcStatsLike = Record<string, unknown> & {
+  id?: string
+  type?: string
+  timestamp?: number
+}
+
+function numberStat(report: RtcStatsLike, key: string): number | null {
+  const value = report[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function stringStat(report: RtcStatsLike, key: string): string | null {
+  const value = report[key]
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+function boolStat(report: RtcStatsLike, key: string): boolean {
+  return report[key] === true
+}
+
+function clearStreamDebugSamples(streamId: string) {
+  for (const key of streamDebugBitrateSamples.keys()) {
+    if (key.startsWith(`${streamId}:`)) {
+      streamDebugBitrateSamples.delete(key)
+    }
+  }
+}
+
+function codecLabel(stats: RTCStatsReport, codecId: string | null): string | null {
+  if (!codecId) return null
+  const codec = stats.get(codecId) as RtcStatsLike | undefined
+  const mimeType = codec ? stringStat(codec, 'mimeType') : null
+  if (!mimeType) return null
+  const [, codecName = mimeType] = mimeType.split('/')
+  const clockRate = codec ? numberStat(codec, 'clockRate') : null
+  return clockRate ? `${codecName} @ ${Math.round(clockRate / 1000)}kHz` : codecName
+}
+
+function inboundTrackKind(report: RtcStatsLike): 'audio' | 'video' | null {
+  const kind = stringStat(report, 'kind') ?? stringStat(report, 'mediaType')
+  return kind === 'audio' || kind === 'video' ? kind : null
+}
+
+function trackBitrateBps(streamId: string, kind: 'audio' | 'video', report: RtcStatsLike): number | null {
+  const bytes = numberStat(report, 'bytesReceived')
+  const timestamp = numberStat(report, 'timestamp')
+  const reportId = report.id ?? 'unknown'
+  if (bytes === null || timestamp === null) return null
+
+  const key = `${streamId}:${kind}:${reportId}`
+  const previous = streamDebugBitrateSamples.get(key)
+  streamDebugBitrateSamples.set(key, { bytes, timestamp })
+  if (!previous || timestamp <= previous.timestamp || bytes < previous.bytes) return null
+
+  return Math.round(((bytes - previous.bytes) * 8 * 1000) / (timestamp - previous.timestamp))
+}
+
+function buildInboundTrackStats(runtime: ViewerRuntime, stats: RTCStatsReport, report: RtcStatsLike): StreamDebugTrackStats | null {
+  const kind = inboundTrackKind(report)
+  if (!kind) return null
+
+  const jitter = numberStat(report, 'jitter')
+  return {
+    kind,
+    codec: codecLabel(stats, stringStat(report, 'codecId')),
+    bitrateBps: trackBitrateBps(runtime.streamId, kind, report),
+    packetsReceived: numberStat(report, 'packetsReceived'),
+    packetsLost: numberStat(report, 'packetsLost'),
+    jitterMs: jitter === null ? null : Math.round(jitter * 1000),
+    framesPerSecond: kind === 'video' ? numberStat(report, 'framesPerSecond') : undefined,
+    frameWidth: kind === 'video' ? numberStat(report, 'frameWidth') : undefined,
+    frameHeight: kind === 'video' ? numberStat(report, 'frameHeight') : undefined,
+    framesDecoded: kind === 'video' ? numberStat(report, 'framesDecoded') : undefined,
+    framesDropped: kind === 'video' ? numberStat(report, 'framesDropped') : undefined,
+    totalSamplesReceived: kind === 'audio' ? numberStat(report, 'totalSamplesReceived') : undefined,
+    concealedSamples: kind === 'audio' ? numberStat(report, 'concealedSamples') : undefined,
+  }
+}
+
+function selectedCandidateStats(stats: RTCStatsReport): {
+  currentRoundTripTimeMs: number | null
+  availableIncomingBitrateBps: number | null
+} {
+  for (const raw of stats.values()) {
+    const report = raw as RtcStatsLike
+    if (report.type !== 'candidate-pair') continue
+    const selected = boolStat(report, 'selected')
+      || (boolStat(report, 'nominated') && stringStat(report, 'state') === 'succeeded')
+    if (!selected) continue
+
+    const rtt = numberStat(report, 'currentRoundTripTime')
+    return {
+      currentRoundTripTimeMs: rtt === null ? null : Math.round(rtt * 1000),
+      availableIncomingBitrateBps: numberStat(report, 'availableIncomingBitrate'),
+    }
+  }
+  return { currentRoundTripTimeMs: null, availableIncomingBitrateBps: null }
+}
+
+export async function getStreamDebugStats(streamId: string): Promise<StreamDebugStats | null> {
+  const runtime = viewerRuntimes.get(streamId)
+  const pc = runtime?.peerConnection
+  if (!runtime || !pc) return null
+
+  const stats = await pc.getStats()
+  let video: StreamDebugTrackStats | null = null
+  let audio: StreamDebugTrackStats | null = null
+
+  for (const raw of stats.values()) {
+    const report = raw as RtcStatsLike
+    if (report.type !== 'inbound-rtp' || report.isRemote === true) continue
+    const trackStats = buildInboundTrackStats(runtime, stats, report)
+    if (!trackStats) continue
+    if (trackStats.kind === 'video') {
+      video = video ?? trackStats
+    } else {
+      audio = audio ?? trackStats
+    }
+  }
+
+  const candidate = selectedCandidateStats(stats)
+  return {
+    streamId,
+    role: runtime.role,
+    connectionState: pc.connectionState,
+    iceConnectionState: pc.iceConnectionState,
+    signalingState: pc.signalingState,
+    currentRoundTripTimeMs: candidate.currentRoundTripTimeMs,
+    availableIncomingBitrateBps: candidate.availableIncomingBitrateBps,
+    video,
+    audio,
+    updatedAt: Date.now(),
+  }
 }
 
 function parseGatewayMessage(event: MessageEvent): GatewayEnvelope | null {
@@ -257,13 +509,229 @@ function applyServerBitrateCap(desiredBps: number, serverCapBps: number | undefi
   return serverCapBps && serverCapBps > 0 ? Math.min(desiredBps, serverCapBps) : desiredBps
 }
 
+function clampBitrate(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+function videoCodecPreferenceRank(codec: RTCRtpCodec): number {
+  const mime = codec.mimeType.toLowerCase()
+  if (mime === 'video/h264') {
+    const fmtp = codec.sdpFmtpLine?.toLowerCase() ?? ''
+    return fmtp.includes('packetization-mode=1') ? 0 : 1
+  }
+  if (mime === 'video/vp9') return 2
+  if (mime === 'video/vp8') return 3
+  if (mime === 'video/av1') return 4
+  if (mime === 'video/rtx') return 20
+  return 10
+}
+
+function preferHardwareFriendlyVideoCodec(pc: RTCPeerConnection, sender: RTCRtpSender, streamId: string) {
+  const transceiver = pc.getTransceivers().find((item) => item.sender === sender)
+  const capabilities = RTCRtpSender.getCapabilities?.('video')
+  if (!transceiver?.setCodecPreferences || !capabilities?.codecs?.length) return
+
+  const preferred = [...capabilities.codecs].sort((left, right) => (
+    videoCodecPreferenceRank(left) - videoCodecPreferenceRank(right)
+  ))
+  try {
+    transceiver.setCodecPreferences(preferred)
+    const firstVideoCodec = preferred.find((codec) => codec.mimeType.toLowerCase().startsWith('video/') && codec.mimeType.toLowerCase() !== 'video/rtx')
+    slog('preferred stream video codec for %s -> %s', streamId, firstVideoCodec?.mimeType ?? 'browser default')
+  } catch (error) {
+    swarn('unable to set stream codec preferences for %s: %o', streamId, error)
+  }
+}
+
 function setTrackContentHint(track: MediaStreamTrack, quality: StreamQualitySettings) {
   if (track.kind !== 'video') return
   try {
-    track.contentHint = quality.frameRate >= 60 ? 'motion' : 'detail'
+    track.contentHint = quality.resolution === '720p' && quality.frameRate >= 60 ? 'motion' : 'detail'
   } catch {
     // Older browser builds can expose contentHint as read-only.
   }
+}
+
+async function setSenderVideoBitrate(
+  sender: RTCRtpSender,
+  bitrateBps: number,
+  targetFrameRate: number,
+  preferResolution: boolean,
+) {
+  const parameters = sender.getParameters()
+  parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}]
+  for (const encoding of parameters.encodings) {
+    encoding.maxBitrate = bitrateBps
+    encoding.maxFramerate = targetFrameRate
+    encoding.scaleResolutionDownBy = 1
+  }
+  ;(parameters as RTCRtpSendParameters & {
+    degradationPreference?: RTCDegradationPreference
+  }).degradationPreference = preferResolution ? 'maintain-resolution' : 'balanced'
+  await sender.setParameters(parameters)
+}
+
+function registerPublisherSenderQuality(
+  runtime: PublisherRuntime,
+  sender: RTCRtpSender,
+  track: MediaStreamTrack,
+  appliedMaxBitrate: number,
+) {
+  if (track.kind !== 'video' || appliedMaxBitrate <= 0) return
+  const adaptiveMin = Math.round(appliedMaxBitrate * STREAM_VIDEO_BITRATE_MIN_FACTOR)
+  runtime.senderQualities.set(sender, {
+    targetFrameRate: runtime.quality.frameRate,
+    maxBitrateBps: appliedMaxBitrate,
+    minBitrateBps: Math.max(800_000, Math.min(appliedMaxBitrate, adaptiveMin)),
+    currentBitrateBps: appliedMaxBitrate,
+    stableSamples: 0,
+    pressureSamples: 0,
+    lastAdjustmentAt: 0,
+    lastTimestamp: null,
+    lastFramesEncoded: null,
+    lastBytesSent: null,
+  })
+}
+
+function clearPublisherQualityMonitor(runtime: PublisherRuntime) {
+  if (runtime.qualityMonitorTimer !== null) {
+    window.clearInterval(runtime.qualityMonitorTimer)
+    runtime.qualityMonitorTimer = null
+  }
+  runtime.senderQualities.clear()
+}
+
+function outboundVideoStats(stats: RTCStatsReport): RtcStatsLike | null {
+  for (const raw of stats.values()) {
+    const report = raw as RtcStatsLike
+    if (report.type !== 'outbound-rtp' || report.isRemote === true) continue
+    const kind = stringStat(report, 'kind') ?? stringStat(report, 'mediaType')
+    if (kind === 'video') return report
+  }
+  return null
+}
+
+async function updatePublisherSenderBitrate(
+  runtime: PublisherRuntime,
+  sender: RTCRtpSender,
+  quality: PublisherSenderQuality,
+  nextBitrateBps: number,
+  reason: string,
+) {
+  const next = clampBitrate(nextBitrateBps, quality.minBitrateBps, quality.maxBitrateBps)
+  if (Math.abs(next - quality.currentBitrateBps) < 250_000) return
+
+  try {
+    await setSenderVideoBitrate(sender, next, quality.targetFrameRate, quality.targetFrameRate < 60)
+    slog(
+      'adaptive bitrate %s for stream %s: %d -> %d bps (%s)',
+      next < quality.currentBitrateBps ? 'backoff' : 'recovery',
+      runtime.streamId,
+      quality.currentBitrateBps,
+      next,
+      reason,
+    )
+    quality.currentBitrateBps = next
+    quality.lastAdjustmentAt = Date.now()
+    quality.pressureSamples = 0
+    quality.stableSamples = 0
+  } catch (error) {
+    swarn('adaptive bitrate update failed for stream %s: %o', runtime.streamId, error)
+  }
+}
+
+async function monitorPublisherSenderQuality(
+  runtime: PublisherRuntime,
+  sender: RTCRtpSender,
+  quality: PublisherSenderQuality,
+) {
+  const stats = await sender.getStats()
+  const report = outboundVideoStats(stats)
+  if (!report) return
+
+  const timestamp = numberStat(report, 'timestamp')
+  const framesEncoded = numberStat(report, 'framesEncoded')
+  const bytesSent = numberStat(report, 'bytesSent')
+  const reportedFps = numberStat(report, 'framesPerSecond')
+  const limitationReason = stringStat(report, 'qualityLimitationReason') ?? 'none'
+
+  let measuredFps = reportedFps
+  if (
+    measuredFps === null
+    && timestamp !== null
+    && framesEncoded !== null
+    && quality.lastTimestamp !== null
+    && quality.lastFramesEncoded !== null
+    && timestamp > quality.lastTimestamp
+    && framesEncoded >= quality.lastFramesEncoded
+  ) {
+    measuredFps = ((framesEncoded - quality.lastFramesEncoded) * 1000) / (timestamp - quality.lastTimestamp)
+  }
+
+  let measuredBitrate: number | null = null
+  if (
+    timestamp !== null
+    && bytesSent !== null
+    && quality.lastTimestamp !== null
+    && quality.lastBytesSent !== null
+    && timestamp > quality.lastTimestamp
+    && bytesSent >= quality.lastBytesSent
+  ) {
+    measuredBitrate = ((bytesSent - quality.lastBytesSent) * 8 * 1000) / (timestamp - quality.lastTimestamp)
+  }
+
+  const hasBaseline = quality.lastTimestamp !== null
+  quality.lastTimestamp = timestamp
+  quality.lastFramesEncoded = framesEncoded
+  quality.lastBytesSent = bytesSent
+  if (!hasBaseline) return
+
+  const lowFps = measuredFps !== null && quality.targetFrameRate >= 30 && measuredFps < quality.targetFrameRate * 0.72
+  const pressure = limitationReason === 'cpu' || limitationReason === 'bandwidth' || lowFps
+  if (pressure) {
+    quality.pressureSamples += 1
+    quality.stableSamples = 0
+  } else {
+    quality.stableSamples += 1
+    quality.pressureSamples = 0
+  }
+
+  const now = Date.now()
+  if (now - quality.lastAdjustmentAt < STREAM_VIDEO_QUALITY_ADJUST_COOLDOWN_MS) return
+
+  if (quality.pressureSamples >= 2 && quality.currentBitrateBps > quality.minBitrateBps) {
+    const detail = `reason=${limitationReason} fps=${measuredFps === null ? 'n/a' : measuredFps.toFixed(1)} bitrate=${measuredBitrate === null ? 'n/a' : Math.round(measuredBitrate)}`
+    await updatePublisherSenderBitrate(
+      runtime,
+      sender,
+      quality,
+      quality.currentBitrateBps * STREAM_VIDEO_BITRATE_BACKOFF_FACTOR,
+      detail,
+    )
+    return
+  }
+
+  if (quality.stableSamples >= 6 && quality.currentBitrateBps < quality.maxBitrateBps) {
+    await updatePublisherSenderBitrate(
+      runtime,
+      sender,
+      quality,
+      quality.currentBitrateBps * STREAM_VIDEO_BITRATE_RECOVERY_FACTOR,
+      'stable encoder stats',
+    )
+  }
+}
+
+function ensurePublisherQualityMonitor(runtime: PublisherRuntime) {
+  if (runtime.qualityMonitorTimer !== null || runtime.senderQualities.size === 0) return
+  runtime.qualityMonitorTimer = window.setInterval(() => {
+    if (runtime.closing || runtime.peerConnection?.connectionState !== 'connected') return
+    for (const [sender, quality] of runtime.senderQualities) {
+      void monitorPublisherSenderQuality(runtime, sender, quality).catch((error) => {
+        swarn('stream quality monitor failed for %s: %o', runtime.streamId, error)
+      })
+    }
+  }, STREAM_VIDEO_QUALITY_MONITOR_INTERVAL_MS)
 }
 
 async function applyHighQualitySenderParameters(
@@ -273,7 +741,7 @@ async function applyHighQualitySenderParameters(
   streamId: string,
   serverVideoCapBps?: number,
   serverAudioCapBps?: number,
-) {
+): Promise<number> {
   try {
     const parameters = sender.getParameters()
     parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}]
@@ -282,29 +750,23 @@ async function applyHighQualitySenderParameters(
     if (track.kind === 'video') {
       const maxBitrate = applyServerBitrateCap(getStreamVideoBitrateCap(quality), serverVideoCapBps)
       appliedMaxBitrate = maxBitrate
-      for (const encoding of parameters.encodings) {
-        encoding.maxBitrate = maxBitrate
-        encoding.maxFramerate = quality.frameRate
-        encoding.scaleResolutionDownBy = 1
-      }
-      ;(parameters as RTCRtpSendParameters & {
-        degradationPreference?: RTCDegradationPreference
-      }).degradationPreference = 'maintain-resolution'
+      await setSenderVideoBitrate(sender, maxBitrate, quality.frameRate, quality.frameRate < 60)
     } else if (track.kind === 'audio') {
       const maxBitrate = applyServerBitrateCap(STREAM_AUDIO_BITRATE_CAP_BPS, serverAudioCapBps)
       appliedMaxBitrate = maxBitrate
       for (const encoding of parameters.encodings) {
         encoding.maxBitrate = maxBitrate
       }
+      await sender.setParameters(parameters)
     }
 
-    await sender.setParameters(parameters)
     slog(
       'sender quality parameters applied for stream %s kind=%s maxBitrate=%d',
       streamId,
       track.kind,
       appliedMaxBitrate,
     )
+    return appliedMaxBitrate
   } catch (error) {
     swarn(
       'unable to apply sender quality parameters for stream %s kind=%s: %o',
@@ -312,6 +774,7 @@ async function applyHighQualitySenderParameters(
       track.kind,
       error,
     )
+    return 0
   }
 }
 
@@ -601,6 +1064,43 @@ function updateWatchingState(
   error: string | null = null,
 ) {
   useStreamStore.getState().updateWatchedStream(streamId, { connectionState, error })
+}
+
+function httpStatus(error: unknown): number | null {
+  const status = (error as { response?: { status?: unknown } } | null)?.response?.status
+  return typeof status === 'number' ? status : null
+}
+
+function channelSyncKey(guildId: string, channelId: string): string {
+  return `${guildId}:${channelId}`
+}
+
+function clearChannelStreamsSyncRetry(guildId: string, channelId: string) {
+  const key = channelSyncKey(guildId, channelId)
+  const timer = channelStreamSyncRetryTimers.get(key)
+  if (timer !== undefined) {
+    window.clearTimeout(timer)
+    channelStreamSyncRetryTimers.delete(key)
+  }
+}
+
+function scheduleChannelStreamsSyncRetry(guildId: string, channelId: string, attempt: number) {
+  if (typeof window === 'undefined') return
+
+  const voice = useVoiceStore.getState()
+  if (voice.channelId !== channelId || voice.guildId !== guildId || voice.connectionState === 'disconnected') {
+    return
+  }
+
+  const key = channelSyncKey(guildId, channelId)
+  if (channelStreamSyncRetryTimers.has(key)) return
+
+  const delayMs = Math.min(8_000, 500 * 2 ** Math.max(0, attempt - 1))
+  const timer = window.setTimeout(() => {
+    channelStreamSyncRetryTimers.delete(key)
+    void syncChannelStreams(guildId, channelId, attempt + 1)
+  }, delayMs)
+  channelStreamSyncRetryTimers.set(key, timer)
 }
 
 function attachPassthroughSenderTransform(
@@ -940,6 +1440,7 @@ function closePublisherTransport(runtime: PublisherRuntime, stopCapture: boolean
   runtime.closing = true
   clearHeartbeat(runtime)
   resetDaveRuntime(runtime)
+  clearPublisherQualityMonitor(runtime)
   if (runtime.peerConnection) {
     runtime.peerConnection.ontrack = null
     runtime.peerConnection.onconnectionstatechange = null
@@ -958,6 +1459,7 @@ function closeViewerTransport(runtime: ViewerRuntime, stopMedia: boolean) {
   runtime.closing = true
   clearHeartbeat(runtime)
   resetDaveRuntime(runtime)
+  clearStreamDebugSamples(runtime.streamId)
   if (runtime.peerConnection) {
     runtime.peerConnection.ontrack = null
     runtime.peerConnection.onconnectionstatechange = null
@@ -1547,6 +2049,7 @@ async function connectPublisherRuntime(runtime: PublisherRuntime, url: string, t
                 retryPendingReceiverTransforms(runtime)
                 retryPendingSenderTransforms(runtime)
                 schedulePendingTransformRetry(runtime, 0)
+                ensurePublisherQualityMonitor(runtime)
                 updatePublishingState('connected', null)
                 if (!settled) {
                   settled = true
@@ -1571,7 +2074,10 @@ async function connectPublisherRuntime(runtime: PublisherRuntime, url: string, t
             for (const track of runtime.captureStream.getTracks()) {
               setTrackContentHint(track, runtime.quality)
               const sender = pc.addTrack(track, runtime.captureStream)
-              await applyHighQualitySenderParameters(
+              if (track.kind === 'video') {
+                preferHardwareFriendlyVideoCodec(pc, sender, runtime.streamId)
+              }
+              const appliedMaxBitrate = await applyHighQualitySenderParameters(
                 sender,
                 track,
                 runtime.quality,
@@ -1579,6 +2085,7 @@ async function connectPublisherRuntime(runtime: PublisherRuntime, url: string, t
                 serverVideoCapBps,
                 serverAudioCapBps,
               )
+              registerPublisherSenderQuality(runtime, sender, track, appliedMaxBitrate)
               if (runtime.dave.enabled) {
                 const mediaType = track.kind === 'audio' ? MediaType.AUDIO : MediaType.VIDEO
                 const codec = () => (mediaType === MediaType.AUDIO ? Codec.OPUS : runtime.dave.negotiatedVideoCodec)
@@ -2093,11 +2600,16 @@ function ensureEventBindings() {
   })
 }
 
-export async function syncChannelStreams(guildId: string, channelId: string): Promise<void> {
+export async function syncChannelStreams(guildId: string, channelId: string, retryAttempt = 0): Promise<void> {
   try {
     const streams = await streamApi.listStreams(guildId, channelId)
+    clearChannelStreamsSyncRetry(guildId, channelId)
     useStreamStore.getState().setChannelStreams(channelId, streams)
-  } catch {
+  } catch (error) {
+    if (httpStatus(error) === 403 && retryAttempt < 5) {
+      scheduleChannelStreamsSyncRetry(guildId, channelId, retryAttempt + 1)
+      return
+    }
     useStreamStore.getState().clearChannelStreams(channelId)
   }
 }
@@ -2134,6 +2646,8 @@ export async function startScreenShare(
     audioMode: effectiveAudioMode,
     quality: normalizedQuality,
     captureStream,
+    senderQualities: new Map(),
+    qualityMonitorTimer: null,
     socket: null,
     peerConnection: null,
     heartbeatTimer: null,
@@ -2151,6 +2665,22 @@ export async function startScreenShare(
       }
     }, { once: true })
   }
+  const hasCapturedAudio = effectiveAudioMode !== 'none' && captureStream.getAudioTracks().length > 0
+  for (const audioTrack of captureStream.getAudioTracks()) {
+    audioTrack.enabled = hasCapturedAudio
+    audioTrack.addEventListener('ended', () => {
+      if (publisherRuntime?.streamId !== runtime.streamId) return
+      const hasLiveAudio = runtime.captureStream
+        .getAudioTracks()
+        .some((track) => track.readyState === 'live')
+      useStreamStore.getState().updatePublishing({
+        hasAudio: hasLiveAudio,
+        audioEnabled: hasLiveAudio && runtime.captureStream
+          .getAudioTracks()
+          .some((track) => track.readyState === 'live' && track.enabled),
+      })
+    }, { once: true })
+  }
 
   useStreamStore.getState().setPublishing({
     streamId: runtime.streamId,
@@ -2161,6 +2691,8 @@ export async function startScreenShare(
     resolution: normalizedQuality.resolution,
     frameRate: normalizedQuality.frameRate,
     previewStream: captureStream,
+    hasAudio: hasCapturedAudio,
+    audioEnabled: hasCapturedAudio,
     connectionState: 'connecting',
     error: null,
   })
@@ -2196,6 +2728,35 @@ export async function stopScreenShare(
   }
 }
 
+export function setPublishingStreamAudioEnabled(enabled: boolean): boolean {
+  const runtime = publisherRuntime
+  if (!runtime) return false
+
+  const liveAudioTracks = runtime.captureStream
+    .getAudioTracks()
+    .filter((track) => track.readyState === 'live')
+  const hasAudio = runtime.audioMode !== 'none' && liveAudioTracks.length > 0
+
+  if (!hasAudio) {
+    useStreamStore.getState().updatePublishing({
+      hasAudio: false,
+      audioEnabled: false,
+    })
+    return false
+  }
+
+  for (const track of liveAudioTracks) {
+    track.enabled = enabled
+  }
+
+  useStreamStore.getState().updatePublishing({
+    hasAudio: true,
+    audioEnabled: enabled,
+  })
+  slog('publisher stream audio %s for stream %s', enabled ? 'enabled' : 'disabled', runtime.streamId)
+  return true
+}
+
 export async function watchStream(
   guildId: string,
   channelId: string,
@@ -2206,7 +2767,7 @@ export async function watchStream(
 
   const existing = viewerRuntimes.get(stream.id)
   if (existing) {
-    if (useStreamStore.getState().watched[stream.id]?.connectionState === 'connected') {
+    if (useStreamStore.getState().watched[stream.id]?.connectionState === 'connected' && viewerRuntimeLooksActive(existing)) {
       return
     }
     await reconnectWatchingStream(stream.id, 'manual')
@@ -2276,7 +2837,28 @@ export async function reconnectStream(streamId: string): Promise<void> {
     await reconnectPublishingStream('manual')
     return
   }
-  await reconnectWatchingStream(streamId, 'manual')
+  if (viewerRuntimes.has(streamId)) {
+    await reconnectWatchingStream(streamId, 'manual')
+    return
+  }
+
+  const state = useStreamStore.getState()
+  const watched = state.watched[streamId]
+  const voice = useVoiceStore.getState()
+  if (!watched || !voice.guildId || voice.channelId !== watched.channelId) {
+    updateWatchingState(streamId, 'error', 'Stream is no longer available')
+    return
+  }
+
+  const summary = state.channelStreams[watched.channelId]?.find((stream) => stream.id === streamId) ?? {
+    id: watched.streamId,
+    ownerUserId: watched.ownerUserId,
+    channelId: watched.channelId,
+    sourceType: watched.sourceType,
+    audioMode: watched.audioMode,
+    startedAt: 0,
+  }
+  await watchStream(voice.guildId, watched.channelId, summary)
 }
 
 export async function handleVoiceDisconnect(channelId: string): Promise<void> {
