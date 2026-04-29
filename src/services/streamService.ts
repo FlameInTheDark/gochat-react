@@ -48,6 +48,9 @@ const DAVE_BIN_WELCOME = 30
 
 const DAVE_LATE_PACKET_WINDOW_SECONDS = 10
 const DAVE_TRANSFORM_WARN_INTERVAL_MS = 2_000
+const DAVE_DECRYPT_RECREATE_FAILURES = 12
+const DAVE_DECRYPT_RECREATE_AFTER_MS = 1_500
+const DAVE_DECRYPT_RECREATE_MAX_ATTEMPTS = 2
 
 type RuntimeRole = 'publisher' | 'viewer'
 type DaveMode = 'passthrough' | 'pending_upgrade' | 'pending_downgrade'
@@ -94,6 +97,10 @@ interface RuntimeDaveState {
   protocolVersion: 0 | 1
   epoch: number
   lastTransitionReadySent: number | null
+  lastExecutedTransitionId: number | null
+  invalidCommitRequestedForTransition: number | null
+  decryptRecreateRequests: number
+  decryptFailures: Map<string, { count: number; firstAt: number }>
   session: DAVESession | null
   pendingSession: DAVESession | null
   weCommitted: boolean
@@ -131,6 +138,7 @@ interface BaseRuntime {
 interface PublisherRuntime extends BaseRuntime {
   role: 'publisher'
   captureStream: MediaStream
+  sourceStream: MediaStream
   quality: StreamQualitySettings
   senderQualities: Map<RTCRtpSender, PublisherSenderQuality>
   qualityMonitorTimer: number | null
@@ -182,7 +190,12 @@ type ExtendedDisplayAudioConstraints = MediaTrackConstraints & {
 
 interface CapturedDisplayStream {
   stream: MediaStream
+  sourceStream: MediaStream
   effectiveAudioMode: StreamAudioMode
+}
+
+type ManualCanvasCaptureTrack = MediaStreamTrack & {
+  requestFrame?: () => void
 }
 
 const STREAM_QUALITY_DIMENSIONS: Record<StreamResolution, { width: number; height: number }> = {
@@ -274,6 +287,7 @@ const viewerRuntimes = new Map<string, ViewerRuntime>()
 let eventBindingsInitialized = false
 const channelStreamSyncRetryTimers = new Map<string, number>()
 const streamDebugBitrateSamples = new Map<string, { bytes: number; timestamp: number }>()
+const capturedStreamCleanups = new WeakMap<MediaStream, () => void>()
 const streamDebugOverlayState: { enabled: boolean; streamId: string | null } = {
   enabled: false,
   streamId: null,
@@ -515,20 +529,23 @@ function clampBitrate(value: number, min: number, max: number): number {
 
 function videoCodecPreferenceRank(codec: RTCRtpCodec): number {
   const mime = codec.mimeType.toLowerCase()
+  if (mime === 'video/vp9') return 0
+  if (mime === 'video/vp8') return 1
   if (mime === 'video/h264') {
     const fmtp = codec.sdpFmtpLine?.toLowerCase() ?? ''
-    return fmtp.includes('packetization-mode=1') ? 0 : 1
+    return fmtp.includes('packetization-mode=1') ? 2 : 3
   }
-  if (mime === 'video/vp9') return 2
-  if (mime === 'video/vp8') return 3
   if (mime === 'video/av1') return 4
   if (mime === 'video/rtx') return 20
   return 10
 }
 
-function preferHardwareFriendlyVideoCodec(pc: RTCPeerConnection, sender: RTCRtpSender, streamId: string) {
-  const transceiver = pc.getTransceivers().find((item) => item.sender === sender)
-  const capabilities = RTCRtpSender.getCapabilities?.('video')
+function applyStreamVideoCodecPreferences(
+  transceiver: RTCRtpTransceiver | undefined,
+  capabilities: RTCRtpCapabilities | null | undefined,
+  streamId: string,
+  direction: 'send' | 'receive',
+) {
   if (!transceiver?.setCodecPreferences || !capabilities?.codecs?.length) return
 
   const preferred = [...capabilities.codecs].sort((left, right) => (
@@ -537,16 +554,34 @@ function preferHardwareFriendlyVideoCodec(pc: RTCPeerConnection, sender: RTCRtpS
   try {
     transceiver.setCodecPreferences(preferred)
     const firstVideoCodec = preferred.find((codec) => codec.mimeType.toLowerCase().startsWith('video/') && codec.mimeType.toLowerCase() !== 'video/rtx')
-    slog('preferred stream video codec for %s -> %s', streamId, firstVideoCodec?.mimeType ?? 'browser default')
+    slog('preferred %s stream video codec for %s -> %s', direction, streamId, firstVideoCodec?.mimeType ?? 'browser default')
   } catch (error) {
     swarn('unable to set stream codec preferences for %s: %o', streamId, error)
   }
 }
 
+function preferStreamSenderVideoCodec(pc: RTCPeerConnection, sender: RTCRtpSender, streamId: string) {
+  applyStreamVideoCodecPreferences(
+    pc.getTransceivers().find((item) => item.sender === sender),
+    RTCRtpSender.getCapabilities?.('video'),
+    streamId,
+    'send',
+  )
+}
+
+function preferStreamReceiverVideoCodec(transceiver: RTCRtpTransceiver, streamId: string) {
+  applyStreamVideoCodecPreferences(
+    transceiver,
+    RTCRtpReceiver.getCapabilities?.('video') ?? RTCRtpSender.getCapabilities?.('video'),
+    streamId,
+    'receive',
+  )
+}
+
 function setTrackContentHint(track: MediaStreamTrack, quality: StreamQualitySettings) {
   if (track.kind !== 'video') return
   try {
-    track.contentHint = quality.resolution === '720p' && quality.frameRate >= 60 ? 'motion' : 'detail'
+    track.contentHint = quality.frameRate >= 30 ? 'motion' : 'detail'
   } catch {
     // Older browser builds can expose contentHint as read-only.
   }
@@ -556,7 +591,6 @@ async function setSenderVideoBitrate(
   sender: RTCRtpSender,
   bitrateBps: number,
   targetFrameRate: number,
-  preferResolution: boolean,
 ) {
   const parameters = sender.getParameters()
   parameters.encodings = parameters.encodings?.length ? parameters.encodings : [{}]
@@ -567,7 +601,7 @@ async function setSenderVideoBitrate(
   }
   ;(parameters as RTCRtpSendParameters & {
     degradationPreference?: RTCDegradationPreference
-  }).degradationPreference = preferResolution ? 'maintain-resolution' : 'balanced'
+  }).degradationPreference = 'maintain-framerate'
   await sender.setParameters(parameters)
 }
 
@@ -622,7 +656,7 @@ async function updatePublisherSenderBitrate(
   if (Math.abs(next - quality.currentBitrateBps) < 250_000) return
 
   try {
-    await setSenderVideoBitrate(sender, next, quality.targetFrameRate, quality.targetFrameRate < 60)
+    await setSenderVideoBitrate(sender, next, quality.targetFrameRate)
     slog(
       'adaptive bitrate %s for stream %s: %d -> %d bps (%s)',
       next < quality.currentBitrateBps ? 'backoff' : 'recovery',
@@ -750,7 +784,7 @@ async function applyHighQualitySenderParameters(
     if (track.kind === 'video') {
       const maxBitrate = applyServerBitrateCap(getStreamVideoBitrateCap(quality), serverVideoCapBps)
       appliedMaxBitrate = maxBitrate
-      await setSenderVideoBitrate(sender, maxBitrate, quality.frameRate, quality.frameRate < 60)
+      await setSenderVideoBitrate(sender, maxBitrate, quality.frameRate)
     } else if (track.kind === 'audio') {
       const maxBitrate = applyServerBitrateCap(STREAM_AUDIO_BITRATE_CAP_BPS, serverAudioCapBps)
       appliedMaxBitrate = maxBitrate
@@ -790,6 +824,11 @@ function toIceServers(servers: GatewayIceServer[] | undefined): RTCIceServer[] {
 
 function stopMediaStream(stream: MediaStream | null) {
   if (!stream) return
+  const cleanup = capturedStreamCleanups.get(stream)
+  if (cleanup) {
+    capturedStreamCleanups.delete(stream)
+    cleanup()
+  }
   for (const track of stream.getTracks()) {
     try {
       track.stop()
@@ -873,6 +912,10 @@ function createDaveState(): RuntimeDaveState {
     protocolVersion: 0,
     epoch: 0,
     lastTransitionReadySent: null,
+    lastExecutedTransitionId: null,
+    invalidCommitRequestedForTransition: null,
+    decryptRecreateRequests: 0,
+    decryptFailures: new Map(),
     session: null,
     pendingSession: null,
     weCommitted: false,
@@ -976,6 +1019,10 @@ function resetDaveRuntime(runtime: BaseRuntime) {
   runtime.dave.protocolVersion = 0
   runtime.dave.epoch = 0
   runtime.dave.lastTransitionReadySent = null
+  runtime.dave.lastExecutedTransitionId = null
+  runtime.dave.invalidCommitRequestedForTransition = null
+  runtime.dave.decryptRecreateRequests = 0
+  runtime.dave.decryptFailures.clear()
   runtime.dave.pendingTransitionId = null
   runtime.dave.negotiatedVideoCodec = Codec.UNKNOWN
   runtime.dave.transformedSenders.clear()
@@ -1219,6 +1266,9 @@ function attachPassthroughReceiverTransform(
                     controller.enqueue(frame)
                     return
                   }
+                  if (encryptedHint) {
+                    trackDaveEncryptedDecryptFailure(runtime, userId, mediaType, 'decrypt returned no frame')
+                  }
                   warnDaveTransformLimited(
                     runtime,
                     `receiver-decrypt-${userId}-${encryptedHint ? 'encrypted' : 'pending'}`,
@@ -1232,10 +1282,15 @@ function attachPassthroughReceiverTransform(
                 const buffer = new ArrayBuffer(decrypted.byteLength)
                 new Uint8Array(buffer).set(decrypted)
                 frame.data = buffer
+                runtime.dave.decryptRecreateRequests = 0
+                resetDaveDecryptFailures(runtime, userId, mediaType)
               } catch (error) {
                 if (!encryptedHint && activeSession.canPassthrough(userId)) {
                   controller.enqueue(frame)
                   return
+                }
+                if (encryptedHint) {
+                  trackDaveEncryptedDecryptFailure(runtime, userId, mediaType, 'decrypt threw')
                 }
                 warnDaveTransformLimited(
                   runtime,
@@ -1383,8 +1438,85 @@ function sendDaveTransitionReady(runtime: BaseRuntime, transitionId: number) {
     return
   }
   runtime.dave.lastTransitionReadySent = transitionId
+  runtime.dave.pendingTransitionId = transitionId
   sendGatewayPacket(runtime.socket, { op: GW_DAVE_TRANSITION_READY, d: { transition_id: transitionId } })
   slog('DAVE: transition ready for stream %s transitionId=%d', runtime.streamId, transitionId)
+}
+
+function normalizeDaveTransitionId(value: unknown): number | null {
+  let transitionId = NaN
+  if (typeof value === 'number') {
+    transitionId = value
+  } else if (typeof value === 'string') {
+    transitionId = Number(value)
+  }
+  return Number.isInteger(transitionId) && transitionId >= 0 ? transitionId : null
+}
+
+function requestDaveEpochRecreate(runtime: BaseRuntime, transitionId: number, reason: string): boolean {
+  if (!runtime.socket || runtime.socket.readyState !== WebSocket.OPEN) return false
+  if (runtime.dave.invalidCommitRequestedForTransition === transitionId) return false
+  if (runtime.dave.decryptRecreateRequests >= DAVE_DECRYPT_RECREATE_MAX_ATTEMPTS) {
+    warnDaveTransformLimited(
+      runtime,
+      'dave-recreate-limit',
+      'DAVE: not requesting stream epoch recreate for stream %s after %d attempts; reason=%s',
+      runtime.streamId,
+      runtime.dave.decryptRecreateRequests,
+      reason,
+    )
+    return false
+  }
+
+  runtime.dave.decryptRecreateRequests += 1
+  runtime.dave.invalidCommitRequestedForTransition = transitionId
+  runtime.dave.decryptFailures.clear()
+  swarn(
+    'DAVE: requesting stream epoch recreate for stream %s transitionId=%d reason=%s',
+    runtime.streamId,
+    transitionId,
+    reason,
+  )
+  sendGatewayPacket(runtime.socket, { op: GW_DAVE_INVALID_COMMIT, d: { transition_id: transitionId } })
+  return true
+}
+
+function resetDaveDecryptFailures(runtime: BaseRuntime, userId?: string, mediaType?: MediaType) {
+  if (userId && mediaType !== undefined) {
+    runtime.dave.decryptFailures.delete(`${userId}:${mediaType}`)
+    return
+  }
+  runtime.dave.decryptFailures.clear()
+}
+
+function trackDaveEncryptedDecryptFailure(
+  runtime: BaseRuntime,
+  userId: string,
+  mediaType: MediaType,
+  reason: string,
+) {
+  if (runtime.dave.protocolVersion <= 0 || runtime.dave.mode !== 'passthrough') return
+
+  const transitionId = runtime.dave.lastExecutedTransitionId
+  if (transitionId === null || runtime.dave.invalidCommitRequestedForTransition === transitionId) {
+    return
+  }
+
+  const now = Date.now()
+  const key = `${userId}:${mediaType}`
+  const previous = runtime.dave.decryptFailures.get(key)
+  const next = previous
+    ? { count: previous.count + 1, firstAt: previous.firstAt }
+    : { count: 1, firstAt: now }
+  runtime.dave.decryptFailures.set(key, next)
+
+  if (next.count < DAVE_DECRYPT_RECREATE_FAILURES && now - next.firstAt < DAVE_DECRYPT_RECREATE_AFTER_MS) {
+    return
+  }
+
+  if (requestDaveEpochRecreate(runtime, transitionId, `${reason}; userId=${userId}; mediaType=${mediaType}`)) {
+    beginDaveUpgrade(runtime, 1)
+  }
 }
 
 function shouldBeCommitter(runtime: BaseRuntime, controlSession: DAVESession): boolean {
@@ -1392,6 +1524,19 @@ function shouldBeCommitter(runtime: BaseRuntime, controlSession: DAVESession): b
   if (!currentId) return false
 
   const ids = getRecognizedStreamUserIds(runtime, controlSession)
+  if (isNumericUserId(runtime.ownerUserId) && ids.includes(runtime.ownerUserId)) {
+    if (currentId !== runtime.ownerUserId) {
+      slog(
+        'DAVE: deferring stream commit for stream %s to owner userId=%s currentUserId=%s recognized=%o',
+        runtime.streamId,
+        runtime.ownerUserId,
+        currentId,
+        ids,
+      )
+      return false
+    }
+    return true
+  }
 
   try {
     const currentNumeric = BigInt(currentId)
@@ -1406,6 +1551,14 @@ function shouldBeCommitter(runtime: BaseRuntime, controlSession: DAVESession): b
   } catch {
     return false
   }
+}
+
+function shouldJoinStreamViaWelcome(runtime: BaseRuntime, controlSession: DAVESession): boolean {
+  const currentId = currentUserId()
+  return runtime.role === 'viewer'
+    && isNumericUserId(runtime.ownerUserId)
+    && currentId !== runtime.ownerUserId
+    && controlSession.status === SessionStatus.PENDING
 }
 
 function getRecognizedStreamUserIds(runtime: BaseRuntime, controlSession?: DAVESession): string[] {
@@ -1452,6 +1605,9 @@ function closePublisherTransport(runtime: PublisherRuntime, stopCapture: boolean
   closeSocket(socket)
   if (stopCapture) {
     stopMediaStream(runtime.captureStream)
+    if (runtime.sourceStream !== runtime.captureStream) {
+      stopMediaStream(runtime.sourceStream)
+    }
   }
 }
 
@@ -1489,7 +1645,8 @@ function socketLooksActive(socket: WebSocket | null): boolean {
 function publisherRuntimeLooksActive(runtime: PublisherRuntime | null): boolean {
   if (!runtime || runtime.closing) return false
   return runtime.captureStream.active
-    && runtime.captureStream.getVideoTracks().some((track) => track.readyState === 'live')
+    && runtime.sourceStream.active
+    && runtime.sourceStream.getVideoTracks().some((track) => track.readyState === 'live')
     && socketLooksActive(runtime.socket)
     && peerConnectionLooksActive(runtime.peerConnection)
 }
@@ -1608,6 +1765,10 @@ function configureRuntimeDAVE(runtime: BaseRuntime, ready: GatewayReady | undefi
   runtime.dave.protocolVersion = 0
   runtime.dave.epoch = 0
   runtime.dave.lastTransitionReadySent = null
+  runtime.dave.lastExecutedTransitionId = null
+  runtime.dave.invalidCommitRequestedForTransition = null
+  runtime.dave.decryptRecreateRequests = 0
+  runtime.dave.decryptFailures.clear()
   runtime.dave.pendingTransitionId = null
   runtime.dave.negotiatedVideoCodec = Codec.UNKNOWN
   runtime.dave.transformedSenders.clear()
@@ -1783,6 +1944,18 @@ function handleRuntimeBinaryMessage(runtime: BaseRuntime, data: ArrayBuffer) {
       if (!controlSession || rest.length === 0) return
 
       try {
+        if (shouldJoinStreamViaWelcome(runtime, controlSession)) {
+          runtime.dave.awaitingWelcome = true
+          slog(
+            'DAVE: waiting for owner welcome for stream %s ownerUserId=%s currentUserId=%s status=%d',
+            runtime.streamId,
+            runtime.ownerUserId,
+            currentUserId(),
+            controlSession.status,
+          )
+          return
+        }
+
         const operation = rest[0] as ProposalsOperationType
         const payload = Buffer.from(rest.slice(1))
         const recognizedUserIds = getRecognizedStreamUserIds(runtime, controlSession)
@@ -1870,7 +2043,7 @@ function handleRuntimeBinaryMessage(runtime: BaseRuntime, data: ArrayBuffer) {
         sendDaveTransitionReady(runtime, transitionId)
       } catch (error) {
         swarn('DAVE: processCommit failed for stream %s: %o', runtime.streamId, error)
-        sendGatewayPacket(socket, { op: GW_DAVE_INVALID_COMMIT, d: { transition_id: transitionId } })
+        requestDaveEpochRecreate(runtime, transitionId, 'processCommit failed')
         beginDaveUpgrade(runtime, 1)
       }
       return
@@ -1887,10 +2060,16 @@ function handleRuntimeBinaryMessage(runtime: BaseRuntime, data: ArrayBuffer) {
         controlSession.processWelcome(Buffer.from(bytes))
         runtime.dave.scriptRuntime?.processWelcome(currentDaveControlTarget(runtime), bytes)
         runtime.dave.awaitingWelcome = false
+        slog(
+          'DAVE: welcome accepted for stream %s transitionId=%d userId=%s',
+          runtime.streamId,
+          transitionId,
+          currentUserId(),
+        )
         sendDaveTransitionReady(runtime, transitionId)
       } catch (error) {
         swarn('DAVE: processWelcome failed for stream %s: %o', runtime.streamId, error)
-        sendGatewayPacket(socket, { op: GW_DAVE_INVALID_COMMIT, d: { transition_id: transitionId } })
+        requestDaveEpochRecreate(runtime, transitionId, 'processWelcome failed')
         beginDaveUpgrade(runtime, 1)
       }
       return
@@ -1901,19 +2080,22 @@ function handleRuntimeBinaryMessage(runtime: BaseRuntime, data: ArrayBuffer) {
 function handleRuntimeDavePacket(runtime: BaseRuntime, op: number, payload: unknown) {
   switch (op) {
     case GW_DAVE_PREPARE_TRANSITION: {
-      const detail = payload as { protocol_version?: 0 | 1; transition_id?: number } | undefined
-      if (detail?.protocol_version === 0 && detail.transition_id !== undefined) {
-        runtime.dave.pendingTransitionId = detail.transition_id
+      const detail = payload as { protocol_version?: 0 | 1; transition_id?: number | string } | undefined
+      const transitionId = normalizeDaveTransitionId(detail?.transition_id)
+      if (detail?.protocol_version === 0 && transitionId !== null) {
+        runtime.dave.pendingTransitionId = transitionId
         runtime.dave.mode = 'pending_downgrade'
         currentDaveMediaSession(runtime)?.setPassthroughMode(true)
         runtime.dave.scriptRuntime?.setPassthrough('active', true)
         syncRuntimeDaveScriptState(runtime)
-        sendDaveTransitionReady(runtime, detail.transition_id)
+        sendDaveTransitionReady(runtime, transitionId)
       }
       return
     }
 
     case GW_DAVE_EXECUTE_TRANSITION: {
+      const detail = payload as { transition_id?: number | string } | undefined
+      const transitionId = normalizeDaveTransitionId(detail?.transition_id) ?? runtime.dave.pendingTransitionId
       retryPendingReceiverTransforms(runtime)
       retryPendingSenderTransforms(runtime)
       schedulePendingTransformRetry(runtime, 0)
@@ -1921,6 +2103,9 @@ function handleRuntimeDavePacket(runtime: BaseRuntime, op: number, payload: unkn
         runtime.dave.protocolVersion = 0
         runtime.dave.mode = 'passthrough'
         runtime.dave.pendingTransitionId = null
+        runtime.dave.lastExecutedTransitionId = null
+        runtime.dave.invalidCommitRequestedForTransition = null
+        resetDaveDecryptFailures(runtime)
         runtime.dave.pendingSession?.dispose()
         runtime.dave.pendingSession = null
         runtime.dave.pendingSessionKeyPair = null
@@ -1932,6 +2117,9 @@ function handleRuntimeDavePacket(runtime: BaseRuntime, op: number, payload: unkn
         runtime.dave.protocolVersion = 1
         runtime.dave.mode = 'passthrough'
         runtime.dave.pendingTransitionId = null
+        runtime.dave.lastExecutedTransitionId = transitionId
+        runtime.dave.invalidCommitRequestedForTransition = null
+        resetDaveDecryptFailures(runtime)
         if (nextSession && runtime.dave.pendingSession) {
           const previousSession = runtime.dave.session
           runtime.dave.session = runtime.dave.pendingSession
@@ -1959,6 +2147,7 @@ function handleRuntimeDavePacket(runtime: BaseRuntime, op: number, payload: unkn
       if (detail?.protocol_version === 1) {
         runtime.dave.mode = 'pending_upgrade'
         runtime.dave.pendingTransitionId = null
+        resetDaveDecryptFailures(runtime)
         beginDaveUpgrade(runtime, 1)
         syncRuntimeDaveScriptState(runtime)
       }
@@ -2028,7 +2217,12 @@ async function connectPublisherRuntime(runtime: PublisherRuntime, url: string, t
               fail('Publishing is not allowed for this stream')
               return
             }
-            if (!runtime.captureStream.active || runtime.captureStream.getTracks().length === 0) {
+            if (
+              !runtime.captureStream.active
+              || !runtime.sourceStream.active
+              || runtime.captureStream.getTracks().length === 0
+              || !runtime.sourceStream.getVideoTracks().some((track) => track.readyState === 'live')
+            ) {
               fail('Screen capture is no longer available')
               return
             }
@@ -2075,7 +2269,7 @@ async function connectPublisherRuntime(runtime: PublisherRuntime, url: string, t
               setTrackContentHint(track, runtime.quality)
               const sender = pc.addTrack(track, runtime.captureStream)
               if (track.kind === 'video') {
-                preferHardwareFriendlyVideoCodec(pc, sender, runtime.streamId)
+                preferStreamSenderVideoCodec(pc, sender, runtime.streamId)
               }
               const appliedMaxBitrate = await applyHighQualitySenderParameters(
                 sender,
@@ -2283,7 +2477,8 @@ async function connectViewerRuntime(runtime: ViewerRuntime, url: string, token: 
               }
             }
 
-            pc.addTransceiver('video', { direction: 'recvonly' })
+            const videoTransceiver = pc.addTransceiver('video', { direction: 'recvonly' })
+            preferStreamReceiverVideoCodec(videoTransceiver, runtime.streamId)
             if (runtime.audioMode !== 'none') {
               pc.addTransceiver('audio', { direction: 'recvonly' })
             }
@@ -2410,16 +2605,174 @@ function buildDisplayMediaOptions(
   return options as DisplayMediaStreamOptions
 }
 
+function fitVideoFrameToQuality(
+  sourceWidth: number,
+  sourceHeight: number,
+  maxWidth: number,
+  maxHeight: number,
+): { width: number; height: number } {
+  const widthInput = Number.isFinite(sourceWidth) && sourceWidth > 0 ? sourceWidth : maxWidth
+  const heightInput = Number.isFinite(sourceHeight) && sourceHeight > 0 ? sourceHeight : maxHeight
+  const width = Math.max(2, Math.round(widthInput))
+  const height = Math.max(2, Math.round(heightInput))
+  const scale = Math.min(1, maxWidth / width, maxHeight / height)
+  return {
+    width: Math.max(2, Math.round(width * scale)),
+    height: Math.max(2, Math.round(height * scale)),
+  }
+}
+
+async function waitForDisplayVideoReady(video: HTMLVideoElement): Promise<void> {
+  if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return
+
+  await new Promise<void>((resolve) => {
+    const timeout = window.setTimeout(cleanup, 1_000)
+
+    function cleanup() {
+      window.clearTimeout(timeout)
+      video.removeEventListener('loadeddata', cleanup)
+      video.removeEventListener('loadedmetadata', cleanup)
+      resolve()
+    }
+
+    video.addEventListener('loadeddata', cleanup, { once: true })
+    video.addEventListener('loadedmetadata', cleanup, { once: true })
+  })
+}
+
+async function normalizeDisplayVideoCadence(
+  sourceStream: MediaStream,
+  quality: StreamQualitySettings,
+): Promise<MediaStream> {
+  const sourceVideoTrack = sourceStream.getVideoTracks()[0]
+  if (!sourceVideoTrack || typeof document === 'undefined') return sourceStream
+
+  const video = document.createElement('video')
+  video.autoplay = true
+  video.muted = true
+  video.playsInline = true
+  video.srcObject = new MediaStream([sourceVideoTrack])
+
+  try {
+    await video.play()
+  } catch (error) {
+    swarn('captureDisplayStream: unable to start cadence normalizer video: %o', error)
+  }
+  await waitForDisplayVideoReady(video)
+
+  const { width: maxWidth, height: maxHeight } = getStreamResolutionDimensions(quality.resolution)
+  const settings = sourceVideoTrack.getSettings()
+  const sourceWidth = Number(settings.width ?? video.videoWidth ?? maxWidth)
+  const sourceHeight = Number(settings.height ?? video.videoHeight ?? maxHeight)
+  const frameSize = fitVideoFrameToQuality(sourceWidth, sourceHeight, maxWidth, maxHeight)
+  const canvas = document.createElement('canvas')
+  canvas.width = frameSize.width
+  canvas.height = frameSize.height
+
+  const ctx = canvas.getContext('2d', { alpha: false })
+  if (!ctx || typeof canvas.captureStream !== 'function') {
+    video.pause()
+    video.srcObject = null
+    return sourceStream
+  }
+  const canvasContext = ctx
+
+  let canvasStream = canvas.captureStream(0)
+  let outputVideoTrack = canvasStream.getVideoTracks()[0] as ManualCanvasCaptureTrack | undefined
+  if (outputVideoTrack && typeof outputVideoTrack.requestFrame !== 'function') {
+    stopMediaStream(canvasStream)
+    canvasStream = canvas.captureStream(quality.frameRate)
+    outputVideoTrack = canvasStream.getVideoTracks()[0] as ManualCanvasCaptureTrack | undefined
+  }
+  if (!outputVideoTrack) {
+    video.pause()
+    video.srcObject = null
+    return sourceStream
+  }
+  const normalizedVideoTrack = outputVideoTrack
+
+  setTrackContentHint(normalizedVideoTrack, quality)
+
+  let stopped = false
+  let timer: number | null = null
+  const frameIntervalMs = 1_000 / quality.frameRate
+  let nextFrameAt = performance.now()
+  const manualRequestFrame = typeof normalizedVideoTrack.requestFrame === 'function'
+
+  function cleanup() {
+    stopped = true
+    if (timer !== null) {
+      window.clearTimeout(timer)
+      timer = null
+    }
+    sourceVideoTrack.removeEventListener('ended', handleSourceEnded)
+    video.pause()
+    video.srcObject = null
+  }
+
+  function stopOutputVideoTrack() {
+    cleanup()
+    try {
+      normalizedVideoTrack.stop()
+    } catch {
+      // noop
+    }
+  }
+
+  function handleSourceEnded() {
+    stopOutputVideoTrack()
+  }
+
+  function drawFrame() {
+    if (stopped || sourceVideoTrack.readyState === 'ended' || normalizedVideoTrack.readyState === 'ended') return
+
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      canvasContext.drawImage(video, 0, 0, canvas.width, canvas.height)
+      if (manualRequestFrame) {
+        normalizedVideoTrack.requestFrame?.()
+      }
+    }
+
+    const now = performance.now()
+    nextFrameAt += frameIntervalMs
+    if (nextFrameAt <= now - frameIntervalMs) {
+      nextFrameAt = now + frameIntervalMs
+    }
+    timer = window.setTimeout(drawFrame, Math.max(0, nextFrameAt - performance.now()))
+  }
+
+  sourceVideoTrack.addEventListener('ended', handleSourceEnded, { once: true })
+  drawFrame()
+
+  const normalizedStream = new MediaStream([
+    normalizedVideoTrack,
+    ...sourceStream.getAudioTracks(),
+  ])
+  capturedStreamCleanups.set(normalizedStream, () => {
+    cleanup()
+    stopMediaStream(sourceStream)
+  })
+
+  slog(
+    'captureDisplayStream: normalized video cadence to %dx%d @ %dfps',
+    canvas.width,
+    canvas.height,
+    quality.frameRate,
+  )
+
+  return normalizedStream
+}
+
 async function captureDisplayStream(
   sourceType: StreamSourceType,
   audioMode: StreamAudioMode,
   quality: StreamQualitySettings,
 ): Promise<CapturedDisplayStream> {
-  const stream = await navigator.mediaDevices.getDisplayMedia(
+  const sourceStream = await navigator.mediaDevices.getDisplayMedia(
     buildDisplayMediaOptions(sourceType, audioMode, quality),
   )
-  const videoTracks = stream.getVideoTracks()
-  const audioTracks = stream.getAudioTracks()
+  const videoTracks = sourceStream.getVideoTracks()
+  const audioTracks = sourceStream.getAudioTracks()
   let effectiveAudioMode = audioMode
 
   slog(
@@ -2431,7 +2784,7 @@ async function captureDisplayStream(
   )
 
   if (videoTracks.length === 0) {
-    stopMediaStream(stream)
+    stopMediaStream(sourceStream)
     throw new Error('The browser did not return a video track for this stream.')
   }
 
@@ -2474,7 +2827,9 @@ async function captureDisplayStream(
     )
   }
 
-  return { stream, effectiveAudioMode }
+  const stream = await normalizeDisplayVideoCadence(sourceStream, quality)
+
+  return { stream, sourceStream, effectiveAudioMode }
 }
 
 function ensureStreamAccess(channelId: string) {
@@ -2498,7 +2853,10 @@ async function reconnectPublishingStream(reason: 'manual' | 'rebind') {
   const runtime = publisherRuntime
   if (!runtime) return
 
-  if (!runtime.captureStream.active || runtime.captureStream.getVideoTracks().length === 0) {
+  if (
+    !runtime.sourceStream.active
+    || !runtime.sourceStream.getVideoTracks().some((track) => track.readyState === 'live')
+  ) {
     await stopScreenShare('capture_ended')
     return
   }
@@ -2629,7 +2987,7 @@ export async function startScreenShare(
   }
 
   const normalizedQuality = normalizeStreamQuality(quality)
-  const { stream: captureStream, effectiveAudioMode } = await captureDisplayStream(sourceType, audioMode, normalizedQuality)
+  const { stream: captureStream, sourceStream, effectiveAudioMode } = await captureDisplayStream(sourceType, audioMode, normalizedQuality)
   const response = await streamApi.startStream(guildId, channelId, sourceType, effectiveAudioMode)
   if (!response.streamId || !response.streamUrl || !response.streamToken) {
     stopMediaStream(captureStream)
@@ -2646,6 +3004,7 @@ export async function startScreenShare(
     audioMode: effectiveAudioMode,
     quality: normalizedQuality,
     captureStream,
+    sourceStream,
     senderQualities: new Map(),
     qualityMonitorTimer: null,
     socket: null,
@@ -2657,8 +3016,11 @@ export async function startScreenShare(
   }
   publisherRuntime = runtime
 
-  const videoTrack = captureStream.getVideoTracks()[0]
-  if (videoTrack) {
+  const videoTracks = new Set([
+    ...captureStream.getVideoTracks(),
+    ...sourceStream.getVideoTracks(),
+  ])
+  for (const videoTrack of videoTracks) {
     videoTrack.addEventListener('ended', () => {
       if (publisherRuntime?.streamId === runtime.streamId) {
         void stopScreenShare('capture_ended')

@@ -43,7 +43,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
 import { handleVoiceDisconnect } from './streamService'
-import { sendRaw, sendPresenceStatus, setPresenceVoiceChannel } from './wsService'
+import { sendRaw, sendPresenceStatus, setPresenceSelfVideo, setPresenceVoiceChannel } from './wsService'
 import {
   buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression,
   type DenoiserNode,
@@ -141,9 +141,10 @@ let pendingAudioStream: MediaStream | null = null
 // Voice channel member event listeners cleanup function
 let memberEventCleanup: (() => void) | null = null
 
-// One canonical MediaStream per remote user — tracks are added/replaced in-place
-// so the <video> srcObject reference stays stable across SFU renegotiations.
+// Current remote video stream per user. A fresh stream per video track keeps the
+// React video tile from reusing an element that still paints an old frame.
 const remoteStreams: Map<string, MediaStream> = new Map()
+const remoteVideoPresence: Map<string, boolean> = new Map()
 
 // Shared AudioContext for all remote peers.
 let audioCtx: AudioContext | null = null
@@ -160,6 +161,48 @@ interface AudioContextWithSinkId extends AudioContext {
 
 let clearInvalidAudioOutputDevicePromise: Promise<void> | null = null
 let clearInvalidAudioOutputDeviceId: string | null = null
+
+function isLiveUnmutedVideoTrack(track: MediaStreamTrack | null | undefined): track is MediaStreamTrack {
+  return Boolean(track && track.kind === 'video' && track.readyState === 'live' && !track.muted)
+}
+
+function stopMediaTracks(stream: MediaStream | null | undefined) {
+  if (!stream) return
+  for (const track of stream.getTracks()) {
+    try {
+      track.stop()
+    } catch {
+      // Best effort cleanup.
+    }
+  }
+}
+
+function shouldShowRemoteVideo(userId: string, track: MediaStreamTrack | null | undefined): track is MediaStreamTrack {
+  return remoteVideoPresence.get(userId) !== false && isLiveUnmutedVideoTrack(track)
+}
+
+function restoreRemoteVideoFromPresence(userId: string, attempt = 0) {
+  if (remoteVideoPresence.get(userId) !== true) return
+
+  const stream = remoteStreams.get(userId)
+  if (!stream) {
+    if (attempt >= 4) return
+    const delays = [120, 300, 700, 1200]
+    window.setTimeout(() => restoreRemoteVideoFromPresence(userId, attempt + 1), delays[attempt])
+    return
+  }
+
+  const track = stream.getVideoTracks()[0]
+  if (shouldShowRemoteVideo(userId, track)) {
+    useVoiceStore.getState().setPeerVideoStream(userId, stream)
+    vlog('presence: restored remote camera stream for userId=%s', userId)
+    return
+  }
+
+  if (attempt >= 4) return
+  const delays = [120, 300, 700, 1200]
+  window.setTimeout(() => restoreRemoteVideoFromPresence(userId, attempt + 1), delays[attempt])
+}
 
 // Gain nodes keyed by userId — used for per-user volume and deafen toggling.
 const audioGains: Record<string, GainNode> = {}
@@ -1215,6 +1258,11 @@ async function handleSfuReady(d: {
     peerConnection.addTransceiver('audio', { direction: 'recvonly' })
   }
 
+  if (!findVideoTransceiver()) {
+    peerConnection.addTransceiver('video', { direction: 'sendrecv' })
+    vlog('handleSfuReady: added sendrecv video transceiver for camera toggles')
+  }
+
   // Generate a stable RTC connection ID for this PC lifecycle
   sfuRtcConnectionId = crypto.randomUUID()
 
@@ -1594,6 +1642,7 @@ function onSfuMessage(event: MessageEvent) {
         leavingStream.getTracks().forEach(t => { try { t.stop() } catch { /* ok */ } })
         remoteStreams.delete(userId)
       }
+      remoteVideoPresence.delete(userId)
       break
     }
 
@@ -1820,34 +1869,49 @@ function createPeerConnection(): RTCPeerConnection {
 
     // ── Video track ────────────────────────────────────────────────────────
     if (ev.track.kind === 'video') {
-      let userStream = remoteStreams.get(userId)
-      if (!userStream) {
-        userStream = new MediaStream()
-        remoteStreams.set(userId, userStream)
-        vlog('ontrack: created per-user stream for userId=%s', userId)
+      const previousStream = remoteStreams.get(userId)
+      if (previousStream) {
+        for (const track of previousStream.getVideoTracks()) {
+          previousStream.removeTrack(track)
+        }
       }
 
-      for (const t of userStream.getVideoTracks()) {
-        userStream.removeTrack(t)
-      }
-      userStream.addTrack(ev.track)
+      const userStream = new MediaStream([ev.track])
+      remoteStreams.set(userId, userStream)
       vlog('ontrack: video track added for userId=%s (muted=%s)', userId, ev.track.muted)
 
-      useVoiceStore.getState().setPeerVideoStream(userId, userStream)
+      const showVideo = () => {
+        if (remoteStreams.get(userId) !== userStream) return
+        if (!shouldShowRemoteVideo(userId, ev.track)) {
+          useVoiceStore.getState().setPeerVideoStream(userId, null)
+          return
+        }
+        useVoiceStore.getState().setPeerVideoStream(userId, userStream)
+      }
 
-      const capturedStream = userStream
+      const hideVideo = () => {
+        if (remoteStreams.get(userId) === userStream) {
+          useVoiceStore.getState().setPeerVideoStream(userId, null)
+        }
+      }
+
+      showVideo()
+
       ev.track.addEventListener('unmute', () => {
         vlog('remote video track UNMUTED for userId=%s', userId)
-        useVoiceStore.getState().setPeerVideoStream(userId!, capturedStream)
+        showVideo()
       })
       ev.track.addEventListener('mute', () => {
         vwarn('remote video track MUTED for userId=%s — clearing stream', userId)
-        useVoiceStore.getState().setPeerVideoStream(userId!, null)
+        hideVideo()
       })
       ev.track.addEventListener('ended', () => {
         vwarn('remote video track ENDED for userId=%s', userId)
-        capturedStream.removeTrack(ev.track)
-        useVoiceStore.getState().setPeerVideoStream(userId!, null)
+        userStream.removeTrack(ev.track)
+        if (remoteStreams.get(userId) === userStream) {
+          remoteStreams.delete(userId)
+          useVoiceStore.getState().setPeerVideoStream(userId, null)
+        }
       })
       return
     }
@@ -2024,6 +2088,7 @@ function cleanup(sendPresenceClear = true) {
     stream.getTracks().forEach(t => { try { t.stop() } catch { /* ok */ } })
   }
   remoteStreams.clear()
+  remoteVideoPresence.clear()
 
   if (audioCtx) {
     vlog('cleanup: closing AudioContext (state=%s)', audioCtx.state)
@@ -2080,6 +2145,7 @@ function cleanup(sendPresenceClear = true) {
 
   if (sendPresenceClear) {
     setPresenceVoiceChannel(null)
+    setPresenceSelfVideo(false)
     // Send explicit voice_channel_id: 0 — some backends use patch semantics and
     // won't clear the voice channel if the field is simply omitted.
     sendRaw({
@@ -2088,6 +2154,7 @@ function cleanup(sendPresenceClear = true) {
         status: 'online',
         platform: 'web',
         voice_channel_id: 0n,
+        self_video: false,
       },
     })
   }
@@ -2265,6 +2332,7 @@ export async function joinVoice(
   // Update voice store and presence
   useVoiceStore.getState().setVoiceChannel(guildId, channelId, channelName, guildName, sfuUrl, voiceRegion)
   setPresenceVoiceChannel(channelId)
+  setPresenceSelfVideo(false)
   sendPresenceStatus('online')
 
   // Listen for other users joining/leaving this voice channel via main gateway events
@@ -2313,14 +2381,38 @@ export async function joinVoice(
       leavingStream.getTracks().forEach(t => { try { t.stop() } catch { /* ok */ } })
       remoteStreams.delete(userId)
     }
+    remoteVideoPresence.delete(userId)
+  }
+
+  const handlePresenceSelfVideo = (e: Event) => {
+    const detail = (e as CustomEvent).detail as {
+      user_id?: string | number
+      voice_channel_id?: string | number
+      self_video?: boolean
+    }
+    if (detail?.user_id === undefined || detail.self_video === undefined) return
+
+    const userId = String(detail.user_id)
+    const channelId = detail.voice_channel_id !== undefined ? String(detail.voice_channel_id) : currentChannelId
+    if (channelId !== currentChannelId) return
+    if (userId === currentUserId()) return
+
+    remoteVideoPresence.set(userId, detail.self_video)
+    if (detail.self_video) {
+      restoreRemoteVideoFromPresence(userId)
+    } else {
+      useVoiceStore.getState().setPeerVideoStream(userId, null)
+    }
   }
 
   window.addEventListener('ws:member_join_voice', handleMemberJoinVoice)
   window.addEventListener('ws:member_leave_voice', handleMemberLeaveVoice)
+  window.addEventListener('ws:presence_self_video', handlePresenceSelfVideo)
 
   memberEventCleanup = () => {
     window.removeEventListener('ws:member_join_voice', handleMemberJoinVoice)
     window.removeEventListener('ws:member_leave_voice', handleMemberLeaveVoice)
+    window.removeEventListener('ws:presence_self_video', handlePresenceSelfVideo)
     vlog('voiceService: voice channel member event listeners removed')
   }
 
@@ -2360,20 +2452,7 @@ export function setMuted(muted: boolean) {
   useVoiceStore.getState().setLocalMuted(muted)
   useVoiceStore.getState().setLocalSpeaking(shouldEnable)
 
-  const store = useVoiceStore.getState()
-  if (store.channelId) {
-    sendRaw({
-      op: 3,
-      d: {
-        status: 'online',
-        platform: 'web',
-        voice_channel_id: BigInt(store.channelId),
-        mute: muted,
-        deafen: store.localDeafened,
-      },
-    })
-    vlog('setMuted: sent presence update with mute=%s', muted)
-  }
+  sendVoicePresenceUpdate('setMuted')
 }
 
 export function setDeafened(deafened: boolean) {
@@ -2404,20 +2483,37 @@ export function setDeafened(deafened: boolean) {
   }
   useVoiceStore.getState().setLocalDeafened(deafened)
 
+  sendVoicePresenceUpdate('setDeafened')
+}
+
+function sendVoicePresenceUpdate(reason: string, selfVideoOverride?: boolean) {
   const store = useVoiceStore.getState()
-  if (store.channelId) {
-    sendRaw({
-      op: 3,
-      d: {
-        status: 'online',
-        platform: 'web',
-        voice_channel_id: BigInt(store.channelId),
-        mute: store.localMuted,
-        deafen: deafened,
-      },
-    })
-    vlog('setDeafened: sent presence update with deafen=%s', deafened)
+  if (!store.channelId) {
+    return
   }
+  const selfVideo = selfVideoOverride ?? store.localCameraEnabled
+  setPresenceSelfVideo(selfVideo)
+  sendRaw({
+    op: 3,
+    d: {
+      status: 'online',
+      platform: 'web',
+      voice_channel_id: BigInt(store.channelId),
+      mute: store.localMuted,
+      deafen: store.localDeafened,
+      self_video: selfVideo,
+    },
+  })
+  vlog('%s: sent voice presence update mute=%s deafen=%s self_video=%s',
+    reason, store.localMuted, store.localDeafened, selfVideo)
+}
+
+function findVideoTransceiver(): RTCRtpTransceiver | null {
+  if (!peerConnection) return null
+  return peerConnection.getTransceivers().find((transceiver) =>
+    transceiver.receiver.track.kind === 'video' ||
+    transceiver.sender.track?.kind === 'video'
+  ) ?? null
 }
 
 // ── Camera ────────────────────────────────────────────────────────────────────
@@ -2425,8 +2521,8 @@ export function setDeafened(deafened: boolean) {
 /**
  * Requests camera access and starts sending video to the peer connection.
  *
- * First enable: addTrack() + client-initiated renegotiation via SelectProtocol (op=1).
- * Subsequent enables: replaceTrack() on the existing sender — no renegotiation needed.
+ * The initial voice negotiation reserves a video transceiver, so camera toggles
+ * use replaceTrack() and do not need a client-driven SDP offer.
  */
 export async function enableCamera(): Promise<void> {
   if (!peerConnection) {
@@ -2439,61 +2535,96 @@ export async function enableCamera(): Promise<void> {
   const videoConstraint: MediaTrackConstraints | boolean = videoInputDevice
     ? { deviceId: { exact: videoInputDevice } }
     : true
+  let nextVideoStream: MediaStream
   try {
-    localVideoStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: false })
+    nextVideoStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: false })
   } catch (err) {
     vwarn('enableCamera: getUserMedia failed — %s', (err as Error).message)
     return
   }
 
-  const videoTrack = localVideoStream.getVideoTracks()[0]
+  const videoTrack = nextVideoStream.getVideoTracks()[0]
   if (!videoTrack) {
     vwarn('enableCamera: no video track in stream')
-    localVideoStream.getTracks().forEach(t => t.stop())
-    localVideoStream = null
+    stopMediaTracks(nextVideoStream)
     return
   }
 
-  if (localVideoSender) {
-    // Re-enable: replaceTrack — no renegotiation needed (transceiver already in SDP)
-    vlog('enableCamera: re-enabling — replaceTrack() on existing sender')
-    await localVideoSender.replaceTrack(videoTrack)
-  } else {
-    // First enable: addTrack + client-initiated v=2 renegotiation
-    vlog('enableCamera: first enable — addTrack() + v=2 client offer renegotiation')
-    localVideoSender = peerConnection.addTrack(videoTrack, localVideoStream)
-
-    // Attach DAVE passthrough transform to the new video sender
-    if (sfuDaveEnabled) {
-      if (ensurePassthroughSenderTransform(localVideoSender, MediaType.VIDEO, () => negotiatedVideoCodec)) {
-        vlog('DAVE: passthrough sender transform attached to video sender')
+  try {
+    if (localVideoSender) {
+      // Re-enable: replaceTrack — no renegotiation needed (transceiver already in SDP)
+      vlog('enableCamera: re-enabling — replaceTrack() on existing sender')
+      await localVideoSender.replaceTrack(videoTrack)
+    } else {
+      const videoTransceiver = findVideoTransceiver()
+      if (videoTransceiver) {
+        vlog('enableCamera: enabling — replaceTrack() on negotiated video transceiver')
+        videoTransceiver.direction = 'sendrecv'
+        localVideoSender = videoTransceiver.sender
+        await localVideoSender.replaceTrack(videoTrack)
       } else {
-        vwarn('DAVE: video sender transform unavailable, queued for retry')
+        // Fallback for older peer-connection layouts without a negotiated video m-line.
+        vlog('enableCamera: no video transceiver — addTrack() + v=2 client offer renegotiation')
+        localVideoSender = peerConnection.addTrack(videoTrack, nextVideoStream)
+      }
+
+      // Attach DAVE passthrough transform to the new video sender
+      if (sfuDaveEnabled) {
+        if (ensurePassthroughSenderTransform(localVideoSender, MediaType.VIDEO, () => negotiatedVideoCodec)) {
+          vlog('DAVE: passthrough sender transform attached to video sender')
+        } else {
+          vwarn('DAVE: video sender transform unavailable, queued for retry')
+        }
+      }
+
+      if (!videoTransceiver) {
+        // In v=2 the client drives renegotiation (not `{ event: 'negotiate' }`)
+        try {
+          const offer = await peerConnection.createOffer()
+          await peerConnection.setLocalDescription(offer)
+          await waitForIceGatheringComplete(peerConnection)
+          sfuSend({
+            op: GW_SELECT_PROTOCOL,
+            d: {
+              protocol: 'webrtc',
+              type: 'offer',
+              sdp: peerConnection.localDescription?.sdp,
+              rtc_connection_id: sfuRtcConnectionId,
+            },
+          })
+          vlog('enableCamera: renegotiation offer sent')
+        } catch (err) {
+          verr('enableCamera: renegotiation failed: %o', err)
+        }
       }
     }
-
-    // In v=2 the client drives renegotiation (not `{ event: 'negotiate' }`)
-    try {
-      const offer = await peerConnection.createOffer()
-      await peerConnection.setLocalDescription(offer)
-      await waitForIceGatheringComplete(peerConnection)
-      sfuSend({
-        op: GW_SELECT_PROTOCOL,
-        d: {
-          protocol: 'webrtc',
-          type: 'offer',
-          sdp: peerConnection.localDescription?.sdp,
-          rtc_connection_id: sfuRtcConnectionId,
-        },
-      })
-      vlog('enableCamera: renegotiation offer sent')
-    } catch (err) {
-      verr('enableCamera: renegotiation failed: %o', err)
-    }
+  } catch (err) {
+    vwarn('enableCamera: failed to attach video track — %o', err)
+    stopMediaTracks(nextVideoStream)
+    return
   }
+
+  const previousVideoStream = localVideoStream
+  localVideoStream = nextVideoStream
+  if (previousVideoStream && previousVideoStream !== nextVideoStream) {
+    stopMediaTracks(previousVideoStream)
+  }
+
+  videoTrack.addEventListener('ended', () => {
+    if (localVideoStream !== nextVideoStream) return
+    vwarn('enableCamera: local video track ended — clearing camera UI')
+    localVideoStream = null
+    useVoiceStore.getState().setLocalCameraEnabled(false)
+    useVoiceStore.getState().setLocalVideoStream(null)
+    sendVoicePresenceUpdate('enableCamera.trackEnded', false)
+    void localVideoSender?.replaceTrack(null).catch((e) =>
+      vwarn('enableCamera: replaceTrack(null) after local track ended failed — %o', e),
+    )
+  }, { once: true })
 
   useVoiceStore.getState().setLocalCameraEnabled(true)
   useVoiceStore.getState().setLocalVideoStream(localVideoStream)
+  sendVoicePresenceUpdate('enableCamera', true)
   vlog('enableCamera: camera enabled')
 }
 
@@ -2505,25 +2636,27 @@ export async function enableCamera(): Promise<void> {
  * and no SFU renegotiation.
  */
 export async function disableCamera(): Promise<void> {
+  const streamToStop = localVideoStream
+  localVideoStream = null
+  useVoiceStore.getState().setLocalCameraEnabled(false)
+  useVoiceStore.getState().setLocalVideoStream(null)
+  sendVoicePresenceUpdate('disableCamera', false)
+
   if (!localVideoSender) {
     vwarn('disableCamera: no video sender')
+    stopMediaTracks(streamToStop)
     return
   }
 
   vlog('disableCamera: soft-disabling via replaceTrack(null) — preserving transceiver')
-  await localVideoSender.replaceTrack(null).catch((e) =>
-    vwarn('disableCamera: replaceTrack(null) failed — %o', e),
-  )
-
-  if (localVideoStream) {
-    for (const track of localVideoStream.getTracks()) {
-      track.stop()
-    }
-    localVideoStream = null
+  try {
+    await localVideoSender.replaceTrack(null)
+  } catch (e) {
+    vwarn('disableCamera: replaceTrack(null) failed — %o', e)
+  } finally {
+    stopMediaTracks(streamToStop)
   }
 
-  useVoiceStore.getState().setLocalCameraEnabled(false)
-  useVoiceStore.getState().setLocalVideoStream(null)
   vlog('disableCamera: camera disabled')
 }
 

@@ -64,6 +64,8 @@ let currentOwnStatus: UserStatus = 'online'
 let currentCustomStatusText = ''
 // Current voice channel ID — included in every op:3 presence broadcast
 let currentVoiceChannelId: string | null = null
+// Current local camera state — included in every op:3 presence broadcast
+let currentSelfVideo = false
 
 // Last event sequence ID received — echoed back in heartbeats (op:2, d.e)
 let lastEventId = 0
@@ -306,6 +308,7 @@ function resubscribe() {
       platform: 'web',
       ...(currentCustomStatusText ? { custom_status_text: currentCustomStatusText } : {}),
       ...(currentVoiceChannelId ? { voice_channel_id: BigInt(currentVoiceChannelId) } : {}),
+      self_video: currentSelfVideo,
     },
   })
 
@@ -408,6 +411,7 @@ interface WsPresenceEvent {
   voice_channel_id?: string | number
   mute?: boolean
   deafen?: boolean
+  self_video?: boolean
   username?: string
   avatar_url?: string
   client_status?: Record<string, string>
@@ -508,6 +512,7 @@ function handleMessage(event: MessageEvent) {
           const presenceStore = usePresenceStore.getState()
           const currentUserId = useAuthStore.getState().user?.id
           const channelId = String(presence.voice_channel_id)
+          const selfVideo = presence.self_video ?? false
 
           // Track user in voice channel for sidebar display (including current user)
           // Add/update user in voice channel with mute/deafen state
@@ -517,13 +522,24 @@ function handleMessage(event: MessageEvent) {
             avatarUrl: presence.avatar_url,
             muted: presence.mute ?? false,
             deafened: presence.deafen ?? false,
+            selfVideo,
           })
 
           // Sync mute/deafen state for other users (not ourselves)
           if (uid !== String(currentUserId ?? '')) {
             voiceStore.setPeerMuted(uid, presence.mute ?? false)
             voiceStore.setPeerDeafened(uid, presence.deafen ?? false)
+            if (!selfVideo) {
+              voiceStore.setPeerVideoStream(uid, null)
+            }
           }
+          window.dispatchEvent(new CustomEvent('ws:presence_self_video', {
+            detail: {
+              user_id: uid,
+              voice_channel_id: channelId,
+              self_video: selfVideo,
+            },
+          }))
         } else {
           // voice_channel_id explicitly 0 → user left voice channel
           const presenceStore = usePresenceStore.getState()
@@ -1292,6 +1308,7 @@ export function sendPresenceStatus(status: UserStatus, customStatusText?: string
         platform: 'web',
         ...(currentCustomStatusText ? { custom_status_text: currentCustomStatusText } : {}),
         ...(currentVoiceChannelId ? { voice_channel_id: BigInt(currentVoiceChannelId) } : {}),
+        self_video: currentSelfVideo,
       },
     })
   }
@@ -1301,6 +1318,11 @@ export function sendPresenceStatus(status: UserStatus, customStatusText?: string
 // Call with null when leaving voice — the next sendPresenceStatus will omit voice_channel_id.
 export function setPresenceVoiceChannel(channelId: string | null) {
   currentVoiceChannelId = channelId
+}
+
+// Update the tracked local camera state for presence broadcasts.
+export function setPresenceSelfVideo(enabled: boolean) {
+  currentSelfVideo = enabled
 }
 
 // Send a raw message with BigInt-aware serialization (used by voice service for SFU signalling).

@@ -24,6 +24,7 @@ interface VoiceChannelUser {
   avatarUrl?: string
   muted?: boolean
   deafened?: boolean
+  selfVideo?: boolean
 }
 
 interface PresenceState {

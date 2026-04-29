@@ -1848,6 +1848,17 @@ export default function ChannelPage() {
 /**
  * Attaches a MediaStream to a <video> element.
  */
+function getRenderableVideoTrack(stream: MediaStream | null | undefined): MediaStreamTrack | null {
+  return stream?.getVideoTracks().find((track) => track.readyState === 'live') ?? null
+}
+
+function clearVideoElement(el: HTMLVideoElement) {
+  el.pause()
+  el.srcObject = null
+  el.removeAttribute('src')
+  el.load()
+}
+
 function VideoFeed({
   stream,
   mirror = false,
@@ -1872,9 +1883,45 @@ function VideoFeed({
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
-    el.srcObject = stream
-    el.play().catch(() => {})
-    return () => { el.srcObject = null }
+
+    const boundTracks = new Set<MediaStreamTrack>()
+    const clearStaleFrame = () => clearVideoElement(el)
+    const bindVideoTracks = () => {
+      for (const track of stream.getVideoTracks()) {
+        if (boundTracks.has(track)) continue
+        boundTracks.add(track)
+        track.addEventListener('ended', clearStaleFrame)
+        track.addEventListener('mute', clearStaleFrame)
+        track.addEventListener('unmute', attachStream)
+      }
+    }
+    const attachStream = () => {
+      bindVideoTracks()
+      if (!getRenderableVideoTrack(stream)) {
+        clearVideoElement(el)
+        return
+      }
+      if (el.srcObject !== stream) {
+        el.srcObject = stream
+      }
+      el.play().catch(() => {})
+    }
+
+    attachStream()
+
+    stream.addEventListener('addtrack', attachStream)
+    stream.addEventListener('removetrack', attachStream)
+
+    return () => {
+      for (const track of boundTracks) {
+        track.removeEventListener('ended', clearStaleFrame)
+        track.removeEventListener('mute', clearStaleFrame)
+        track.removeEventListener('unmute', attachStream)
+      }
+      stream.removeEventListener('addtrack', attachStream)
+      stream.removeEventListener('removetrack', attachStream)
+      clearVideoElement(el)
+    }
   }, [stream])
 
   useEffect(() => {
@@ -2055,6 +2102,9 @@ function VoiceParticipant({
   const { t } = useTranslation()
   const initials = label.charAt(0).toUpperCase()
   const streamId = videoStream?.id ?? null
+  const videoTrack = getRenderableVideoTrack(videoStream)
+  const videoTrackId = videoTrack?.id ?? null
+  const videoFeedKey = streamId && videoTrackId ? `${streamId}:${videoTrackId}` : null
   const activeStreamId = streamSummary?.id ?? null
   const streamControlsEnabled = !!isStreamTile
   const streamHasAudio = streamControlsEnabled && !!activeStreamId && isWatchingStream && streamSummary?.audioMode !== 'none'
@@ -2066,7 +2116,7 @@ function VoiceParticipant({
   const [videoStalled, setVideoStalled] = useState(false)
   const handleFrozen = useCallback(() => setVideoStalled(true), [])
   const handleActive = useCallback(() => setVideoStalled(false), [])
-  const hasVideo = !!videoStream
+  const hasVideo = !!videoStream && !!videoTrack
   const shouldMirrorVideo = mirrorVideo ?? isLocal
   const hasActiveStream = !!streamSummary
   const isStreamConnecting = streamControlsEnabled && hasActiveStream && isWatchingStream && !hasVideo && (streamConnectionState === 'connecting' || streamConnectionState === 'reconnecting')
@@ -2074,7 +2124,7 @@ function VoiceParticipant({
 
   useEffect(() => {
     setVideoStalled(false)
-  }, [streamId, activeStreamId])
+  }, [streamId, videoTrackId, activeStreamId])
 
   useEffect(() => {
     setStreamDebugEnabled(activeStreamId ? isStreamDebugOverlayEnabled(activeStreamId) : false)
@@ -2191,7 +2241,7 @@ function VoiceParticipant({
           onContextMenu={handleStreamContextMenu}
           >
             <VideoFeed
-              key={videoStream!.id}
+              key={videoFeedKey ?? videoStream!.id}
               stream={videoStream!}
               mirror={shouldMirrorVideo}
               muted={videoMuted}
