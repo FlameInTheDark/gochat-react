@@ -967,7 +967,15 @@ export default function ChannelPage() {
     try {
       const res = await guildApi.guildGuildIdVoiceChannelIdJoinPost({ guildId: serverId, channelId })
       if (res.data.sfu_url && res.data.sfu_token) {
-        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token, guild?.name ?? undefined, res.data.region ?? channel.voice_region ?? undefined)
+        let voiceRegion = res.data.region ?? channel.voice_region ?? undefined
+        if (!voiceRegion) {
+          voiceRegion = (await guildApi.guildGuildIdChannelChannelIdGet({
+            guildId: serverId as unknown as number,
+            channelId: channelId as unknown as number,
+          }))
+            .data.voice_region ?? undefined
+        }
+        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token, guild?.name ?? undefined, voiceRegion)
       }
     } catch {
       toast.error(t('channelSidebar.joinVoiceFailed'))
