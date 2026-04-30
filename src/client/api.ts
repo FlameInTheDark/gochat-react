@@ -2047,6 +2047,12 @@ export interface GuildJoinVoiceResponse {
      * @memberof GuildJoinVoiceResponse
      */
     'sfu_url'?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof GuildJoinVoiceResponse
+     */
+    'region'?: string;
 }
 /**
  * 
