@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, memo } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   LogOut,
@@ -12,6 +12,7 @@ import {
   Folder,
   Plus,
   ArrowRight,
+  Compass,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -39,7 +40,7 @@ import { useTranslation } from 'react-i18next'
 import { userApi, guildApi, rolesApi } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Separator } from '@/components/ui/separator'
+import { SeparatorSmall } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
@@ -71,6 +72,7 @@ import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/
 import type { DtoRole, DtoMember } from '@/client'
 import { useNotificationSettings } from '@/hooks/useNotificationSettings'
 import { NotificationsSubmenu } from './NotificationsSubmenu'
+import Logo from "@/assets/logo.svg?react";
 
 // ── Detect if a dragged guild is overlapping an icon enough to "merge" ────────
 // Returns true when the dragged item's centre is within ±20% of the target's
@@ -892,8 +894,10 @@ function MiniGuildIconWithUnread({ guild }: { guild: DtoGuild }) {
 // ── Main ServerSidebar ────────────────────────────────────────────────────────
 export default function ServerSidebar() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { serverId } = useParams<{ serverId?: string }>()
   const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const openCreateServer = useUiStore((s) => s.openCreateServer)
   const openJoinServer = useUiStore((s) => s.openJoinServer)
   const openServerSettings = useUiStore((s) => s.openServerSettings)
@@ -1031,7 +1035,6 @@ export default function ServerSidebar() {
     if (guilds) {
       syncGuilds(guilds.map((g) => String(g.id)))
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guilds, syncGuilds, settingsVersion])
 
   // Navigate away from deleted server
@@ -1313,6 +1316,8 @@ export default function ServerSidebar() {
   const activeFolderGuilds = activeFolder
     ? activeFolder.guildIds.map((id) => guildById.get(id)).filter((g): g is DtoGuild => !!g)
     : []
+  const dmActive = location.pathname === '/app/@me' || location.pathname.startsWith('/app/@me/')
+  const discoveryActive = location.pathname === '/app/discovery'
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1331,15 +1336,19 @@ export default function ServerSidebar() {
             <TooltipTrigger asChild>
               <button
                 onClick={() => navigate('/app/@me')}
-                className="w-12 h-12 squircle transition-all bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg shrink-0"
+                className={`w-12 h-12 squircle transition-all flex items-center justify-center font-bold text-lg shrink-0 ${
+                  dmActive
+                    ? 'bg-indigo-500 text-white'
+                    : 'bg-muted text-primary-foreground hover:text-white hover:bg-indigo-500'
+                }`}
               >
-                GC
+                <Logo className="h-9 w-9" />
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Direct Messages</TooltipContent>
           </Tooltip>
 
-          <Separator className="w-8 shrink-0" />
+          <SeparatorSmall className="w-8 shrink-0" />
 
           {/* Sortable guild + folder items */}
           <SortableContext items={displayItems} strategy={verticalListSortingStrategy}>
@@ -1428,6 +1437,22 @@ export default function ServerSidebar() {
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">Join a Server</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => navigate('/app/discovery')}
+                className={`w-12 h-12 squircle transition-all flex items-center justify-center shrink-0 ${
+                  discoveryActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground hover:text-white hover:bg-sky-600'
+                }`}
+              >
+                <Compass className="w-5 h-5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{t('serverSidebar.discoverServers')}</TooltipContent>
           </Tooltip>
 
           <div className="mt-auto" />

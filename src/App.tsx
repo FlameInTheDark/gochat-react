@@ -14,9 +14,11 @@ import ResetPasswordPage from '@/pages/ResetPasswordPage'
 import AppLayout from '@/pages/app/AppLayout'
 import MeLayout from '@/pages/app/MeLayout'
 import ServerLayout from '@/pages/app/ServerLayout'
+import DiscoveryLayout from '@/pages/app/DiscoveryLayout'
 import ChannelPage from '@/pages/app/ChannelPage'
 import MePage from '@/pages/app/MePage'
 import DMPage from '@/pages/app/DMPage'
+import DiscoveryPage from '@/pages/app/DiscoveryPage'
 import NotFoundPage from '@/pages/NotFoundPage'
 import CreateServerModal from '@/components/modals/CreateServerModal'
 import CreateChannelModal from '@/components/modals/CreateChannelModal'
@@ -51,6 +53,13 @@ const router = createBrowserRouter([
         children: [
           { index: true, element: <MePage /> },
           { path: ':userId', element: <DMPage /> },
+        ],
+      },
+      {
+        path: 'discovery',
+        element: <DiscoveryLayout />,
+        children: [
+          { index: true, element: <DiscoveryPage /> },
         ],
       },
       {

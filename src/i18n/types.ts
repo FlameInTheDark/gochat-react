@@ -414,6 +414,31 @@ export interface Translation {
         prev: string
         next: string
     }
+    discovery: {
+        title: string
+        subtitle: string
+        searchPlaceholder: string
+        categoriesTitle: string
+        servers: string
+        quickCommunity: string
+        quickGaming: string
+        quickMusic: string
+        quickEntertainment: string
+        quickScienceTech: string
+        quickEducation: string
+        members: string
+        membersPlural: string
+        noResults: string
+        noResultsDesc: string
+        loading: string
+        searchFailed: string
+        join: string
+        joining: string
+        joinFailed: string
+        joined: string
+        previousPage: string
+        nextPage: string
+    }
     memberList: {
         online: string
         offline: string
@@ -487,6 +512,7 @@ export interface Translation {
         editFolderDesc: string
         folderName: string
         folderNameDefault: string
+        discoverServers: string
     }
     channelSidebar: {
         serverSettings: string
@@ -632,6 +658,9 @@ export interface Translation {
         navOverview: string; navMembers: string; navRoles: string; navInvites: string; navEmoji: string; navBans: string; navDanger: string
         overviewTitle: string; changeIcon: string; publicServer: string; privateServer: string
         serverNameLabel: string; serverNamePlaceholder: string; publicServerLabel: string; publicServerDesc: string; serverIdLabel: string
+        discoveryTitle: string; discoveryDesc: string; discoveryOwnerOnly: string
+        descriptionLabel: string; descriptionPlaceholder: string; descriptionHint: string
+        tagsLabel: string; tagsPlaceholder: string; tagsHint: string; tagsInvalid: string
         copy: string; copied: string; saving: string; saveChanges: string; overviewSaved: string; overviewFailed: string
         systemChannelLabel: string; systemChannelDesc: string; systemChannelNone: string
         iconUploaded: string; iconFailed: string; iconFileFailed: string

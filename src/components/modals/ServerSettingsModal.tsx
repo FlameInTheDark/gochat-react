@@ -26,13 +26,14 @@ import {
 } from '@/components/ui/context-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
-import { guildApi, inviteApi, rolesApi, uploadApi, axiosInstance } from '@/api/client'
-import type { DtoGuildInvite, DtoMember } from '@/types'
-import type { DtoChannel, DtoGuildBan, DtoGuildEmoji, DtoRole, GuildBanMemberRequest } from '@/client'
+import { guildApi, inviteApi, rolesApi, uploadApi, axiosInstance, searchApi } from '@/api/client'
+import type { DtoGuild, DtoGuildInvite, DtoMember } from '@/types'
+import type { DtoChannel, DtoGuildBan, DtoGuildDiscoveryUpdateResponse, DtoGuildEmoji, DtoRole, GuildBanMemberRequest } from '@/client'
 import { ModelChannelType } from '@/client'
 import {
   Select,
@@ -81,10 +82,40 @@ const hexToColor = (hex: string) => parseInt(hex.replace('#', ''), 16)
  * The backend has no @everyone role row — guild.permissions IS the default.
  */
 const EVERYONE_ID = '__everyone__'
+const TAG_PATTERN = /^[a-z0-9_-]{2,32}$/
+const MAX_DISCOVERY_TAGS = 10
 
 /** Sort real roles by position (lower value = higher priority, shown first). */
 function sortRoles(roles: DtoRole[]): DtoRole[] {
   return [...roles].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+}
+
+function normalizeTagsInput(value: string): { tags: string[]; invalid: string[] } {
+  const seen = new Set<string>()
+  const tags: string[] = []
+  const invalid: string[] = []
+
+  for (const raw of value.split(/[\n,]+/)) {
+    const tag = raw.trim().toLowerCase()
+    if (!tag || seen.has(tag)) continue
+    seen.add(tag)
+    if (!TAG_PATTERN.test(tag)) {
+      invalid.push(tag)
+      continue
+    }
+    if (tags.length < MAX_DISCOVERY_TAGS) tags.push(tag)
+  }
+
+  return { tags, invalid }
+}
+
+function normalizeTag(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function sameTags(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  return left.every((tag, index) => tag === right[index])
 }
 
 function Toggle({
@@ -218,6 +249,10 @@ export default function ServerSettingsModal() {
   // Overview
   const [name, setName] = useState('')
   const [isPublic, setIsPublic] = useState(false)
+  const [description, setDescription] = useState('')
+  const [tags, setTags] = useState<string[]>([])
+  const [tagDraft, setTagDraft] = useState('')
+  const [tagInputFocused, setTagInputFocused] = useState(false)
   const [systemChannelId, setSystemChannelId] = useState('')
   const [savingOverview, setSavingOverview] = useState(false)
 
@@ -363,9 +398,12 @@ export default function ServerSettingsModal() {
 
   // ── Queries ─────────────────────────────────────────────────────────────────
 
-  const { data: guild } = useQuery({
+  const { data: guild } = useQuery<DtoGuild>({
     queryKey: ['guild', guildId],
-    queryFn: () => guildApi.guildGuildIdGet({ guildId: guildId! }).then((r) => r.data),
+    queryFn: () =>
+      guildApi
+        .guildGuildIdGet({ guildId: guildId! as unknown as number })
+        .then((r) => r.data as DtoGuild),
     enabled: open && !!guildId,
     staleTime: 30_000,
   })
@@ -374,6 +412,34 @@ export default function ServerSettingsModal() {
   const currentUser = useAuthStore((s) => s.user)
   const ownerIdStr = guild?.owner != null ? String(guild.owner) : null
   const isOwner = ownerIdStr !== null && currentUser?.id !== undefined && ownerIdStr === String(currentUser.id)
+
+  const { data: discoverySettings } = useQuery<DtoGuildDiscoveryUpdateResponse>({
+    queryKey: ['guildDiscoverySettings', guildId],
+    queryFn: () =>
+      axiosInstance
+        .get<DtoGuildDiscoveryUpdateResponse>(`${getApiBaseUrl()}/guild/${guildId}/discovery`)
+        .then((r) => r.data),
+    enabled: open && !!guildId && isOwner,
+    staleTime: 30_000,
+  })
+  const discoveryGuild = discoverySettings?.guild
+  const normalizedTagDraft = normalizeTag(tagDraft)
+  const tagDraftInvalid = normalizedTagDraft !== '' && !TAG_PATTERN.test(normalizedTagDraft)
+  const canAutocompleteTag = TAG_PATTERN.test(normalizedTagDraft)
+
+  const { data: tagSuggestions = [] } = useQuery<string[]>({
+    queryKey: ['guildTagSuggestions', normalizedTagDraft],
+    queryFn: () =>
+      searchApi
+        .searchGuildTagsGet({ q: normalizedTagDraft || undefined, limit: 8 })
+        .then((r) => r.data ?? []),
+    enabled: open && isPublic && isOwner && tagInputFocused && canAutocompleteTag,
+    staleTime: 30_000,
+  })
+  const availableTagSuggestions = tagSuggestions
+    .map(normalizeTag)
+    .filter((suggestion) => suggestion && !tags.includes(suggestion))
+    .slice(0, 8)
 
   // Redirect away from danger section if not owner
   useEffect(() => {
@@ -443,9 +509,12 @@ export default function ServerSettingsModal() {
     if (open && guild) {
       setName(guild.name ?? '')
       setIsPublic(guild.public ?? false)
+      setDescription(discoveryGuild?.description ?? '')
+      setTags(normalizeTagsInput((discoveryGuild?.tags ?? []).join(', ')).tags)
+      setTagDraft('')
       setSystemChannelId(guild.system_channel_id ? String(guild.system_channel_id) : '')
     }
-  }, [open, guild])
+  }, [open, guild, discoveryGuild])
 
   // Reset all state when the target guild changes or the modal closes
   useEffect(() => {
@@ -529,21 +598,103 @@ export default function ServerSettingsModal() {
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
   const serverInitials = (guild?.name ?? '?').charAt(0).toUpperCase()
+  const currentDescription = discoveryGuild?.description ?? ''
+  const currentTags = normalizeTagsInput((discoveryGuild?.tags ?? []).join(', ')).tags
+  const nextDiscoveryTags = { tags, invalid: [] as string[] }
+  const hasPendingValidTag = normalizedTagDraft !== '' && TAG_PATTERN.test(normalizedTagDraft) && !tags.includes(normalizedTagDraft)
+  const discoveryChanged =
+    isPublic !== (guild?.public ?? false) ||
+    description.trim() !== currentDescription ||
+    !sameTags(nextDiscoveryTags.tags, currentTags) ||
+    hasPendingValidTag
   const overviewChanged =
     (name.trim() !== '' && name.trim() !== guild?.name) ||
-    isPublic !== (guild?.public ?? false) ||
+    (isOwner && nextDiscoveryTags.invalid.length === 0 && discoveryChanged) ||
     systemChannelId !== (guild?.system_channel_id ? String(guild.system_channel_id) : '')
+
+  function addDiscoveryTag(value: string): boolean {
+    const parsed = normalizeTagsInput(value)
+    const nextTags = parsed.tags.filter((tag) => !tags.includes(tag))
+    const invalidTags = parsed.invalid
+
+    if (invalidTags.length > 0) {
+      toast.error(t('serverSettings.tagsInvalid', { tags: invalidTags.join(', ') }))
+      return false
+    }
+    if (nextTags.length === 0) {
+      setTagDraft('')
+      return false
+    }
+    setTags((prev) => [...prev, ...nextTags].slice(0, MAX_DISCOVERY_TAGS))
+    setTagDraft('')
+    return true
+  }
+
+  function removeDiscoveryTag(tag: string) {
+    setTags((prev) => prev.filter((item) => item !== tag))
+  }
+
+  function handleTagDraftChange(value: string) {
+    if (value.includes(',') || value.includes('\n')) {
+      const parts = value.split(/[\n,]+/)
+      const last = parts.pop() ?? ''
+      const bulk = parts.join(',')
+      if (bulk.trim()) {
+        addDiscoveryTag(bulk)
+      }
+      setTagDraft(last)
+      return
+    }
+    setTagDraft(value)
+  }
+
+  function handleTagDraftKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Enter' || event.key === 'Tab' || event.key === ',') {
+      if (tagDraft.trim()) {
+        event.preventDefault()
+        addDiscoveryTag(tagDraft)
+      }
+      return
+    }
+    if (event.key === 'Backspace' && !tagDraft && tags.length > 0) {
+      setTags((prev) => prev.slice(0, -1))
+    }
+  }
 
   async function handleSaveOverview() {
     if (!guildId || !name.trim()) return
+    let finalDiscoveryTags = tags
+    if (tagDraft.trim()) {
+      const parsed = normalizeTagsInput(tagDraft)
+      if (parsed.invalid.length > 0) {
+        toast.error(t('serverSettings.tagsInvalid', { tags: parsed.invalid.join(', ') }))
+        return
+      }
+      finalDiscoveryTags = [...tags, ...parsed.tags.filter((tag) => !tags.includes(tag))].slice(0, MAX_DISCOVERY_TAGS)
+      setTags(finalDiscoveryTags)
+      setTagDraft('')
+    }
     setSavingOverview(true)
     try {
       const calls: Promise<unknown>[] = []
 
-      const nameOrPublicChanged =
-        name.trim() !== guild?.name || isPublic !== (guild?.public ?? false)
-      if (nameOrPublicChanged) {
-        calls.push(guildApi.guildGuildIdPatch({ guildId, request: { name: name.trim(), public: isPublic } }))
+      const nameChanged = name.trim() !== guild?.name
+      if (nameChanged) {
+        calls.push(guildApi.guildGuildIdPatch({
+          guildId: guildId as unknown as number,
+          request: { name: name.trim() },
+        }))
+      }
+
+      if (isOwner && discoveryChanged) {
+        calls.push(guildApi.guildGuildIdDiscoveryPatch({
+          guildId: guildId as unknown as number,
+          request: {
+            public: isPublic,
+            description: description.trim(),
+            tags: finalDiscoveryTags,
+          },
+        }))
       }
 
       const systemChannelChanged = systemChannelId !== (guild?.system_channel_id ? String(guild.system_channel_id) : '')
@@ -557,6 +708,8 @@ export default function ServerSettingsModal() {
       await Promise.all(calls)
       await queryClient.invalidateQueries({ queryKey: ['guilds'] })
       await queryClient.invalidateQueries({ queryKey: ['guild', guildId] })
+      await queryClient.invalidateQueries({ queryKey: ['guildDiscoverySettings', guildId] })
+      await queryClient.invalidateQueries({ queryKey: ['guildDiscovery'] })
       toast.success(t('serverSettings.overviewSaved'))
     } catch {
       toast.error(t('serverSettings.overviewFailed'))
@@ -1020,8 +1173,108 @@ export default function ServerSettingsModal() {
                       {t('serverSettings.publicServerDesc')}
                     </p>
                   </div>
-                  <Toggle value={isPublic} onToggle={() => setIsPublic((v) => !v)} />
+                  <Toggle
+                    value={isPublic}
+                    onToggle={() => setIsPublic((v) => !v)}
+                    disabled={!isOwner}
+                  />
                 </div>
+
+                {isPublic && (
+                  <div className="space-y-2 rounded-lg border bg-muted/20 p-4">
+                    <div>
+                      <p className="text-sm font-medium">{t('serverSettings.discoveryTitle')}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {isOwner
+                          ? t('serverSettings.discoveryDesc')
+                          : t('serverSettings.discoveryOwnerOnly')}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="server-description">{t('serverSettings.descriptionLabel')}</Label>
+                      <Textarea
+                        id="server-description"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        maxLength={500}
+                        disabled={!isOwner}
+                        placeholder={t('serverSettings.descriptionPlaceholder')}
+                        className="min-h-24 resize-none"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        {t('serverSettings.descriptionHint', { count: description.trim().length })}
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="server-tags">{t('serverSettings.tagsLabel')}</Label>
+                      <div className="relative">
+                        <div
+                          className={cn(
+                            'flex min-h-10 flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5 text-sm ring-offset-background focus-within:ring-1 focus-within:ring-ring',
+                            !isOwner && 'opacity-50',
+                          )}
+                        >
+                          {tags.map((tag) => (
+                            <span
+                              key={tag}
+                              className="inline-flex max-w-full items-center gap-1 rounded-full bg-secondary px-2 py-1 text-xs text-secondary-foreground"
+                            >
+                              <span className="truncate">{tag}</span>
+                              {isOwner && (
+                                <button
+                                  type="button"
+                                  onClick={() => removeDiscoveryTag(tag)}
+                                  className="rounded-full text-muted-foreground hover:text-foreground"
+                                  aria-label={`Remove ${tag}`}
+                                >
+                                  <X className="size-3" />
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          <input
+                            id="server-tags"
+                            value={tagDraft}
+                            onChange={(e) => handleTagDraftChange(e.target.value)}
+                            onKeyDown={handleTagDraftKeyDown}
+                            onFocus={() => setTagInputFocused(true)}
+                            onBlur={() => window.setTimeout(() => setTagInputFocused(false), 120)}
+                            disabled={!isOwner || tags.length >= MAX_DISCOVERY_TAGS}
+                            placeholder={tags.length === 0 ? t('serverSettings.tagsPlaceholder') : ''}
+                            className="min-w-32 flex-1 bg-transparent px-1 py-0.5 outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+                          />
+                        </div>
+                        {tagInputFocused && canAutocompleteTag && availableTagSuggestions.length > 0 && (
+                          <div className="absolute z-20 mt-1 max-h-44 w-full overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+                            {availableTagSuggestions.map((suggestion) => (
+                              <button
+                                key={suggestion}
+                                type="button"
+                                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                                onMouseDown={(event) => {
+                                  event.preventDefault()
+                                  addDiscoveryTag(suggestion)
+                                }}
+                              >
+                                {suggestion}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <p className={cn(
+                        'text-xs',
+                        tagDraftInvalid ? 'text-destructive' : 'text-muted-foreground',
+                      )}>
+                        {tagDraftInvalid
+                          ? t('serverSettings.tagsInvalid', { tags: normalizedTagDraft })
+                          : t('serverSettings.tagsHint')}
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 <Separator />
 
@@ -1062,7 +1315,10 @@ export default function ServerSettingsModal() {
                 </div>
 
                 <div className="flex justify-end pt-2">
-                  <Button onClick={() => void handleSaveOverview()} disabled={savingOverview || !overviewChanged}>
+                  <Button
+                    onClick={() => void handleSaveOverview()}
+                    disabled={savingOverview || !overviewChanged || nextDiscoveryTags.invalid.length > 0}
+                  >
                     {savingOverview ? t('serverSettings.saving') : t('serverSettings.saveChanges')}
                   </Button>
                 </div>
