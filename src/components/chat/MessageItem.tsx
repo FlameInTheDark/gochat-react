@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, type ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -9,6 +9,7 @@ import {
   Copy,
   Hash,
   MessageSquare,
+  MoreHorizontal,
   MoveRight,
   Pencil,
   Reply as ReplyIcon,
@@ -29,6 +30,13 @@ import {
   ContextMenuTrigger,
   ContextMenuSeparator,
 } from '@/components/ui/context-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Dialog,
   DialogContent,
@@ -62,6 +70,7 @@ import { subscribeChannel, unsubscribeChannel } from '@/services/wsService'
 import type { DtoMessage, DtoMember, DtoGuild } from '@/types'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { MessageChannelChannelIdGetDirectionEnum, type DtoRole } from '@/client'
+import { allEmojis, emojiIndex } from '@/lib/emojiData'
 
 /** Extract unique invite codes from a message string.
  *  Matches URLs of the form: http(s)://host/invite/CODE
@@ -126,6 +135,9 @@ const THREAD_INITIAL_MESSAGE_TYPE = 4
 const MESSAGE_ITEM_QUERY_STALE_TIME = 5 * 60 * 1000
 const MESSAGE_REFERENCE_QUERY_GC_TIME = 60 * 1000
 const MESSAGE_REFERENCE_FETCH_LIMIT = 20
+const RECENT_EMOJI_KEY = 'gochat_recent_emojis'
+const QUICK_REACTION_COUNT = 3
+const DEFAULT_QUICK_REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢']
 
 // Default English join messages (fallback)
 const DEFAULT_JOIN_MESSAGES = [
@@ -146,6 +158,53 @@ function getJoinMessage(userId: string | number | undefined, messages: string[])
   // Use user ID to deterministically select a message
   const hash = String(userId).split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
   return messages[hash % messages.length]
+}
+
+function loadRecentEmojis(): string[] {
+  try {
+    const stored = localStorage.getItem(RECENT_EMOJI_KEY)
+    if (!stored) return []
+    const parsed: unknown = JSON.parse(stored)
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function saveRecentEmoji(emoji: string) {
+  try {
+    const next = [emoji, ...loadRecentEmojis().filter((value) => value !== emoji)].slice(0, 54)
+    localStorage.setItem(RECENT_EMOJI_KEY, JSON.stringify(next))
+  } catch {
+    // Recent emoji is a convenience cache; ignore storage failures.
+  }
+}
+
+function quickReactionFallbacks(exclude: Set<string>, count: number): string[] {
+  if (count <= 0) return []
+  const result: string[] = []
+
+  for (const candidate of DEFAULT_QUICK_REACTIONS) {
+    if (result.length >= count) break
+    if (exclude.has(candidate)) continue
+    exclude.add(candidate)
+    result.push(candidate)
+  }
+
+  for (const entry of allEmojis) {
+    if (result.length >= count) break
+    if (exclude.has(entry.emoji)) continue
+    exclude.add(entry.emoji)
+    result.push(entry.emoji)
+  }
+
+  return result
+}
+
+function getEmojiShortcode(emoji: string): string {
+  const entry = emojiIndex.get(emoji)
+  if (!entry) return emoji
+  return `:${entry.slug || entry.name.toLowerCase().replace(/\s+/g, '-')}:`
 }
 
 export default function MessageItem({
@@ -380,6 +439,23 @@ export default function MessageItem({
   const fullTimestamp = createdAtDate.toLocaleString()
   const isEdited = !!message.updated_at &&
     new Date(message.updated_at).getTime() - createdAtDate.getTime() > 5000
+  const quickReactionEmojis = useMemo(() => {
+    const picked: string[] = []
+    const seen = new Set<string>()
+
+    for (const emoji of loadRecentEmojis()) {
+      if (picked.length >= QUICK_REACTION_COUNT) break
+      if (!emojiIndex.has(emoji) || seen.has(emoji)) continue
+      seen.add(emoji)
+      picked.push(emoji)
+    }
+
+    if (picked.length < QUICK_REACTION_COUNT) {
+      picked.push(...quickReactionFallbacks(seen, QUICK_REACTION_COUNT - picked.length))
+    }
+
+    return picked
+  }, [])
 
   function handleAuthorClick(e: React.MouseEvent) {
     e.stopPropagation()
@@ -563,6 +639,117 @@ export default function MessageItem({
     }
   }
 
+  function handleQuickReaction(emoji: string) {
+    saveRecentEmoji(emoji)
+    void handleReactionEmojiSelect(emoji)
+  }
+
+  function renderMessageActionMenu(
+    Item: ComponentType<any>,
+    Separator: ComponentType<any>,
+  ) {
+    return (
+      <>
+        {hasRealMessageId && (
+          <>
+            <div className="flex flex-col gap-0.5 px-1 py-1">
+              <div className="flex items-center">
+                {quickReactionEmojis.map((emoji) => (
+                  <Item
+                    key={emoji}
+                    onClick={() => handleQuickReaction(emoji)}
+                    className="flex-1 h-8 !p-0 justify-center text-base"
+                  >
+                    {emoji}
+                  </Item>
+                ))}
+              </div>
+              <Item
+                onClick={() => {
+                  const rect = messageContainerRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    setReactionPickerRect(rect)
+                    setReactionPickerRightOf(false)
+                    setReactionPickerOpen(true)
+                  }
+                }}
+                className="gap-2"
+              >
+                <SmilePlus className="w-4 h-4" />
+                {t('messageItem.addReaction')}
+              </Item>
+              {(message.reactions?.length ?? 0) > 0 && (
+                <Item
+                  onClick={() => setReactionsDialogOpen(true)}
+                  className="gap-2"
+                >
+                  <Smile className="w-4 h-4" />
+                  {t('messageItem.seeReactions')}
+                </Item>
+              )}
+            </div>
+            <Separator />
+          </>
+        )}
+
+        {canEditMessage && (
+          <Item onClick={startEdit} className="gap-2">
+            <Pencil className="w-4 h-4" />
+            {t('messageItem.editMessage')}
+          </Item>
+        )}
+        {replyAction && (
+          <Item onClick={replyAction.onClick} className="gap-2">
+            <ReplyIcon className="w-4 h-4" />
+            {replyAction.label}
+          </Item>
+        )}
+        {threadAction && (
+          <Item onClick={threadAction.onClick} className="gap-2">
+            <Spool className="w-4 h-4" />
+            {threadAction.label}
+          </Item>
+        )}
+        {!isOwn && (
+          <Item onClick={() => void handleMessageUser()} className="gap-2">
+            <MessageSquare className="w-4 h-4" />
+            {t('messageItem.messageUser')}
+          </Item>
+        )}
+        {(canEditMessage || !!replyAction || !!threadAction || !isOwn) && (
+          <Separator />
+        )}
+
+        <Item onClick={handleCopy} className="gap-2">
+          <Copy className="w-4 h-4" />
+          {t('messageItem.copyText')}
+        </Item>
+        {hasRealMessageId && (
+          <Item
+            onClick={() => { void navigator.clipboard.writeText(messageId) }}
+            className="gap-2"
+          >
+            <Hash className="w-4 h-4" />
+            {t('messageItem.copyMessageId')}
+          </Item>
+        )}
+
+        {canDeleteMessage && (
+          <>
+            <Separator />
+            <Item
+              onClick={() => setDeleteOpen(true)}
+              className="text-destructive focus:text-destructive gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              {t('messageItem.deleteMessage')}
+            </Item>
+          </>
+        )}
+      </>
+    )
+  }
+
   // Check if this is a join message
   const isJoinMessage = message.type === JOIN_MESSAGE_TYPE
   const isThreadCreatedMessage = message.type === THREAD_CREATED_MESSAGE_TYPE
@@ -688,6 +875,27 @@ export default function MessageItem({
                 'absolute -top-3 right-2 z-10 flex items-center gap-0.5 rounded border border-border bg-background shadow-sm',
                 reactionPickerOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
               )}>
+                {quickReactionEmojis.map((emoji) => (
+                  <Tooltip key={emoji} delayDuration={400}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickReaction(emoji)}
+                        aria-label={`${t('messageItem.quickReact')} ${emoji}`}
+                        className="flex h-7 w-7 items-center justify-center rounded text-base transition-colors hover:bg-muted"
+                      >
+                        {emoji}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="flex flex-col items-center gap-0.5 text-center">
+                      <span className="font-semibold">{getEmojiShortcode(emoji)}</span>
+                      <span className="text-[11px] font-normal text-muted-foreground">
+                        {t('messageItem.clickToReact')}
+                      </span>
+                    </TooltipContent>
+                  </Tooltip>
+                ))}
+                <div className="mx-0.5 h-4 w-px bg-border" />
                 <Tooltip delayDuration={400}>
                   <TooltipTrigger asChild>
                     <button
@@ -717,6 +925,40 @@ export default function MessageItem({
                     <TooltipContent side="top">{replyAction.label}</TooltipContent>
                   </Tooltip>
                 )}
+                {canEditMessage && (
+                  <Tooltip delayDuration={400}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={startEdit}
+                        aria-label={t('messageItem.editMessage')}
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">{t('messageItem.editMessage')}</TooltipContent>
+                  </Tooltip>
+                )}
+                <DropdownMenu>
+                  <Tooltip delayDuration={400}>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={t('messageItem.moreActions')}
+                          className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">{t('messageItem.moreActions')}</TooltipContent>
+                  </Tooltip>
+                  <DropdownMenuContent side="left" align="start" sideOffset={4}>
+                    {renderMessageActionMenu(DropdownMenuItem, DropdownMenuSeparator)}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             )}
             {showReplyPreview && (
@@ -1001,106 +1243,7 @@ export default function MessageItem({
         </ContextMenuTrigger>
 
         <ContextMenuContent>
-          {/* Group 1: Quick reactions */}
-          {hasRealMessageId && (
-            <>
-              <div className="flex flex-col gap-0.5 px-1 py-1">
-                <div className="flex items-center">
-                  {(['👍', '❤️', '😂', '😮'] as const).map((emoji) => (
-                    <ContextMenuItem
-                      key={emoji}
-                      onClick={() => void handleReactionEmojiSelect(emoji)}
-                      className="flex-1 h-8 !p-0 justify-center text-base"
-                    >
-                      {emoji}
-                    </ContextMenuItem>
-                  ))}
-                </div>
-                <ContextMenuItem
-                  onClick={() => {
-                    const rect = messageContainerRef.current?.getBoundingClientRect()
-                    if (rect) {
-                      setReactionPickerRect(rect)
-                      setReactionPickerRightOf(false)
-                      setReactionPickerOpen(true)
-                    }
-                  }}
-                  className="gap-2"
-                >
-                  <SmilePlus className="w-4 h-4" />
-                  {t('messageItem.addReaction')}
-                </ContextMenuItem>
-                {(message.reactions?.length ?? 0) > 0 && (
-                  <ContextMenuItem
-                    onClick={() => setReactionsDialogOpen(true)}
-                    className="gap-2"
-                  >
-                    <Smile className="w-4 h-4" />
-                    {t('messageItem.seeReactions')}
-                  </ContextMenuItem>
-                )}
-              </div>
-              <ContextMenuSeparator />
-            </>
-          )}
-
-          {/* Group 2: Edit, Reply, Thread, Message User */}
-          {canEditMessage && (
-            <ContextMenuItem onClick={startEdit} className="gap-2">
-              <Pencil className="w-4 h-4" />
-              {t('messageItem.editMessage')}
-            </ContextMenuItem>
-          )}
-          {replyAction && (
-            <ContextMenuItem onClick={replyAction.onClick} className="gap-2">
-              <ReplyIcon className="w-4 h-4" />
-              {replyAction.label}
-            </ContextMenuItem>
-          )}
-          {threadAction && (
-            <ContextMenuItem onClick={threadAction.onClick} className="gap-2">
-              <Spool className="w-4 h-4" />
-              {threadAction.label}
-            </ContextMenuItem>
-          )}
-          {!isOwn && (
-            <ContextMenuItem onClick={() => void handleMessageUser()} className="gap-2">
-              <MessageSquare className="w-4 h-4" />
-              {t('messageItem.messageUser')}
-            </ContextMenuItem>
-          )}
-          {(canEditMessage || !!replyAction || !!threadAction || !isOwn) && (
-            <ContextMenuSeparator />
-          )}
-
-          {/* Group 3: Copy text, Copy ID */}
-          <ContextMenuItem onClick={handleCopy} className="gap-2">
-            <Copy className="w-4 h-4" />
-            {t('messageItem.copyText')}
-          </ContextMenuItem>
-          {hasRealMessageId && (
-            <ContextMenuItem
-              onClick={() => { void navigator.clipboard.writeText(messageId) }}
-              className="gap-2"
-            >
-              <Hash className="w-4 h-4" />
-              {t('messageItem.copyMessageId')}
-            </ContextMenuItem>
-          )}
-
-          {/* Group 4: Delete */}
-          {canDeleteMessage && (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem
-                onClick={() => setDeleteOpen(true)}
-                className="text-destructive focus:text-destructive gap-2"
-              >
-                <Trash2 className="w-4 h-4" />
-                {t('messageItem.deleteMessage')}
-              </ContextMenuItem>
-            </>
-          )}
+          {renderMessageActionMenu(ContextMenuItem, ContextMenuSeparator)}
         </ContextMenuContent>
       </ContextMenu>
 

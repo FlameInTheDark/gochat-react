@@ -31,6 +31,7 @@ import { getApiBaseUrl } from '@/lib/connectionConfig'
 import SecuritySection from '@/components/settings/SecuritySection'
 import { devicesFromVoiceSettings, voiceSettingsFromDevices } from '@/lib/voiceSettings'
 import type { VoiceSettings } from '@/stores/voiceStore'
+import { eventToKeyCombo, formatKeyCombo } from '@/lib/keyCombo'
 
 type Section = 'account' | 'appearance' | 'voice' | 'language' | 'security' | 'danger'
 
@@ -45,24 +46,6 @@ function hexToNum(hex: string): number {
 
 const DEFAULT_BANNER_COLOR = '#5865f2'
 const DEFAULT_PANEL_COLOR = '#2b2d31'
-
-/** Converts a KeyboardEvent.code like "KeyV" or "ShiftLeft" into a readable label. */
-function formatKeyCode(code: string): string {
-  if (code.startsWith('Key')) return code.slice(3).toUpperCase()
-  if (code.startsWith('Digit')) return code.slice(5)
-  if (code.startsWith('Numpad')) return 'Num ' + code.slice(6)
-  const map: Record<string, string> = {
-    ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift',
-    ControlLeft: 'Left Ctrl', ControlRight: 'Right Ctrl',
-    AltLeft: 'Left Alt', AltRight: 'Right Alt',
-    MetaLeft: 'Left Meta', MetaRight: 'Right Meta',
-    Space: 'Space', Tab: 'Tab', CapsLock: 'Caps Lock',
-    Backquote: '`', Minus: '-', Equal: '=',
-    BracketLeft: '[', BracketRight: ']', Backslash: '\\',
-    Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
-  }
-  return map[code] ?? code
-}
 
 function Toggle({ value, onToggle }: { value: boolean; onToggle: () => void }) {
   return (
@@ -134,6 +117,7 @@ export default function AppSettingsModal() {
   const [inputMode, setInputMode] = useState<'voice_activity' | 'push_to_talk'>('voice_activity')
   const [voiceActivityThreshold, setVoiceActivityThreshold] = useState(-60)
   const [pushToTalkKey, setPushToTalkKey] = useState('')
+  const [pushToTalkToggle, setPushToTalkToggle] = useState(false)
   const [isRecordingPTTKey, setIsRecordingPTTKey] = useState(false)
   const [savingVoice, setSavingVoice] = useState(false)
   const [voiceDirty, setVoiceDirty] = useState(false)
@@ -222,6 +206,7 @@ export default function AppSettingsModal() {
     setInputMode(next.inputMode ?? 'voice_activity')
     setVoiceActivityThreshold(next.voiceActivityThreshold ?? -60)
     setPushToTalkKey(next.pushToTalkKey ?? '')
+    setPushToTalkToggle(next.pushToTalkToggle ?? false)
     setVoiceDirty(false)
   }, [open, settingsData?.devices, voiceDirty])
 
@@ -357,7 +342,9 @@ export default function AppSettingsModal() {
     const handler = (e: KeyboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      setPushToTalkKey(e.code)
+      const combo = eventToKeyCombo(e)
+      if (!combo) return
+      setPushToTalkKey(combo)
       setIsRecordingPTTKey(false)
       setVoiceDirty(true)
     }
@@ -533,6 +520,7 @@ export default function AppSettingsModal() {
         inputMode,
         voiceActivityThreshold,
         pushToTalkKey,
+        pushToTalkToggle,
         videoInputDevice,
         denoiserType,
       }
@@ -562,6 +550,7 @@ export default function AppSettingsModal() {
     setInputMode('voice_activity')
     setVoiceActivityThreshold(-60)
     setPushToTalkKey('')
+    setPushToTalkToggle(false)
     setVideoInputDevice('')
     setVoiceDirty(true)
   }
@@ -1139,7 +1128,7 @@ export default function AppSettingsModal() {
                     )}
 
                     {inputMode === 'push_to_talk' && (
-                      <div className="space-y-2 pt-1">
+                      <div className="space-y-3 pt-1">
                         <Label className="text-sm text-muted-foreground">{t('settings.shortcut')}</Label>
                         <div className="flex gap-2 items-center">
                           <button
@@ -1153,9 +1142,9 @@ export default function AppSettingsModal() {
                             )}
                           >
                             {isRecordingPTTKey
-                              ? t('settings.pressAnyKey')
+                              ? t('settings.pressKeyCombo')
                               : pushToTalkKey
-                                ? formatKeyCode(pushToTalkKey)
+                                ? formatKeyCombo(pushToTalkKey)
                                 : t('settings.clickToSetKey')}
                           </button>
                           {pushToTalkKey && !isRecordingPTTKey && (
@@ -1168,6 +1157,17 @@ export default function AppSettingsModal() {
                               <X className="w-3.5 h-3.5" />
                             </Button>
                           )}
+                        </div>
+
+                        <div className="flex items-center justify-between py-1.5 gap-4">
+                          <div className="min-w-0">
+                            <p className="text-sm">{t('settings.pushToTalkToggleMode')}</p>
+                            <p className="text-xs text-muted-foreground">{t('settings.pushToTalkToggleModeDesc')}</p>
+                          </div>
+                          <Toggle
+                            value={pushToTalkToggle}
+                            onToggle={() => { setPushToTalkToggle((v) => !v); markVoiceDirty() }}
+                          />
                         </div>
                       </div>
                     )}

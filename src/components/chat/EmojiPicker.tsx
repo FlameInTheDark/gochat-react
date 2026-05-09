@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { emojiUrl } from '@/lib/emoji'
 import emojiGroupsData from 'unicode-emoji-json/data-by-group.json'
-import { type EmojiEntry, emojiIndex } from '@/lib/emojiData'
+import { allEmojis, type EmojiEntry, emojiIndex } from '@/lib/emojiData'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

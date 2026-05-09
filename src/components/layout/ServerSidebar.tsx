@@ -21,6 +21,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
   closestCenter,
   type DragStartEvent,
   type DragOverEvent,
@@ -33,9 +34,7 @@ import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
-  arrayMove,
 } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
 import { useTranslation } from 'react-i18next'
 import { userApi, guildApi, rolesApi } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
@@ -74,17 +73,24 @@ import { useNotificationSettings } from '@/hooks/useNotificationSettings'
 import { NotificationsSubmenu } from './NotificationsSubmenu'
 import Logo from "@/assets/logo.svg?react";
 
+const TOP_LEVEL_DROP_TOP = 'sidebar-top-level-drop-top'
+const TOP_LEVEL_DROP_BOTTOM = 'sidebar-top-level-drop-bottom'
+
 // ── Detect if a dragged guild is overlapping an icon enough to "merge" ────────
-// Returns true when the dragged item's centre is within ±20% of the target's
-// height from the target's centre.  This covers the central 40% of the icon,
-// leaving a generous 30% reorder zone at the top and bottom edges so the user
-// can easily drop above/below without triggering a merge.
+// Returns true when the dragged item visibly overlaps the target icon. Insertion
+// lines are reserved for the spaces between icons; touching the icon itself
+// should clearly mean "drop onto this server/folder".
 function isCenterOver(active: Active, overRect: ClientRect): boolean {
   const translated = active.rect.current.translated
   if (!translated) return false
-  const activeCY = translated.top + translated.height / 2
-  const mid = overRect.top + overRect.height / 2
-  return Math.abs(activeCY - mid) < overRect.height * 0.20
+  const mergeSlop = 10
+  const verticalOverlap =
+    Math.min(translated.bottom, overRect.bottom + mergeSlop) -
+    Math.max(translated.top, overRect.top - mergeSlop)
+  const horizontalOverlap =
+    Math.min(translated.right, overRect.right + mergeSlop) -
+    Math.max(translated.left, overRect.left - mergeSlop)
+  return verticalOverlap > 4 && horizontalOverlap > 4
 }
 
 // ── Parse an 'ifguild:folderId:guildId' item id ───────────────────────────────
@@ -109,11 +115,43 @@ function DropBar({ position }: { position: 'before' | 'after' }) {
   return (
     <div
       className={cn(
-        'absolute left-1/2 -translate-x-1/2 w-10 h-0.5 bg-primary rounded-full pointer-events-none z-20',
-        position === 'before' ? '-top-1.5' : '-bottom-1.5',
+        'absolute left-1/2 -translate-x-1/2 w-14 h-1 bg-emerald-400 rounded-full pointer-events-none z-30',
+        'shadow-[0_0_0_2px_var(--color-sidebar)]',
+        position === 'before' ? '-top-2' : '-bottom-2',
       )}
     />
   )
+}
+
+function MergeDot() {
+  return (
+    <span className="pointer-events-none absolute left-0 top-1/2 z-40 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400 ring-2 ring-sidebar shadow-lg" />
+  )
+}
+
+function moveItemNextTo(order: string[], activeId: string, overId: string, edge: 'before' | 'after') {
+  const withoutActive = order.filter((item) => item !== activeId)
+  const overIndex = withoutActive.indexOf(overId)
+  if (overIndex === -1) return order
+  const insertIndex = edge === 'after' ? overIndex + 1 : overIndex
+  return [
+    ...withoutActive.slice(0, insertIndex),
+    activeId,
+    ...withoutActive.slice(insertIndex),
+  ]
+}
+
+function moveItemToBoundary(order: string[], activeId: string, boundary: 'start' | 'end') {
+  const withoutActive = order.filter((item) => item !== activeId)
+  return boundary === 'start'
+    ? [activeId, ...withoutActive]
+    : [...withoutActive, activeId]
+}
+
+function insertionIndexFor(ids: string[], overId: string, edge: 'before' | 'after') {
+  const overIndex = ids.indexOf(overId)
+  if (overIndex === -1) return ids.length
+  return edge === 'after' ? overIndex + 1 : overIndex
 }
 
 // ── Custom collision detection for folder extraction ─────────────────────────
@@ -432,7 +470,7 @@ function SortableGuildIconImpl({
 }: SortableGuildIconProps) {
   const { t } = useTranslation()
   const { getGuildNotifications, setGuildNotifications } = useNotificationSettings()
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, transition, isDragging } = useSortable({
     id: itemId,
   })
   const guildId = String(guild.id)
@@ -440,9 +478,7 @@ function SortableGuildIconImpl({
   const mentionCount = useMentionStore((s) => s.getGuildMentionCount(guildId))
 
   const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.3 : 1,
   }
 
   return (
@@ -455,19 +491,28 @@ function SortableGuildIconImpl({
           <ContextMenuTrigger asChild>
             <TooltipTrigger asChild>
               <div className="relative w-12 h-12 shrink-0">
+                {isMergeTarget && <MergeDot />}
                 <button
                   {...attributes}
                   {...listeners}
                   onClick={onNavigate}
                   className={cn(
                     'w-12 h-12 transition-all squircle overflow-hidden',
-                    isMergeTarget && 'scale-110 shadow-[inset_0_0_0_3px_hsl(var(--primary))]',
+                    isDragging && 'bg-muted/60 ring-1 ring-emerald-400/60',
+                    isMergeTarget && 'brightness-110',
                   )}
                 >
                   {guild.icon?.url ? (
-                    <img src={guild.icon.url} alt={guild.name ?? ''} className="w-full h-full object-cover" />
+                    <img
+                      src={guild.icon.url}
+                      alt={guild.name ?? ''}
+                      className={cn('w-full h-full object-cover', isDragging && 'opacity-0')}
+                    />
                   ) : (
-                    <span className="w-full h-full flex items-center justify-center font-bold text-muted-foreground bg-muted">
+                    <span className={cn(
+                      'w-full h-full flex items-center justify-center font-bold text-muted-foreground bg-muted',
+                      isDragging && 'opacity-0',
+                    )}>
                       {(guild.name ?? '?').charAt(0).toUpperCase()}
                     </span>
                   )}
@@ -589,16 +634,14 @@ function SortableGuildInPanelImpl({
 }: SortableGuildInPanelProps) {
   const { t } = useTranslation()
   const { getGuildNotifications, setGuildNotifications } = useNotificationSettings()
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, transition, isDragging } = useSortable({
     id: itemId,
   })
   const isUnread = useUnreadStore((s) => s.isGuildUnread(String(guild.id)))
   const mentionCount = useMentionStore((s) => s.getGuildMentionCount(String(guild.id)))
 
   const dndStyle: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.25 : 1,
   }
 
   return (
@@ -619,12 +662,22 @@ function SortableGuildInPanelImpl({
                   {...attributes}
                   {...listeners}
                   onClick={onNavigate}
-                  className="w-10 h-10 transition-all squircle overflow-hidden"
+                  className={cn(
+                    'w-10 h-10 transition-all squircle overflow-hidden',
+                    isDragging && 'bg-muted/60 ring-1 ring-emerald-400/60',
+                  )}
                 >
                   {guild.icon?.url ? (
-                    <img src={guild.icon.url} alt={guild.name ?? ''} className="w-full h-full object-cover" />
+                    <img
+                      src={guild.icon.url}
+                      alt={guild.name ?? ''}
+                      className={cn('w-full h-full object-cover', isDragging && 'opacity-0')}
+                    />
                   ) : (
-                    <span className="w-full h-full flex items-center justify-center font-bold text-muted-foreground bg-muted text-sm">
+                    <span className={cn(
+                      'w-full h-full flex items-center justify-center font-bold text-muted-foreground bg-muted text-sm',
+                      isDragging && 'opacity-0',
+                    )}>
                       {(guild.name ?? '?').charAt(0).toUpperCase()}
                     </span>
                   )}
@@ -743,15 +796,12 @@ function SortableFolderItem({
     attributes,
     listeners,
     setNodeRef,
-    transform,
     transition,
     isDragging,
   } = useSortable({ id: itemId })
 
   const dndStyle: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.25 : 1,
   }
 
   const tokens = computeFolderTokens(folder.color)
@@ -783,12 +833,14 @@ function SortableFolderItem({
                   {...listeners}
                   onClick={() => toggleCollapse(folder.id)}
                   className={cn(
-                    'w-12 h-12 squircle flex items-center justify-center',
+                    'relative w-12 h-12 squircle flex items-center justify-center',
                     'transition-all shrink-0 hover:brightness-110 active:scale-95',
-                    isDragTarget && 'scale-110 shadow-[inset_0_0_0_3px_hsl(var(--primary))]',
+                    isDragging && 'opacity-50 ring-1 ring-emerald-400/60',
+                    isDragTarget && 'brightness-110',
                   )}
                   style={{ backgroundColor: 'var(--fc-collapsed-bg)' }}
                 >
+                  {isDragTarget && <MergeDot />}
                   {/* 2×2 mini icon grid */}
                   <div className="grid grid-cols-2 gap-[3px]">
                     {guildsInFolder.slice(0, 4).map((g) => (
@@ -828,6 +880,7 @@ function SortableFolderItem({
       >
         {/* Folder header — drag handle + collapse toggle */}
         <div className="relative">
+          {isDragTarget && <MergeDot />}
           <UnreadPill isActive={false} isUnread={isUnread} groupClass="group/folder" leftClass="left-[-14px]" />
           <ContextMenu>
             <Tooltip>
@@ -841,7 +894,8 @@ function SortableFolderItem({
                     className={cn(
                       'w-10 h-10 squircle flex items-center justify-center',
                       'transition-all shrink-0 hover:brightness-110 active:scale-95',
-                      isDragTarget && 'shadow-[inset_0_0_0_3px_hsl(var(--primary))]',
+                      isDragging && 'opacity-50 ring-1 ring-emerald-400/60',
+                      isDragTarget && 'brightness-110',
                     )}
                   >
                     <Folder className="w-5 h-5 opacity-70 text-white" />
@@ -889,6 +943,31 @@ function SortableFolderItem({
  */
 function MiniGuildIconWithUnread({ guild }: { guild: DtoGuild }) {
   return <MiniGuildIcon guild={guild} />
+}
+
+function TopLevelDropZone({
+  id,
+  active,
+  placement,
+}: {
+  id: string
+  active: boolean
+  placement: 'top' | 'bottom'
+}) {
+  const { setNodeRef } = useDroppable({ id })
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'absolute left-0 right-0 z-20 h-7',
+        placement === 'top' ? '-top-3.5' : '-bottom-3.5',
+      )}
+    >
+      {active && (
+        <div className="absolute left-1/2 top-1/2 z-30 h-1 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400 shadow-[0_0_0_2px_var(--color-sidebar)] pointer-events-none" />
+      )}
+    </div>
+  )
 }
 
 // ── Main ServerSidebar ────────────────────────────────────────────────────────
@@ -1142,6 +1221,21 @@ export default function ServerSidebar() {
     const activeStr = String(active.id)
     const overStr = String(over.id)
 
+    if (overStr === TOP_LEVEL_DROP_TOP || overStr === TOP_LEVEL_DROP_BOTTOM) {
+      setOverMergeId(null)
+      overMergeRef.current = null
+      const nextIndicator: DropIndicator = {
+        itemId: overStr,
+        edge: overStr === TOP_LEVEL_DROP_TOP ? 'before' : 'after',
+      }
+      setDropIndicator((prev) =>
+        prev?.itemId === nextIndicator.itemId && prev.edge === nextIndicator.edge
+          ? prev
+          : nextIndicator,
+      )
+      return
+    }
+
     // ── Merge highlight ──────────────────────────────────────────────────────
     // Only top-level guilds and folders can be merge targets.
     // Guilds inside folders (ifguild:) are NOT merge targets — they only
@@ -1191,6 +1285,7 @@ export default function ServerSidebar() {
     // This is the source of truth: if the user saw a merge highlight, we merge.
     // If not (edge zone), we do a positional reorder.
     const mergeTarget = overMergeRef.current
+    const dropTarget = dropIndicator
 
     setActiveId(null)
     setOverMergeId(null)
@@ -1214,6 +1309,20 @@ export default function ServerSidebar() {
     // Was the drop target highlighted for merge at the moment of drop?
     const wasMerging = mergeTarget === overStr
 
+    if (overStr === TOP_LEVEL_DROP_TOP || overStr === TOP_LEVEL_DROP_BOTTOM) {
+      const boundary = overStr === TOP_LEVEL_DROP_TOP ? 'start' : 'end'
+      if (parsedActive) {
+        removeGuildFromFolder(parsedActive.guildId)
+        const guildItem = `guild:${parsedActive.guildId}`
+        reorderItems(moveItemToBoundary(useFolderStore.getState().itemOrder, guildItem, boundary))
+        return
+      }
+      if (activeStr.startsWith('guild:') || activeStr.startsWith('folder:')) {
+        reorderItems(moveItemToBoundary(itemOrder, activeStr, boundary))
+      }
+      return
+    }
+
     // ── A: Guild dropped onto a FOLDER icon (centre = add, edge = reorder) ────
     if (activeStr.startsWith('guild:') && overStr.startsWith('folder:') && wasMerging) {
       addGuildToFolder(overStr.slice(7), activeStr.slice(6))
@@ -1223,6 +1332,19 @@ export default function ServerSidebar() {
     // ── B: Guild dropped onto another top-level GUILD (centre = create folder) ─
     if (activeStr.startsWith('guild:') && overStr.startsWith('guild:') && wasMerging) {
       createFolder('', 0, [activeStr.slice(6), overStr.slice(6)])
+      return
+    }
+
+    // ── C0: Top-level guild dropped into an expanded folder at a specific slot ─
+    if (activeStr.startsWith('guild:') && parsedOver) {
+      const targetFolder = folders.find((f) => f.id === parsedOver.folderId)
+      if (!targetFolder) return
+      const edge = dropTarget?.itemId === overStr ? dropTarget.edge : 'before'
+      addGuildToFolder(
+        parsedOver.folderId,
+        activeStr.slice(6),
+        insertionIndexFor(targetFolder.guildIds, parsedOver.guildId, edge),
+      )
       return
     }
 
@@ -1243,7 +1365,12 @@ export default function ServerSidebar() {
       const guildIdx = updatedOrder.indexOf(guildItem)
       const targetIdx = updatedOrder.indexOf(overStr)
       if (guildIdx !== -1 && targetIdx !== -1 && guildIdx !== targetIdx) {
-        reorderItems(arrayMove(updatedOrder, guildIdx, targetIdx))
+        reorderItems(moveItemNextTo(
+          updatedOrder,
+          guildItem,
+          overStr,
+          dropTarget?.itemId === overStr ? dropTarget.edge : 'before',
+        ))
       }
       return
     }
@@ -1255,14 +1382,26 @@ export default function ServerSidebar() {
       const oi = folder.guildIds.indexOf(parsedActive.guildId)
       const ni = folder.guildIds.indexOf(parsedOver.guildId)
       if (oi !== -1 && ni !== -1 && oi !== ni) {
-        reorderFolderGuilds(parsedActive.folderId, arrayMove(folder.guildIds, oi, ni))
+        const edge = dropTarget?.itemId === overStr ? dropTarget.edge : 'before'
+        reorderFolderGuilds(
+          parsedActive.folderId,
+          moveItemNextTo(folder.guildIds, parsedActive.guildId, parsedOver.guildId, edge),
+        )
       }
       return
     }
 
-    // ── E: Guild-in-folder dropped onto guild in DIFFERENT folder → extract ───
+    // ── E: Guild-in-folder dropped onto guild in DIFFERENT folder → move there ─
     if (parsedActive && parsedOver && parsedActive.folderId !== parsedOver.folderId) {
+      const targetFolder = folders.find((f) => f.id === parsedOver.folderId)
+      if (!targetFolder) return
+      const edge = dropTarget?.itemId === overStr ? dropTarget.edge : 'before'
       removeGuildFromFolder(parsedActive.guildId)
+      addGuildToFolder(
+        parsedOver.folderId,
+        parsedActive.guildId,
+        insertionIndexFor(targetFolder.guildIds, parsedOver.guildId, edge),
+      )
       return
     }
 
@@ -1280,7 +1419,12 @@ export default function ServerSidebar() {
       const guildIdx = updatedOrder.indexOf(guildItem)
       const targetIdx = updatedOrder.indexOf(overStr)
       if (guildIdx !== -1 && targetIdx !== -1 && guildIdx !== targetIdx) {
-        reorderItems(arrayMove(updatedOrder, guildIdx, targetIdx))
+        reorderItems(moveItemNextTo(
+          updatedOrder,
+          guildItem,
+          overStr,
+          dropTarget?.itemId === overStr ? dropTarget.edge : 'before',
+        ))
       }
       return
     }
@@ -1293,7 +1437,12 @@ export default function ServerSidebar() {
       const oi = itemOrder.indexOf(activeStr)
       const ni = itemOrder.indexOf(overStr)
       if (oi !== -1 && ni !== -1 && oi !== ni) {
-        reorderItems(arrayMove(itemOrder, oi, ni))
+        reorderItems(moveItemNextTo(
+          itemOrder,
+          activeStr,
+          overStr,
+          dropTarget?.itemId === overStr ? dropTarget.edge : 'before',
+        ))
       }
       return
     }
@@ -1350,69 +1499,83 @@ export default function ServerSidebar() {
 
           <SeparatorSmall className="w-8 shrink-0" />
 
-          {/* Sortable guild + folder items */}
-          <SortableContext items={displayItems} strategy={verticalListSortingStrategy}>
-            {displayItems.map((itemId) => {
-              // ── Ungrouped guild ──────────────────────────────────────────────
-              if (itemId.startsWith('guild:')) {
-                const guildId = itemId.slice(6)
-                const guild = guildById.get(guildId)
-                if (!guild) return null
-                return (
-                  <SortableGuildIcon
-                    key={itemId}
-                    itemId={itemId}
-                    guild={guild}
-                    isActive={guildId === serverId}
-                    isMergeTarget={overMergeId === itemId}
-                    dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
-                    dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
-                    onNavigate={() => { if (guildId !== serverId) navigate(`/app/${guildId}`) }}
-                    onOpenSettings={() => openServerSettings(guildId)}
-                    onLeave={() => setLeavingGuild(guild)}
-                    onNewFolder={() => openCreateFolder(guildId)}
-                    onAddToFolder={(fid) => addGuildToFolder(fid, guildId)}
-                    folders={folders}
-                    canManageServer={canManageServerMap.get(guildId) ?? false}
-                    isOwner={isOwnerMap.get(guildId) ?? false}
-                  />
-                )
-              }
+          <div className="relative flex w-full flex-col items-center gap-3">
+            <TopLevelDropZone
+              id={TOP_LEVEL_DROP_TOP}
+              active={dropIndicator?.itemId === TOP_LEVEL_DROP_TOP}
+              placement="top"
+            />
 
-              // ── Folder (collapsed or expanded with inline panel) ──────────────
-              if (itemId.startsWith('folder:')) {
-                const folderId = itemId.slice(7)
-                const folder = folders.find((f) => f.id === folderId)
-                if (!folder) return null
-                const guildsInFolder = folder.guildIds
-                  .map((id) => guildById.get(id))
-                  .filter((g): g is DtoGuild => !!g)
-                return (
-                  <SortableFolderItem
-                    key={itemId}
-                    itemId={itemId}
-                    folder={folder}
-                    guildsInFolder={guildsInFolder}
-                    activeServerId={serverId}
-                    isDragTarget={overMergeId === itemId}
-                    dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
-                    dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
-                    dropIndicator={dropIndicator}
-                    onEditFolder={() => openEditFolder(folder)}
-                    onDissolveFolder={() => deleteFolder(folder.id)}
-                    onNavigateGuild={(gid) => { if (gid !== serverId) navigate(`/app/${gid}`) }}
-                    onGuildSettings={(gid) => openServerSettings(gid)}
-                    onLeaveGuild={(g) => setLeavingGuild(g)}
-                    onRemoveGuildFromFolder={(gid) => removeGuildFromFolder(gid)}
-                    canManageServerMap={canManageServerMap}
-                    isOwnerMap={isOwnerMap}
-                  />
-                )
-              }
+            {/* Sortable guild + folder items */}
+            <SortableContext items={displayItems} strategy={verticalListSortingStrategy}>
+              {displayItems.map((itemId) => {
+                // ── Ungrouped guild ──────────────────────────────────────────────
+                if (itemId.startsWith('guild:')) {
+                  const guildId = itemId.slice(6)
+                  const guild = guildById.get(guildId)
+                  if (!guild) return null
+                  return (
+                    <SortableGuildIcon
+                      key={itemId}
+                      itemId={itemId}
+                      guild={guild}
+                      isActive={guildId === serverId}
+                      isMergeTarget={overMergeId === itemId}
+                      dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
+                      dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
+                      onNavigate={() => { if (guildId !== serverId) navigate(`/app/${guildId}`) }}
+                      onOpenSettings={() => openServerSettings(guildId)}
+                      onLeave={() => setLeavingGuild(guild)}
+                      onNewFolder={() => openCreateFolder(guildId)}
+                      onAddToFolder={(fid) => addGuildToFolder(fid, guildId)}
+                      folders={folders}
+                      canManageServer={canManageServerMap.get(guildId) ?? false}
+                      isOwner={isOwnerMap.get(guildId) ?? false}
+                    />
+                  )
+                }
 
-              return null
-            })}
-          </SortableContext>
+                // ── Folder (collapsed or expanded with inline panel) ──────────────
+                if (itemId.startsWith('folder:')) {
+                  const folderId = itemId.slice(7)
+                  const folder = folders.find((f) => f.id === folderId)
+                  if (!folder) return null
+                  const guildsInFolder = folder.guildIds
+                    .map((id) => guildById.get(id))
+                    .filter((g): g is DtoGuild => !!g)
+                  return (
+                    <SortableFolderItem
+                      key={itemId}
+                      itemId={itemId}
+                      folder={folder}
+                      guildsInFolder={guildsInFolder}
+                      activeServerId={serverId}
+                      isDragTarget={overMergeId === itemId}
+                      dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
+                      dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
+                      dropIndicator={dropIndicator}
+                      onEditFolder={() => openEditFolder(folder)}
+                      onDissolveFolder={() => deleteFolder(folder.id)}
+                      onNavigateGuild={(gid) => { if (gid !== serverId) navigate(`/app/${gid}`) }}
+                      onGuildSettings={(gid) => openServerSettings(gid)}
+                      onLeaveGuild={(g) => setLeavingGuild(g)}
+                      onRemoveGuildFromFolder={(gid) => removeGuildFromFolder(gid)}
+                      canManageServerMap={canManageServerMap}
+                      isOwnerMap={isOwnerMap}
+                    />
+                  )
+                }
+
+                return null
+              })}
+            </SortableContext>
+
+            <TopLevelDropZone
+              id={TOP_LEVEL_DROP_BOTTOM}
+              active={dropIndicator?.itemId === TOP_LEVEL_DROP_BOTTOM}
+              placement="bottom"
+            />
+          </div>
 
           {/* Add / Join server buttons */}
           <Tooltip>

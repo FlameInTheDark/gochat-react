@@ -23,6 +23,8 @@ import NotFoundPage from '@/pages/NotFoundPage'
 import CreateServerModal from '@/components/modals/CreateServerModal'
 import CreateChannelModal from '@/components/modals/CreateChannelModal'
 import CreateCategoryModal from '@/components/modals/CreateCategoryModal'
+import AuthProblemModal from '@/components/modals/AuthProblemModal'
+import { performLogout } from '@/lib/logoutCleanup'
 
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI
@@ -75,6 +77,11 @@ const router = createBrowserRouter([
 ], { basename: import.meta.env.VITE_BASE_PATH || '/' })
 
 export default function App() {
+  function handleAuthProblemLogout() {
+    performLogout()
+    void router.navigate('/')
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -88,6 +95,7 @@ export default function App() {
         <CreateServerModal />
         <CreateChannelModal />
         <CreateCategoryModal />
+        <AuthProblemModal onLogout={handleAuthProblemLogout} />
         <Toaster richColors position="bottom-right" />
       </TooltipProvider>
     </QueryClientProvider>

@@ -450,8 +450,8 @@ export default function ChannelSettingsModal() {
         <div className="flex flex-1 min-w-0">
           <div
             className={cn(
-              'flex-1 py-16 overflow-y-auto',
-              section === 'permissions' ? 'px-6' : 'px-10 max-w-2xl',
+              'flex-1 min-h-0 py-16',
+              section === 'permissions' ? 'px-6 overflow-hidden' : 'px-10 max-w-2xl overflow-y-auto',
             )}
           >
 
@@ -647,11 +647,11 @@ export default function ChannelSettingsModal() {
                 })()}
 
                 {/* Right: Permission editor */}
-                <div className="flex-1 min-w-0 overflow-y-auto">
+                <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
                   {selectedRoleId ? (() => {
                     const selectedRole = roles.find((r) => String(r.id) === selectedRoleId)
                     return (
-                      <div className="space-y-6 pb-8">
+                      <div className="flex h-full min-h-0 flex-col gap-6">
                         <div className="flex items-start justify-between gap-4">
                           <div>
                             <h2 className="text-xl font-bold">
@@ -693,53 +693,55 @@ export default function ChannelSettingsModal() {
                         </div>
 
                         {/* Permission categories */}
-                        {CHANNEL_PERM_DEFS.map((cat) => (
-                          <div key={cat.category}>
-                            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                              {cat.category}
-                            </p>
-                            <div className="rounded-lg border border-border overflow-hidden">
-                              {cat.perms.map((perm, idx) => {
-                                const isLast = idx === cat.perms.length - 1
-                                const state = getPermState(perm.bit)
-                                return (
-                                  <div
-                                    key={perm.bit}
-                                    className={cn(
-                                      'flex items-center gap-4 px-4 py-3 hover:bg-accent/20 transition-colors',
-                                      !isLast && 'border-b border-border',
-                                    )}
-                                  >
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium">{perm.label}</p>
-                                      <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                                        {perm.desc}
-                                      </p>
+                        <div className="min-h-0 flex-1 overflow-y-auto pr-2 space-y-6">
+                          {CHANNEL_PERM_DEFS.map((cat) => (
+                            <div key={cat.category}>
+                              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                                {cat.category}
+                              </p>
+                              <div className="rounded-lg border border-border overflow-hidden">
+                                {cat.perms.map((perm, idx) => {
+                                  const isLast = idx === cat.perms.length - 1
+                                  const state = getPermState(perm.bit)
+                                  return (
+                                    <div
+                                      key={perm.bit}
+                                      className={cn(
+                                        'flex items-center gap-4 px-4 py-3 hover:bg-accent/20 transition-colors',
+                                        !isLast && 'border-b border-border',
+                                      )}
+                                    >
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium">{perm.label}</p>
+                                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                                          {perm.desc}
+                                        </p>
+                                      </div>
+                                      {/* 3-state buttons */}
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        <PermStateButton
+                                          state={state} target="inherit"
+                                          onClick={() => setPermState(perm.bit, 'inherit')}
+                                        />
+                                        <PermStateButton
+                                          state={state} target="allow"
+                                          onClick={() => setPermState(perm.bit, 'allow')}
+                                        />
+                                        <PermStateButton
+                                          state={state} target="deny"
+                                          onClick={() => setPermState(perm.bit, 'deny')}
+                                        />
+                                      </div>
                                     </div>
-                                    {/* 3-state buttons */}
-                                    <div className="flex items-center gap-1 shrink-0">
-                                      <PermStateButton
-                                        state={state} target="inherit"
-                                        onClick={() => setPermState(perm.bit, 'inherit')}
-                                      />
-                                      <PermStateButton
-                                        state={state} target="allow"
-                                        onClick={() => setPermState(perm.bit, 'allow')}
-                                      />
-                                      <PermStateButton
-                                        state={state} target="deny"
-                                        onClick={() => setPermState(perm.bit, 'deny')}
-                                      />
-                                    </div>
-                                  </div>
-                                )
-                              })}
+                                  )
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
 
                         {/* Save row */}
-                        <div className="flex items-center justify-between pt-2 border-t border-border">
+                        <div className="shrink-0 flex items-center justify-between pt-4 border-t border-border bg-background">
                           <p className="text-xs text-muted-foreground">
                             {editAccept === 0 && editDeny === 0
                               ? 'All permissions inherited — role is still added to this channel.'

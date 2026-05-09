@@ -1101,10 +1101,10 @@ export default function ServerSettingsModal() {
         )}>
           <div
             className={cn(
-              'flex-1 overflow-y-auto h-full',
+              'flex-1 h-full min-h-0',
               isMobile
-                ? 'py-4 px-4'
-                : section === 'roles' ? 'py-16 px-6 max-w-5xl' : 'py-16 px-8 max-w-3xl',
+                ? section === 'roles' ? 'py-4 px-4 overflow-hidden' : 'py-4 px-4 overflow-y-auto'
+                : section === 'roles' ? 'py-16 px-6 max-w-5xl overflow-hidden' : 'py-16 px-8 max-w-3xl overflow-y-auto',
             )}
           >
 
@@ -1120,10 +1120,21 @@ export default function ServerSettingsModal() {
                     onClick={() => !uploadingIcon && iconInputRef.current?.click()}
                     title={t('serverSettings.changeIcon')}
                   >
-                    <div className="w-16 h-16 rounded-2xl overflow-hidden bg-primary flex items-center justify-center text-primary-foreground text-2xl font-bold select-none">
-                      {(localIconUrl ?? guild?.icon?.url)
-                        ? <img src={localIconUrl ?? guild!.icon!.url} alt={guild?.name ?? ''} className="w-full h-full object-cover" />
-                        : serverInitials}
+                    <div
+                      className={cn(
+                        'w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center text-2xl font-bold select-none',
+                        (localIconUrl ?? guild?.icon?.url)
+                          ? 'bg-muted/30'
+                          : 'bg-primary text-primary-foreground',
+                      )}
+                    >
+                      {(localIconUrl ?? guild?.icon?.url) ? (
+                        <img
+                          src={localIconUrl ?? guild!.icon!.url}
+                          alt={guild?.name ?? ''}
+                          className="w-full h-full object-contain"
+                        />
+                      ) : serverInitials}
                     </div>
                     {/* Hover overlay */}
                     {!uploadingIcon && (
@@ -1650,7 +1661,7 @@ export default function ServerSettingsModal() {
 
                 {/* Right: Role editor */}
                 <div className={cn(
-                  'flex-1 min-w-0 overflow-y-auto',
+                  'flex-1 min-w-0 flex flex-col overflow-hidden',
                   isMobile && mobileRoleShowList && 'hidden',
                 )}>
                   {isMobile && (
@@ -1666,7 +1677,7 @@ export default function ServerSettingsModal() {
                     const isEveryoneSelected = selectedRoleId === EVERYONE_ID
                     const selectedRole = isEveryoneSelected ? null : roleMap.get(selectedRoleId)
                     return (
-                      <div className="space-y-6 pb-8">
+                      <div className="flex h-full min-h-0 flex-col gap-6">
                         <div className="flex items-start justify-between gap-4">
                           <div>
                             <h2 className="text-xl font-bold">
@@ -1726,54 +1737,56 @@ export default function ServerSettingsModal() {
                         )}
 
                         {/* Permissions */}
-                        {permissionDefs.map((cat) => (
-                          <div key={cat.category}>
-                            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                              {cat.category}
-                            </p>
-                            <div className="rounded-lg border border-border overflow-hidden">
-                              {cat.perms.map((perm, idx) => {
-                                const isLast = idx === cat.perms.length - 1
-                                const effectivelyOn = isAdmin && perm.bit !== 26
-                                  ? true
-                                  : hasPermission(perm.bit)
-                                const isDisabled = isAdmin && perm.bit !== 26
-                                return (
-                                  <div
-                                    key={perm.bit}
-                                    className={cn(
-                                      'flex items-start gap-4 px-4 py-3 transition-colors',
-                                      !isLast && 'border-b border-border',
-                                      isDisabled ? 'opacity-50' : 'hover:bg-accent/20',
-                                    )}
-                                  >
-                                    <div className="flex-1 min-w-0">
-                                      <p className={cn(
-                                        'text-sm font-medium',
-                                        perm.danger && !isDisabled && 'text-red-400',
-                                      )}>
-                                        {perm.label}
-                                      </p>
-                                      <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                                        {perm.desc}
-                                      </p>
+                        <div className="min-h-0 flex-1 overflow-y-auto pr-2 space-y-6">
+                          {permissionDefs.map((cat) => (
+                            <div key={cat.category}>
+                              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                                {cat.category}
+                              </p>
+                              <div className="rounded-lg border border-border overflow-hidden">
+                                {cat.perms.map((perm, idx) => {
+                                  const isLast = idx === cat.perms.length - 1
+                                  const effectivelyOn = isAdmin && perm.bit !== 26
+                                    ? true
+                                    : hasPermission(perm.bit)
+                                  const isDisabled = isAdmin && perm.bit !== 26
+                                  return (
+                                    <div
+                                      key={perm.bit}
+                                      className={cn(
+                                        'flex items-start gap-4 px-4 py-3 transition-colors',
+                                        !isLast && 'border-b border-border',
+                                        isDisabled ? 'opacity-50' : 'hover:bg-accent/20',
+                                      )}
+                                    >
+                                      <div className="flex-1 min-w-0">
+                                        <p className={cn(
+                                          'text-sm font-medium',
+                                          perm.danger && !isDisabled && 'text-red-400',
+                                        )}>
+                                          {perm.label}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                                          {perm.desc}
+                                        </p>
+                                      </div>
+                                      <div className="pt-0.5 shrink-0">
+                                        <Toggle
+                                          value={effectivelyOn}
+                                          onToggle={() => togglePermission(perm.bit)}
+                                          disabled={isDisabled}
+                                        />
+                                      </div>
                                     </div>
-                                    <div className="pt-0.5 shrink-0">
-                                      <Toggle
-                                        value={effectivelyOn}
-                                        onToggle={() => togglePermission(perm.bit)}
-                                        disabled={isDisabled}
-                                      />
-                                    </div>
-                                  </div>
-                                )
-                              })}
+                                  )
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
 
                         {/* Save row */}
-                        <div className="flex items-center justify-between pt-2 border-t border-border">
+                        <div className="shrink-0 flex items-center justify-between pt-4 border-t border-border bg-background">
                           <div className="text-xs text-muted-foreground">
                             {!isEveryoneSelected && selectedRole && (
                               <>
