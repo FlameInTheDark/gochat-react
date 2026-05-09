@@ -29,6 +29,13 @@ interface FolderState {
    * never re-runs after loadFromSettings wipes itemOrder.
    */
   settingsVersion: number
+  /**
+   * True after order-bearing settings were loaded, or after the user explicitly
+   * changed the server/folder layout. While false, itemOrder is only a display
+   * fallback built from /user/me/guilds and must not be persisted by passive
+   * selected-channel saves.
+   */
+  settingsLoaded: boolean
   /** Last selected channel per guild, keyed by guildId string. */
   selectedChannels: Record<string, string>
 
@@ -96,14 +103,15 @@ function buildFolderPayload(
   )
   const topLevelSettings = itemOrder
     .filter((x) => x.startsWith('guild:'))
-    .map((item, pos) => {
+    .map((item) => {
       const guildId = item.slice(6)
       const prev = existingGuildsMap.get(guildId)
       const selCh = selectedChannels[guildId]
+      const topLevelPosition = itemOrder.indexOf(item)
       return {
         ...prev,
         guild_id: BigInt(guildId) as unknown as number,
-        position: pos,
+        position: topLevelPosition,
         ...(selCh ? { selected_channel: BigInt(selCh) as unknown as number } : {}),
       }
     })
@@ -169,12 +177,16 @@ function toApiGuildFolders(
     ...folderIds.map((fid) => folders.find((f) => f.id === fid)).filter((f): f is GuildFolder => !!f),
     ...folders.filter((f) => !folderIds.includes(f.id)), // safety: include unlisted folders at end
   ]
-  return orderedFolders.map((f, i) => ({
-    name: f.name,
-    color: f.color || undefined,
-    guilds: f.guildIds.map((g) => BigInt(g) as unknown as number),
-    position: i,
-  }))
+  return orderedFolders.map((f, i) => {
+    const topLevelPosition = itemOrder.indexOf(`folder:${f.id}`)
+    return {
+      name: f.name,
+      color: f.color || undefined,
+      collapsed: f.collapsed,
+      guilds: f.guildIds.map((g) => BigInt(g) as unknown as number),
+      position: topLevelPosition === -1 ? itemOrder.length + i : topLevelPosition,
+    }
+  })
 }
 
 // ── store ────────────────────────────────────────────────────────────────────
@@ -183,6 +195,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   folders: [],
   itemOrder: [],
   settingsVersion: 0,
+  settingsLoaded: false,
   selectedChannels: {},
 
   // ── load / sync ──────────────────────────────────────────────────────────
@@ -193,7 +206,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       name: f.name ?? `Folder ${i + 1}`,
       color: f.color ?? 0,
       guildIds: (f.guilds ?? []).map((g) => String(g)),
-      collapsed: false,
+      collapsed: f.collapsed ?? false,
     }))
 
     const folderGuildIds = new Set(folders.flatMap((f) => f.guildIds))
@@ -224,7 +237,13 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     }
 
     entries.sort((a, b) => a.pos - b.pos)
-    set((s) => ({ folders, itemOrder: entries.map((e) => e.item), selectedChannels, settingsVersion: s.settingsVersion + 1 }))
+    set((s) => ({
+      folders,
+      itemOrder: entries.map((e) => e.item),
+      selectedChannels,
+      settingsLoaded: true,
+      settingsVersion: s.settingsVersion + 1,
+    }))
   },
 
   syncGuilds: (allGuildIds) => {
@@ -255,7 +274,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   },
 
   reorderItems: (newOrder) => {
-    set({ itemOrder: newOrder })
+    set({ itemOrder: newOrder, settingsLoaded: true })
     scheduleSave(get)
   },
 
@@ -301,7 +320,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
         withNewFolder,
       )
 
-      return { folders: cleanFolders, itemOrder: cleanOrder }
+      return { folders: cleanFolders, itemOrder: cleanOrder, settingsLoaded: true }
     })
     scheduleSave(get)
   },
@@ -328,6 +347,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       return {
         folders: s.folders.filter((f) => f.id !== id),
         itemOrder: newOrder,
+        settingsLoaded: true,
       }
     })
     scheduleSave(get)
@@ -336,6 +356,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
   updateFolder: (id, name, color) => {
     set((s) => ({
       folders: s.folders.map((f) => (f.id === id ? { ...f, name, color } : f)),
+      settingsLoaded: true,
     }))
     scheduleSave(get)
   },
@@ -363,7 +384,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
         withoutGuild,
       )
 
-      return { folders: cleanFolders, itemOrder: cleanOrder }
+      return { folders: cleanFolders, itemOrder: cleanOrder, settingsLoaded: true }
     })
     scheduleSave(get)
   },
@@ -414,7 +435,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
         replacements,
       )
 
-      return { folders: cleanFolders, itemOrder: cleanOrder }
+      return { folders: cleanFolders, itemOrder: cleanOrder, settingsLoaded: true }
     })
     scheduleSave(get)
   },
@@ -424,6 +445,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
       folders: s.folders.map((f) =>
         f.id === folderId ? { ...f, guildIds: newGuildIds } : f,
       ),
+      settingsLoaded: true,
     }))
     scheduleSave(get)
   },
@@ -432,7 +454,8 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     set((s) => ({
       folders: s.folders.map((f) => (f.id === id ? { ...f, collapsed: !f.collapsed } : f)),
     }))
-    // Collapsed state is session-only — not persisted
+    if (!get().settingsLoaded) return
+    scheduleSave(get)
   },
 
   getFolderForGuild: (guildId) => {
@@ -443,6 +466,7 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     set((s) => ({
       selectedChannels: { ...s.selectedChannels, [guildId]: channelId },
     }))
+    if (!get().settingsLoaded) return
     scheduleSave(get)
   },
 
@@ -450,7 +474,8 @@ export const useFolderStore = create<FolderState>((set, get) => ({
 
   saveToSettings: async () => {
     try {
-      const { folders, itemOrder, selectedChannels } = get()
+      const { folders, itemOrder, selectedChannels, settingsLoaded } = get()
+      if (!settingsLoaded) return
       // Use axiosInstance directly — generated client's serializeDataIfNeeded()
       // calls JSON.stringify() which cannot handle BigInt Snowflake IDs.
       const baseUrl = getApiBaseUrl()
@@ -469,7 +494,8 @@ export const useFolderStore = create<FolderState>((set, get) => ({
     if (_saveTimer === null) return existing
     clearTimeout(_saveTimer)
     _saveTimer = null
-    const { folders, itemOrder, selectedChannels } = get()
+    const { folders, itemOrder, selectedChannels, settingsLoaded } = get()
+    if (!settingsLoaded) return existing
     return buildFolderPayload(existing, folders, itemOrder, selectedChannels)
   },
 }))

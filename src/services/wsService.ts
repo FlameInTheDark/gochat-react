@@ -8,12 +8,11 @@ import { useReadStateStore } from '@/stores/readStateStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useStreamStore } from '@/stores/streamStore'
 import { useAuthStore } from '@/stores/authStore'
-import { performLogout } from '@/lib/logoutCleanup'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { playMentionSound } from '@/lib/sounds'
-import { axiosInstance } from '@/api/client'
+import { refreshAuthToken } from '@/lib/authRefresh'
 import { ChannelType, type DtoChannel, type DtoMessage, type DtoMessageReaction } from '@/types'
-import { getWsUrl, getApiBaseUrl } from '@/lib/connectionConfig'
+import { getWsUrl } from '@/lib/connectionConfig'
 import { useNotificationSettingsStore } from '@/stores/notificationSettingsStore'
 import { ModelNotificationsType } from '@/client'
 import type { ModelUserSettingsNotifications } from '@/client'
@@ -253,33 +252,28 @@ function resetReconnectDelay() {
 }
 
 /**
- * Validate (and silently refresh if expired) the access token via a lightweight
- * HTTP probe, then reconnect the WebSocket with the fresh token.
+ * Refresh the token through the shared retry flow, then reconnect the
+ * WebSocket with the fresh token.
  *
  * Called when:
  *   • The server closed the socket before op:1 arrived (likely expired token)
  *   • The tab becomes visible again after a background suspension
  *   • The network comes back online
  *
- * The 401 interceptor on axiosInstance already handles the full
- * access→refresh→retry cycle and updates authStore, so a single
- * GET /user/me call is sufficient to ensure the token is live.
+ * The shared helper handles retries, token rotation, and the blocking auth
+ * problem modal, so callers do not clear auth state on transient failures.
  */
 async function refreshTokenAndReconnect() {
   if (intentionalClose || !currentToken || isRefreshingToken) return
   isRefreshingToken = true
   try {
-    const baseUrl = getApiBaseUrl()
-    // The 401 interceptor will refresh the token if needed and retry.
-    // On success the store always holds the most recent valid token.
-    await axiosInstance.get(`${baseUrl}/user/me`)
+    await refreshAuthToken({ openModalOnFailure: true })
     const freshToken = useAuthStore.getState().token
     if (!freshToken) return
     currentToken = freshToken
   } catch {
-    // Both access and refresh tokens are invalid.
-    // Logout clears authStore → useWebSocket observes token=null → calls disconnect().
-    performLogout()
+    // The auth problem modal now owns recovery. Keep the stored tokens and pause
+    // reconnect attempts until the user retries or logs out.
     return
   } finally {
     isRefreshingToken = false
@@ -1202,6 +1196,14 @@ if (typeof window !== 'undefined') {
       clearReconnectTimer()
       reconnectDelay = 1_000
       void refreshTokenAndReconnect()
+    }
+  })
+
+  window.addEventListener('auth:refresh-restored', () => {
+    if (!intentionalClose && currentToken && socket?.readyState !== WebSocket.OPEN) {
+      clearReconnectTimer()
+      reconnectDelay = 1_000
+      scheduleReconnect()
     }
   })
 }

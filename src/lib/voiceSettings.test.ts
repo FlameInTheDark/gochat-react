@@ -17,7 +17,8 @@ describe('voiceSettings', () => {
       video_device: 'camera-1',
       denoiser_type: 'rnnoise',
       input_mode: 'push_to_talk',
-      push_to_talk_key: 'KeyV',
+      push_to_talk_key: 'Alt+KeyQ',
+      push_to_talk_toggle: true,
     } as ModelDevices)
 
     expect(restored).toEqual({
@@ -30,7 +31,8 @@ describe('voiceSettings', () => {
       noiseSuppression: false,
       inputMode: 'push_to_talk',
       voiceActivityThreshold: -42,
-      pushToTalkKey: 'KeyV',
+      pushToTalkKey: 'Alt+KeyQ',
+      pushToTalkToggle: true,
       videoInputDevice: 'camera-1',
       denoiserType: 'rnnoise',
     })
@@ -47,7 +49,8 @@ describe('voiceSettings', () => {
       noiseSuppression: true,
       inputMode: 'push_to_talk',
       voiceActivityThreshold: -55,
-      pushToTalkKey: 'KeyV',
+      pushToTalkKey: 'Ctrl+Shift+Space',
+      pushToTalkToggle: true,
       videoInputDevice: 'camera-1',
       denoiserType: 'speex',
     }
@@ -62,7 +65,8 @@ describe('voiceSettings', () => {
       noise_suppression: true,
       input_mode: 'push_to_talk',
       audio_input_threshold: -55,
-      push_to_talk_key: 'KeyV',
+      push_to_talk_key: 'Ctrl+Shift+Space',
+      push_to_talk_toggle: true,
       video_device: 'camera-1',
       denoiser_type: 'speex',
     })

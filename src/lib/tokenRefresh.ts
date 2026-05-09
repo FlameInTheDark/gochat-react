@@ -1,7 +1,5 @@
-import axios from 'axios'
 import { useAuthStore } from '@/stores/authStore'
-import { performLogout } from '@/lib/logoutCleanup'
-import { getApiBaseUrl } from '@/lib/connectionConfig'
+import { refreshAuthToken } from '@/lib/authRefresh'
 
 // Refresh the token this many ms before it actually expires.
 const REFRESH_LEEWAY_MS = 30_000
@@ -28,28 +26,13 @@ function decodeTokenExpiry(token: string): number | null {
 
 async function doRefresh() {
   refreshTimer = null
-  const store = useAuthStore.getState()
-  const refreshToken = store.refreshToken
-  if (!refreshToken) {
-    performLogout()
-    return
-  }
   try {
-    const baseUrl = getApiBaseUrl()
-    // Plain axios (not axiosInstance) to avoid re-triggering the 401 interceptor.
-    const res = await axios.get<{ token?: string; refresh_token?: string }>(
-      `${baseUrl}/auth/refresh`,
-      { headers: { Authorization: `Bearer ${refreshToken}` } },
-    )
-    const newToken = res.data.token
-    const newRefreshToken = res.data.refresh_token
-    if (!newToken) throw new Error('Empty refresh response')
-    // setToken triggers the authStore subscriber, which calls scheduleRefreshFor
-    // with the new token — the next timer is scheduled automatically.
-    store.setToken(newToken)
-    if (newRefreshToken) store.setRefreshToken(newRefreshToken)
+    // refreshAuthToken stores rotated tokens and opens the blocking auth modal
+    // after retries fail. Token changes reschedule the next proactive refresh.
+    await refreshAuthToken({ openModalOnFailure: true })
   } catch {
-    performLogout()
+    // The modal owns recovery. Keep stored tokens intact until the user retries
+    // successfully or chooses to log out.
   }
 }
 

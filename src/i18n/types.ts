@@ -67,6 +67,12 @@ export interface Translation {
         twoFaVerificationFailed: string
         twoFaInvalidCode: string
         twoFaSendFailed: string
+        sessionProblemTitle: string
+        sessionTransientDesc: string
+        sessionInvalidDesc: string
+        sessionRetry: string
+        sessionRetrying: string
+        sessionLogout: string
     }
     app: {
         loading: string
@@ -219,7 +225,10 @@ export interface Translation {
         aggressive: string
         shortcut: string
         pressAnyKey: string
+        pressKeyCombo: string
         clickToSetKey: string
+        pushToTalkToggleMode: string
+        pushToTalkToggleModeDesc: string
         videoDevice: string
         cameraPreview: string
         testCamera: string
@@ -493,6 +502,9 @@ export interface Translation {
         cancel: string
         edited: string
         addReaction: string
+        quickReact: string
+        clickToReact: string
+        moreActions: string
         seeReactions: string
     }
     joinMessages: string[]

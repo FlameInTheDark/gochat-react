@@ -75,6 +75,12 @@ const en: Translation = {
         twoFaVerificationFailed: 'Verification failed — try again',
         twoFaInvalidCode: 'Invalid code — please try again',
         twoFaSendFailed: 'Failed to send email — try again',
+        sessionProblemTitle: 'Connection problem',
+        sessionTransientDesc: 'GoChat could not refresh your session. Your screen is paused so you can retry without losing your place.',
+        sessionInvalidDesc: 'GoChat could not refresh your saved session. Retry if this looks temporary, or log out to sign in again.',
+        sessionRetry: 'Retry',
+        sessionRetrying: 'Retrying…',
+        sessionLogout: 'Log out',
     },
 
     // ── App layout / loading ──────────────────────────────────────────────────
@@ -242,7 +248,10 @@ const en: Translation = {
         aggressive: 'Aggressive',
         shortcut: 'Shortcut',
         pressAnyKey: 'Press any key…',
+        pressKeyCombo: 'Press a key or shortcut…',
         clickToSetKey: 'Click to set key',
+        pushToTalkToggleMode: 'Toggle mode',
+        pushToTalkToggleModeDesc: 'Press the shortcut once to turn the microphone on, then again to turn it off',
         videoDevice: 'Video Device',
         cameraPreview: 'Camera Preview',
         testCamera: 'Test Camera',
@@ -533,6 +542,9 @@ const en: Translation = {
         cancel: 'cancel',
         edited: '(edited)',
         addReaction: 'Add Reaction',
+        quickReact: 'Quick React',
+        clickToReact: 'Click to react',
+        moreActions: 'More Actions',
         seeReactions: 'See Reactions',
     },
     joinMessages: [

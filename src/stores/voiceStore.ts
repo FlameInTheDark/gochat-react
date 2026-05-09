@@ -21,6 +21,7 @@ export interface VoiceSettings {
   inputMode: 'voice_activity' | 'push_to_talk'
   voiceActivityThreshold: number
   pushToTalkKey: string
+  pushToTalkToggle: boolean
   videoInputDevice: string
   denoiserType: 'default' | 'rnnoise' | 'speex'
 }
@@ -99,6 +100,7 @@ export const useVoiceStore = create<VoiceState>((set) => ({
     inputMode: 'voice_activity',
     voiceActivityThreshold: -60, // -60 dBFS, good default for speech
     pushToTalkKey: '',
+    pushToTalkToggle: false,
     videoInputDevice: '',
     denoiserType: 'default',
   },

@@ -49,6 +49,7 @@ import {
   type DenoiserNode,
 } from './denoiserService'
 import { buildVoiceGatewayIdentifyData, stringifyVoiceGatewayPacket } from './voiceGatewayProtocol'
+import { normalizeKeyCombo, pressedKeysMatchCombo } from '@/lib/keyCombo'
 
 // ── Serialization ─────────────────────────────────────────────────────────────
 // Incoming: keep large int64 IDs as strings to avoid float64 precision loss
@@ -227,6 +228,8 @@ let vadAttackElapsed = 0
 let vadHangoverLeft  = 0
 let pttCleanup: (() => void) | null = null
 let pttReleaseTimer: ReturnType<typeof setTimeout> | null = null
+let pttPressedCodes = new Set<string>()
+let pttComboActive = false
 let isTransmitting = false
 let mutedBeforeDeafen = false
 
@@ -874,6 +877,17 @@ function setTransmitting(active: boolean) {
   vlog('setTransmitting: active=%s muted=%s → track.enabled=%s', active, muted, shouldEnable)
 }
 
+function shouldIgnorePTTKeyEvent(event: KeyboardEvent): boolean {
+  const target = event.target
+  if (!(target instanceof HTMLElement)) return false
+
+  const tagName = target.tagName.toLowerCase()
+  return target.isContentEditable
+    || tagName === 'input'
+    || tagName === 'textarea'
+    || tagName === 'select'
+}
+
 /**
  * Start voice activity detection on the local audio input.
  *
@@ -957,25 +971,40 @@ function stopVAD() {
 /** Start push-to-talk listeners for the configured key. */
 function startPTT() {
   stopPTT()
-  const pttKey = useVoiceStore.getState().settings.pushToTalkKey
+  const settings = useVoiceStore.getState().settings
+  const pttKey = normalizeKeyCombo(settings.pushToTalkKey)
+  setTransmitting(false)
   if (!pttKey) {
     vwarn('startPTT: no PTT key configured')
     return
   }
+  const toggleMode = settings.pushToTalkToggle
 
-  setTransmitting(false)
+  pttPressedCodes = new Set()
+  pttComboActive = false
 
   const onKeydown = (e: KeyboardEvent) => {
-    if (e.code !== pttKey || e.repeat) return
+    if (shouldIgnorePTTKeyEvent(e)) return
+    pttPressedCodes.add(e.code)
+
+    const comboDown = pressedKeysMatchCombo(pttKey, pttPressedCodes)
+    if (!comboDown || pttComboActive || e.repeat) return
+
+    pttComboActive = true
     if (pttReleaseTimer !== null) {
       clearTimeout(pttReleaseTimer)
       pttReleaseTimer = null
     }
-    setTransmitting(true)
+    setTransmitting(toggleMode ? !isTransmitting : true)
   }
 
   const onKeyup = (e: KeyboardEvent) => {
-    if (e.code !== pttKey) return
+    pttPressedCodes.delete(e.code)
+    if (!pttComboActive || pressedKeysMatchCombo(pttKey, pttPressedCodes)) return
+
+    pttComboActive = false
+    if (toggleMode) return
+
     if (pttReleaseTimer !== null) clearTimeout(pttReleaseTimer)
     pttReleaseTimer = setTimeout(() => {
       pttReleaseTimer = null
@@ -983,18 +1012,32 @@ function startPTT() {
     }, PTT_RELEASE_MS)
   }
 
-  window.addEventListener('keydown', onKeydown)
-  window.addEventListener('keyup', onKeyup)
-
-  pttCleanup = () => {
-    window.removeEventListener('keydown', onKeydown)
-    window.removeEventListener('keyup', onKeyup)
+  const resetPressedState = () => {
+    pttPressedCodes = new Set()
+    pttComboActive = false
     if (pttReleaseTimer !== null) {
       clearTimeout(pttReleaseTimer)
       pttReleaseTimer = null
     }
+    if (!toggleMode) setTransmitting(false)
   }
-  vlog('startPTT: listening for key=%s', pttKey)
+
+  window.addEventListener('keydown', onKeydown)
+  window.addEventListener('keyup', onKeyup)
+  window.addEventListener('blur', resetPressedState)
+
+  pttCleanup = () => {
+    window.removeEventListener('keydown', onKeydown)
+    window.removeEventListener('keyup', onKeyup)
+    window.removeEventListener('blur', resetPressedState)
+    if (pttReleaseTimer !== null) {
+      clearTimeout(pttReleaseTimer)
+      pttReleaseTimer = null
+    }
+    pttPressedCodes = new Set()
+    pttComboActive = false
+  }
+  vlog('startPTT: listening for key=%s toggle=%s', pttKey, toggleMode)
 }
 
 function stopPTT() {

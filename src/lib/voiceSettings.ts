@@ -7,6 +7,7 @@ type PersistedDenoiserType = VoiceSettings['denoiserType']
 export type PersistedVoiceDevices = ModelDevices & {
   input_mode?: PersistedInputMode
   push_to_talk_key?: string
+  push_to_talk_toggle?: boolean
 }
 
 function normalizeDenoiserType(value: unknown): PersistedDenoiserType {
@@ -32,6 +33,7 @@ export function voiceSettingsFromDevices(devices: ModelDevices | null | undefine
     inputMode: normalizeInputMode(persisted.input_mode),
     voiceActivityThreshold: persisted.audio_input_threshold ?? -60,
     pushToTalkKey: persisted.push_to_talk_key ?? '',
+    pushToTalkToggle: persisted.push_to_talk_toggle ?? false,
     videoInputDevice: persisted.video_device ?? '',
     denoiserType: normalizeDenoiserType(persisted.denoiser_type),
   }
@@ -49,6 +51,7 @@ export function devicesFromVoiceSettings(settings: VoiceSettings): PersistedVoic
     input_mode: settings.inputMode,
     audio_input_threshold: settings.voiceActivityThreshold,
     push_to_talk_key: settings.pushToTalkKey || undefined,
+    push_to_talk_toggle: settings.pushToTalkToggle,
     video_device: settings.videoInputDevice || undefined,
     denoiser_type: settings.denoiserType,
   }

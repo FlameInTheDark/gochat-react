@@ -30,13 +30,13 @@ import { BASE_PATH, COLLECTION_FORMATS, BaseAPI, RequiredError, operationServerM
  */
 export interface AttachmentsFinalizeRequest {
     /**
-     * 
+     *
      * @type {number}
      * @memberof AttachmentsFinalizeRequest
      */
     'author_id'?: number;
     /**
-     * 
+     *
      * @type {number}
      * @memberof AttachmentsFinalizeRequest
      */
@@ -2726,7 +2726,7 @@ export interface ModelDevices {
      */
     'audio_output_level'?: number;
     /**
-     * 
+     *
      * @type {boolean}
      * @memberof ModelDevices
      */
@@ -2762,7 +2762,13 @@ export interface ModelDevices {
      */
     'push_to_talk_key'?: string;
     /**
-     * 
+     *
+     * @type {boolean}
+     * @memberof ModelDevices
+     */
+    'push_to_talk_toggle'?: boolean;
+    /**
+     *
      * @type {string}
      * @memberof ModelDevices
      */
@@ -3000,7 +3006,13 @@ export interface ModelUserSettingsData {
  */
 export interface ModelUserSettingsGuildFolders {
     /**
-     * 
+     *
+     * @type {boolean}
+     * @memberof ModelUserSettingsGuildFolders
+     */
+    'collapsed'?: boolean;
+    /**
+     *
      * @type {number}
      * @memberof ModelUserSettingsGuildFolders
      */
@@ -16384,6 +16396,3 @@ export class WebhookApi extends BaseAPI implements WebhookApiInterface {
         return WebhookApiFp(this.configuration).webhookSfuVoiceLeavePost(requestParameters.xWebhookToken, requestParameters.request, options).then((request) => request(this.axios, this.basePath));
     }
 }
-
-
-

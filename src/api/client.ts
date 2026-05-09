@@ -15,9 +15,9 @@ import {
 import JSONBig from 'json-bigint'
 import axios from 'axios'
 import { useAuthStore } from '@/stores/authStore'
-import { performLogout } from '@/lib/logoutCleanup'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { getDeviceKey } from '@/lib/deviceKey'
+import { refreshAuthToken } from '@/lib/authRefresh'
 
 const jsonBig = JSONBig({ storeAsString: true, useNativeBigInt: false })
 
@@ -68,20 +68,6 @@ axiosInstance.interceptors.request.use(async (cfg) => {
   return cfg
 })
 
-// --- JWT refresh on 401 ---
-let isRefreshing = false
-let refreshSubscribers: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = []
-
-function onTokenRefreshed(token: string) {
-  refreshSubscribers.forEach(({ resolve }) => resolve(token))
-  refreshSubscribers = []
-}
-
-function onRefreshFailed(err: unknown) {
-  refreshSubscribers.forEach(({ reject }) => reject(err))
-  refreshSubscribers = []
-}
-
 axiosInstance.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -93,49 +79,13 @@ axiosInstance.interceptors.response.use(
 
     const refreshToken = useAuthStore.getState().refreshToken
     if (!refreshToken) {
-      performLogout()
       return Promise.reject(error)
     }
 
     originalRequest._retry = true
 
-    // Queue concurrent 401s until the refresh resolves.
-    // The promise rejects if the refresh itself fails so callers don't hang.
-    if (isRefreshing) {
-      return new Promise<string>((resolve, reject) => {
-        refreshSubscribers.push({ resolve, reject })
-      }).then((newToken) => {
-        // Strip the caller's AbortSignal so a React effect cleanup (which aborts
-        // the original request's controller) cannot cancel this retry.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const retryConfig = { ...originalRequest } as any
-        delete retryConfig.signal
-        retryConfig.headers = { ...retryConfig.headers, Authorization: `Bearer ${newToken}` }
-        return axiosInstance(retryConfig)
-      })
-    }
-
-    isRefreshing = true
-
     try {
-      const baseUrl = getApiBaseUrl()
-      // Use plain axios (not axiosInstance) to avoid re-triggering this interceptor
-      const res = await axios.get<{ token?: string; refresh_token?: string }>(
-        `${baseUrl}/auth/refresh`,
-        { headers: { Authorization: `Bearer ${refreshToken}` } },
-      )
-
-      const newToken = res.data.token
-      const newRefreshToken = res.data.refresh_token
-      if (!newToken) throw new Error('No token in refresh response')
-
-      const store = useAuthStore.getState()
-      store.setToken(newToken)
-      if (newRefreshToken) store.setRefreshToken(newRefreshToken)
-
-      isRefreshing = false
-      onTokenRefreshed(newToken)
-
+      const newToken = await refreshAuthToken({ openModalOnFailure: true })
       // Strip the caller's AbortSignal so a React effect cleanup (which aborts
       // the original request's controller) cannot cancel this retry.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,10 +94,7 @@ axiosInstance.interceptors.response.use(
       retryConfig.headers = { ...retryConfig.headers, Authorization: `Bearer ${newToken}` }
       return axiosInstance(retryConfig)
     } catch (refreshError) {
-      isRefreshing = false
-      onRefreshFailed(refreshError)
-      performLogout()
-      return Promise.reject(error)
+      return Promise.reject(refreshError)
     }
   },
 )

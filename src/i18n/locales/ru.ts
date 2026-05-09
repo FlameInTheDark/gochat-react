@@ -75,6 +75,12 @@ const ru: Translation = {
         twoFaVerificationFailed: 'Не удалось подтвердить — попробуйте снова',
         twoFaInvalidCode: 'Неверный код — попробуйте снова',
         twoFaSendFailed: 'Не удалось отправить письмо — попробуйте снова',
+        sessionProblemTitle: 'Проблема с подключением',
+        sessionTransientDesc: 'GoChat не смог обновить вашу сессию. Экран приостановлен, чтобы вы могли повторить попытку и не потерять место.',
+        sessionInvalidDesc: 'GoChat не смог обновить сохранённую сессию. Повторите попытку, если это временная проблема, или выйдите и войдите снова.',
+        sessionRetry: 'Повторить',
+        sessionRetrying: 'Повтор…',
+        sessionLogout: 'Выйти',
     },
 
     // ── App layout / loading ──────────────────────────────────────────────────
@@ -242,7 +248,10 @@ const ru: Translation = {
         aggressive: 'Агрессивный',
         shortcut: 'Горячая клавиша',
         pressAnyKey: 'Нажмите любую клавишу…',
+        pressKeyCombo: 'Нажмите клавишу или сочетание…',
         clickToSetKey: 'Нажмите для установки',
+        pushToTalkToggleMode: 'Режим переключения',
+        pushToTalkToggleModeDesc: 'Нажмите сочетание один раз, чтобы включить микрофон, и еще раз, чтобы выключить',
         videoDevice: 'Видеоустройство',
         cameraPreview: 'Предпросмотр камеры',
         testCamera: 'Проверить камеру',
@@ -536,6 +545,9 @@ const ru: Translation = {
         cancel: 'отмены',
         edited: '(изменено)',
         addReaction: 'Добавить реакцию',
+        quickReact: 'Быстрая реакция',
+        clickToReact: 'Нажмите, чтобы отреагировать',
+        moreActions: 'Ещё действия',
         seeReactions: 'Посмотреть реакции',
     },
     joinMessages: [

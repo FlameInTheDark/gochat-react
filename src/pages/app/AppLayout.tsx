@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/authStore'
-import { performLogout } from '@/lib/logoutCleanup'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useIdlePresence } from '@/hooks/useIdlePresence'
 import { useDeepLink } from '@/hooks/useDeepLink'
@@ -25,6 +24,8 @@ import { useEmojiStore } from '@/stores/emojiStore'
 import { useGifStore } from '@/stores/gifStore'
 import i18n from '@/i18n'
 import { setupTokenRefreshScheduler } from '@/lib/tokenRefresh'
+import { refreshAuthToken } from '@/lib/authRefresh'
+import { useAuthProblemStore } from '@/stores/authProblemStore'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { compareSnowflakes } from '@/lib/snowflake'
 import { voiceSettingsFromDevices } from '@/lib/voiceSettings'
@@ -92,7 +93,9 @@ function LoadingScreen() {
 export default function AppLayout() {
   const navigate = useNavigate()
   const token = useAuthStore((s) => s.token)
+  const refreshToken = useAuthStore((s) => s.refreshToken)
   const setUser = useAuthStore((s) => s.setUser)
+  const authProblemOpen = useAuthProblemStore((s) => s.isOpen)
 
   // Proactive token refresh: decodes the JWT expiry and schedules a refresh
   // 30 s before it expires so the WS and API never hit a stale token.
@@ -111,6 +114,20 @@ export default function AppLayout() {
   useEffect(() => {
     if (!token) {
       validatedTokenRef.current = null
+      if (refreshToken) {
+        setIsValidating(true)
+        refreshAuthToken({ openModalOnFailure: true })
+          .catch(() => {
+            // The auth problem modal owns recovery. Keep the refresh token so
+            // the user can retry instead of being forced out.
+          })
+          .finally(() => setIsValidating(false))
+        return
+      }
+      if (authProblemOpen) {
+        setIsValidating(false)
+        return
+      }
       setIsValidating(false)
       navigate('/', { replace: true })
       return
@@ -161,11 +178,15 @@ export default function AppLayout() {
         }
         // Seeds wsService module-level caches; socket not open yet so no actual send
         sendPresenceStatus(effectiveStatus, savedCustomText)
-        // Restore guild folder layout + ordering from settings
-        useFolderStore.getState().loadFromSettings(
-          settingsRes?.data?.settings?.guild_folders,
-          settingsRes?.data?.settings?.guilds,
-        )
+        // Restore guild folder layout + ordering only when settings actually
+        // loaded. A transient settings failure must not replace saved order with
+        // the backend guild-list fallback.
+        if (settingsRes?.data?.settings) {
+          useFolderStore.getState().loadFromSettings(
+            settingsRes.data.settings.guild_folders,
+            settingsRes.data.settings.guilds,
+          )
+        }
         // Load per-channel read states and latest-message IDs so pagination can
         // determine where to scroll on channel open (unread separator position).
         if (settingsRes?.data) {
@@ -244,11 +265,9 @@ export default function AppLayout() {
       .catch(() => {
         // Aborted by StrictMode cleanup — the effect will re-run; do nothing.
         if (controller.signal.aborted) return
-        // Refresh also failed (or no refresh token) — clear everything and
-        // send the user back to the login screen.
+        // Refresh also failed. The shared refresh flow opens a blocking modal
+        // after retries fail; keep tokens intact until the user retries or logs out.
         validatedTokenRef.current = null
-        performLogout()
-        navigate('/', { replace: true })
       })
       .finally(() => {
         // Guard against calling setState after the effect was cleaned up.
@@ -260,9 +279,9 @@ export default function AppLayout() {
     return () => {
       controller.abort()
     }
-    // token is the only real dependency; navigate/setUser/performLogout are stable refs
+    // token is the only real dependency; navigate/setUser are stable refs
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  }, [token, refreshToken, authProblemOpen])
 
   // No token — effect already navigated away; render nothing during transition
   if (!token) return null
