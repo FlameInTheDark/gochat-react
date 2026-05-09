@@ -11,7 +11,6 @@ import {
   FolderPlus,
   Folder,
   Plus,
-  ArrowRight,
   Compass,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -253,24 +252,22 @@ function computeFolderTokens(color: number): React.CSSProperties {
 
 // ── Left-edge unread pill (shared by guild icons and folder buttons) ──────────
 // Pill is centred on the left edge of its parent: left-0 -translate-x-1/2.
-// Pass leftClass to override 'left-0' when the parent is offset from the
-// sidebar wall (e.g. guild icons inside a folder panel).
+// Parent elements that use this should span the full 72px rail, so the pill
+// always sits on the same rail edge for DMs, top-level guilds, and folder guilds.
 function UnreadPill({
   isActive,
   isUnread,
   groupClass = 'group/guild',
-  leftClass = 'left-0',
 }: {
   isActive: boolean
   isUnread: boolean
   groupClass?: string
-  leftClass?: string
 }) {
   return (
     <span
       className={cn(
         'pointer-events-none absolute top-1/2 z-10 -translate-x-1/2 -translate-y-1/2',
-        leftClass,
+        'left-0',
         'w-1 rounded-full bg-white shadow-[0_0_0_2px_var(--color-sidebar)]',
         'transition-all duration-150',
         isActive
@@ -648,11 +645,11 @@ function SortableGuildInPanelImpl({
     <div
       ref={setNodeRef}
       style={dndStyle}
-      className="relative flex items-center justify-center group/guild w-full"
+      className="relative -mx-4 flex w-[72px] items-center justify-center group/guild"
     >
       {dropBefore && <DropBar position="before" />}
       {dropAfter && <DropBar position="after" />}
-      <UnreadPill isActive={isActive} isUnread={isUnread} groupClass="group/guild" leftClass="left-[-14px]" />
+      <UnreadPill isActive={isActive} isUnread={isUnread} groupClass="group/guild" />
       <ContextMenu>
         <Tooltip>
           <ContextMenuTrigger asChild>
@@ -879,9 +876,9 @@ function SortableFolderItem({
         style={{ backgroundColor: 'var(--fc-expanded-bg)' }}
       >
         {/* Folder header — drag handle + collapse toggle */}
-        <div className="relative">
+        <div className="relative -mx-4 flex w-[72px] items-center justify-center">
           {isDragTarget && <MergeDot />}
-          <UnreadPill isActive={false} isUnread={isUnread} groupClass="group/folder" leftClass="left-[-14px]" />
+          <UnreadPill isActive={false} isUnread={isUnread} groupClass="group/folder" />
           <ContextMenu>
             <Tooltip>
               <ContextMenuTrigger asChild>
@@ -959,7 +956,7 @@ function TopLevelDropZone({
     <div
       ref={setNodeRef}
       className={cn(
-        'absolute left-0 right-0 z-20 h-7',
+        'pointer-events-none absolute left-0 right-0 z-20 h-7',
         placement === 'top' ? '-top-3.5' : '-bottom-3.5',
       )}
     >
@@ -978,7 +975,6 @@ export default function ServerSidebar() {
   const queryClient = useQueryClient()
   const { t } = useTranslation()
   const openCreateServer = useUiStore((s) => s.openCreateServer)
-  const openJoinServer = useUiStore((s) => s.openJoinServer)
   const openServerSettings = useUiStore((s) => s.openServerSettings)
 
   const {
@@ -1481,21 +1477,24 @@ export default function ServerSidebar() {
       >
         <div className="flex flex-col w-[72px] bg-sidebar border-r border-sidebar-border items-center py-3 gap-3 shrink-0 overflow-y-auto overflow-x-hidden scrollbar-none">
           {/* DMs button */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => navigate('/app/@me')}
-                className={`w-12 h-12 squircle transition-all flex items-center justify-center font-bold text-lg shrink-0 ${
-                  dmActive
-                    ? 'bg-indigo-500 text-white'
-                    : 'bg-muted text-primary-foreground hover:text-white hover:bg-indigo-500'
-                }`}
-              >
-                <Logo className="h-9 w-9" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Direct Messages</TooltipContent>
-          </Tooltip>
+          <div className="relative flex w-full items-center justify-center group/dm">
+            <UnreadPill isActive={dmActive} isUnread={false} groupClass="group/dm" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => navigate('/app/@me')}
+                  className={`w-12 h-12 squircle transition-all flex items-center justify-center font-bold text-lg shrink-0 ${
+                    dmActive
+                      ? 'bg-indigo-500 text-white'
+                      : 'bg-muted text-primary-foreground hover:text-white hover:bg-indigo-500'
+                  }`}
+                >
+                  <Logo className="h-9 w-9" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">Direct Messages</TooltipContent>
+            </Tooltip>
+          </div>
 
           <SeparatorSmall className="w-8 shrink-0" />
 
@@ -1577,7 +1576,9 @@ export default function ServerSidebar() {
             />
           </div>
 
-          {/* Add / Join server buttons */}
+          <SeparatorSmall className="w-8 shrink-0" />
+
+          {/* Add server button */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -1590,33 +1591,24 @@ export default function ServerSidebar() {
             <TooltipContent side="right">Create a Server</TooltipContent>
           </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={openJoinServer}
-                className="w-12 h-12 squircle transition-all bg-muted flex items-center justify-center text-muted-foreground hover:text-white hover:bg-green-600 shrink-0"
-              >
-                <ArrowRight className="w-5 h-5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Join a Server</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => navigate('/app/discovery')}
-                className={`w-12 h-12 squircle transition-all flex items-center justify-center shrink-0 ${
-                  discoveryActive
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted text-muted-foreground hover:text-white hover:bg-sky-600'
-                }`}
-              >
-                <Compass className="w-5 h-5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">{t('serverSidebar.discoverServers')}</TooltipContent>
-          </Tooltip>
+          <div className="relative flex w-full items-center justify-center group/discovery">
+            <UnreadPill isActive={discoveryActive} isUnread={false} groupClass="group/discovery" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => navigate('/app/discovery')}
+                  className={`w-12 h-12 squircle transition-all flex items-center justify-center shrink-0 ${
+                    discoveryActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted text-muted-foreground hover:text-white hover:bg-sky-600'
+                  }`}
+                >
+                  <Compass className="w-5 h-5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{t('serverSidebar.discoverServers')}</TooltipContent>
+            </Tooltip>
+          </div>
 
           <div className="mt-auto" />
         </div>

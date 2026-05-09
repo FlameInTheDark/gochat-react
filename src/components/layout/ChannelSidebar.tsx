@@ -620,12 +620,18 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                             onDragEnd={onDragEnd}
                             onClick={() => !isCatEditing && toggleCategory(catId)}
                             className={cn(
-                              'w-full flex items-center gap-1 px-1 pt-4 pb-0.5 text-xs font-semibold uppercase text-muted-foreground hover:text-foreground tracking-wider group/cat cursor-pointer select-none',
+                              'relative w-full flex items-center gap-1 px-1 pt-4 pb-0.5 text-xs font-semibold uppercase text-muted-foreground hover:text-foreground tracking-wider group/cat cursor-pointer select-none',
                               draggingId === catId && 'opacity-40',
-                              catIndicator === 'top' && 'border-t-2 border-primary',
-                              catIndicator === 'bottom' && 'border-b-2 border-primary',
                             )}
                           >
+                            {catIndicator && (
+                              <span
+                                className={cn(
+                                  'pointer-events-none absolute left-2 right-2 z-20 h-1 rounded-full bg-emerald-400 shadow-[0_0_0_2px_var(--color-sidebar)]',
+                                  catIndicator === 'top' ? 'top-0' : 'bottom-0',
+                                )}
+                              />
+                            )}
                             <span className="cursor-grab active:cursor-grabbing shrink-0">
                               <GripVertical className="w-3 h-3 opacity-0 group-hover/cat:opacity-40 -ml-1" />
                             </span>
@@ -923,7 +929,7 @@ function ChannelItem({
             role="button"
             tabIndex={0}
             className={cn(
-              'w-full flex items-center gap-2 px-2 rounded text-sm transition-colors text-left cursor-pointer select-none group/item',
+              'relative w-full flex items-center gap-2 px-2 rounded text-sm transition-colors text-left cursor-pointer select-none group/item',
               isMobile ? 'py-2' : 'py-1',
               isActive
                 ? 'bg-accent text-foreground'
@@ -931,10 +937,16 @@ function ChannelItem({
                   ? 'text-foreground font-medium hover:bg-accent/50'
                   : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
               isDragging && 'opacity-40',
-              dropIndicator === 'top' && 'border-t-2 border-primary',
-              dropIndicator === 'bottom' && 'border-b-2 border-primary',
             )}
           >
+            {dropIndicator && (
+              <span
+                className={cn(
+                  'pointer-events-none absolute left-2 right-2 z-20 h-1 rounded-full bg-emerald-400 shadow-[0_0_0_2px_var(--color-sidebar)]',
+                  dropIndicator === 'top' ? '-top-0.5' : '-bottom-0.5',
+                )}
+              />
+            )}
             <span className="cursor-grab active:cursor-grabbing shrink-0">
               <GripVertical className="w-3.5 h-3.5 opacity-0 group-hover/item:opacity-40 -ml-1" />
             </span>
