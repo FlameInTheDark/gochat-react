@@ -26,6 +26,8 @@ import { addPresenceSubscription } from '@/services/wsService'
 import { cn } from '@/lib/utils'
 import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
 import { getTopRoleColor } from '@/lib/memberColors'
+import { roleColorHex, roleIsHoisted, sortRolesForDisplay } from '@/lib/roleVisuals'
+import { ChannelType } from '@/types'
 import type { DtoMember, DtoGuild, DtoChannel } from '@/types'
 import type { DtoRole } from '@/client'
 
@@ -43,11 +45,25 @@ export default function MemberList({ serverId, channel }: Props) {
     staleTime: 30_000,
   })
 
+  const { data: roles = [] } = useQuery<DtoRole[]>({
+    queryKey: ['roles', serverId],
+    queryFn: () => rolesApi.guildGuildIdRolesGet({ guildId: serverId }).then((r) => r.data ?? []),
+    enabled: !!serverId,
+    staleTime: 60_000,
+  })
+
   const queryClient = useQueryClient()
   const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
   const ownerIdStr = guild?.owner != null ? String(guild.owner) : null
 
   const visibleMembers = useMemo(() => {
+    if (channel?.type === ChannelType.ChannelTypeThread) {
+      const threadMemberIds = new Set((channel.member_ids ?? []).map(String))
+      return members.filter((m) => {
+        const userId = m.user?.id
+        return userId !== undefined && threadMemberIds.has(String(userId))
+      })
+    }
     if (!channel?.private) return members
     const channelRoleIds = new Set((channel.roles ?? []).map(String))
     return members.filter((m) => {
@@ -66,7 +82,7 @@ export default function MemberList({ serverId, channel }: Props) {
     if (ids.length > 0) addPresenceSubscription(ids)
   }, [visibleMembers])
 
-  const { online, offline } = useMemo(() => {
+  const { hoistedGroups, online, offline } = useMemo(() => {
     const online: DtoMember[] = []
     const offline: DtoMember[] = []
     for (const m of visibleMembers) {
@@ -75,8 +91,26 @@ export default function MemberList({ serverId, channel }: Props) {
       if (s === 'offline') offline.push(m)
       else online.push(m)
     }
-    return { online, offline }
-  }, [visibleMembers, statuses])
+    const claimed = new Set<string>()
+    const hoistedGroups = sortRolesForDisplay(roles)
+      .filter(roleIsHoisted)
+      .map((role) => {
+        const roleId = String(role.id)
+        const groupMembers = online.filter((member) => {
+          const userId = String(member.user?.id ?? '')
+          if (!userId || claimed.has(userId)) return false
+          return (member.roles ?? []).map(String).includes(roleId)
+        })
+        groupMembers.forEach((member) => claimed.add(String(member.user?.id ?? '')))
+        return { role, members: groupMembers }
+      })
+      .filter((group) => group.members.length > 0)
+    return {
+      hoistedGroups,
+      online: online.filter((member) => !claimed.has(String(member.user?.id ?? ''))),
+      offline,
+    }
+  }, [visibleMembers, statuses, roles])
 
   const { t } = useTranslation()
 
@@ -84,17 +118,29 @@ export default function MemberList({ serverId, channel }: Props) {
     <div className="flex flex-col flex-1 min-h-0 bg-sidebar">
       <ScrollArea className="flex-1">
         <div className="px-2 py-3 space-y-4">
+          {hoistedGroups.map(({ role, members: groupMembers }) => (
+            <MemberGroup
+              key={String(role.id)}
+              label={role.name ?? t('memberList.roles')}
+              count={groupMembers.length}
+              color={roleColorHex(role.color)}
+            >
+              {groupMembers.map((m) => (
+                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} />
+              ))}
+            </MemberGroup>
+          ))}
           {online.length > 0 && (
             <MemberGroup label={t('memberList.online')} count={online.length}>
               {online.map((m) => (
-                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} />
+                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} />
               ))}
             </MemberGroup>
           )}
           {offline.length > 0 && (
             <MemberGroup label={t('memberList.offline')} count={offline.length}>
               {offline.map((m) => (
-                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} />
+                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} />
               ))}
             </MemberGroup>
           )}
@@ -107,12 +153,15 @@ export default function MemberList({ serverId, channel }: Props) {
   )
 }
 
-function MemberGroup({ label, count, children }: {
-  label: string; count: number; children: React.ReactNode
+function MemberGroup({ label, count, children, color }: {
+  label: string; count: number; children: React.ReactNode; color?: string
 }) {
   return (
     <section>
-      <p className="px-2 mb-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+      <p
+        className="px-2 mb-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider"
+        style={color ? { color } : undefined}
+      >
         {label} — {count}
       </p>
       <div className="space-y-0.5">{children}</div>
@@ -120,7 +169,7 @@ function MemberGroup({ label, count, children }: {
   )
 }
 
-function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }) {
+function MemberRow({ member, serverId, allRoles }: { member: DtoMember; serverId: string; allRoles: DtoRole[] }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -135,14 +184,6 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
   const initials = displayName.charAt(0).toUpperCase()
 
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null)
-
-  // Fetch all guild roles for the sub-menu (shared cache across all rows)
-  const { data: allRoles = [] } = useQuery<DtoRole[]>({
-    queryKey: ['roles', serverId],
-    queryFn: () => rolesApi.guildGuildIdRolesGet({ guildId: serverId }).then((r) => r.data ?? []),
-    enabled: !!serverId,
-    staleTime: 60_000,
-  })
 
   // Current user permissions check for role management
   const currentUser = useAuthStore((s) => s.user)
@@ -278,9 +319,7 @@ function MemberRow({ member, serverId }: { member: DtoMember; serverId: string }
                 const rid = String(role.id)
                 const currentlyHas = memberRoleIds.has(rid)
                 const isSaving = savingRoleId === rid
-                const colorHex = role.color
-                  ? `#${Math.max(0, role.color).toString(16).padStart(6, '0')}`
-                  : undefined
+                const colorHex = roleColorHex(role.color)
                 return (
                   <ContextMenuCheckboxItem
                     key={rid}

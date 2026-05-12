@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, LogIn, LogOut, Pencil, Spool, Trash2 } from 'lucide-react'
+import { LogIn, LogOut, Pencil, Spool, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { guildApi } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useQueryClient } from '@tanstack/react-query'
 import { activateChannel, deactivateChannel } from '@/services/wsService'
 import { useTranslation } from 'react-i18next'
+import { addThreadMember, removeThreadMember } from '@/lib/threadMembership'
 
 interface Props {
   serverId: string
@@ -35,7 +36,7 @@ interface Props {
   onHighlightHandled?: (requestKey: string) => void
   resolver?: MentionResolver
   onOpenReferencedMessage?: (channelId: string, messageId: string) => void
-  onBack: () => void
+  onClose: () => void
   onDeleted: () => void
 }
 
@@ -48,7 +49,7 @@ export default function ThreadPanel({
   onHighlightHandled,
   resolver,
   onOpenReferencedMessage,
-  onBack,
+  onClose,
   onDeleted,
 }: Props) {
   const { t } = useTranslation()
@@ -111,6 +112,28 @@ export default function ThreadPanel({
     ])
   }
 
+  function patchThreadMembership(userId: string, joined: boolean, member?: Awaited<ReturnType<typeof guildApi.guildGuildIdChannelChannelIdThreadMemberMePut>>['data']) {
+    const update = (item: DtoChannel) => joined ? addThreadMember(item, userId, member) : removeThreadMember(item, userId)
+
+    queryClient.setQueryData<DtoChannel[]>(['channels', serverId], (old) => {
+      if (!old) return old
+      if (!joined) return old.filter((item) => String(item.id) !== threadId)
+      const found = old.some((item) => String(item.id) === threadId)
+      if (found) return old.map((item) => String(item.id) === threadId ? update(item) : item)
+      return [...old, update(thread)]
+    })
+
+    if (parentChannelId) {
+      queryClient.setQueryData<DtoChannel[]>(['channel-threads', serverId, parentChannelId], (old) =>
+        old?.map((item) => String(item.id) === threadId ? update(item) : item),
+      )
+    }
+
+    queryClient.setQueryData<DtoChannel>(['thread-channel', serverId, threadId], (old) =>
+      old ? update(old) : old,
+    )
+  }
+
   async function handleSave() {
     setSaving(true)
     try {
@@ -152,7 +175,9 @@ export default function ThreadPanel({
   async function handleJoin() {
     setJoiningLeaving(true)
     try {
-      await guildApi.guildGuildIdChannelChannelIdThreadMemberMePut({ guildId: serverId, channelId: threadId })
+      const res = await guildApi.guildGuildIdChannelChannelIdThreadMemberMePut({ guildId: serverId, channelId: threadId })
+      setLocallyJoined(true)
+      if (currentUser?.id != null) patchThreadMembership(String(currentUser.id), true, res.data)
       await refreshThreadData()
     } catch {
       toast.error(t('threads.joinFailed'))
@@ -166,6 +191,7 @@ export default function ThreadPanel({
     try {
       await guildApi.guildGuildIdChannelChannelIdThreadMemberMeDelete({ guildId: serverId, channelId: threadId })
       setLocallyJoined(false)
+      if (currentUser?.id != null) patchThreadMembership(String(currentUser.id), false)
       await refreshThreadData()
     } catch {
       toast.error(t('threads.leaveFailed'))
@@ -183,15 +209,6 @@ export default function ThreadPanel({
     <>
       <div className="flex flex-col h-full min-h-0">
         <div className="h-12 border-b border-sidebar-border flex items-center gap-2 px-3 shrink-0">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={onBack}
-            aria-label={t('threads.backToList')}
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
           <Spool className="w-4 h-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate font-semibold">
             {thread.name ?? threadId}
@@ -230,6 +247,15 @@ export default function ThreadPanel({
                 </Button>
               </>
             )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={onClose}
+              aria-label={t('common.close')}
+            >
+              <X className="w-4 h-4" />
+            </Button>
           </div>
         </div>
 

@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { PermissionBits, hasPermission as hasPerm, calculateEffectivePermissions } from '@/lib/permissions'
+import { roleIsHoisted } from '@/lib/roleVisuals'
 import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
 import { useEmojiStore } from '@/stores/emojiStore'
@@ -55,6 +56,7 @@ import { useClientMode } from '@/hooks/useClientMode'
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Section = 'overview' | 'members' | 'roles' | 'invites' | 'emojis' | 'bans' | 'danger'
+type RoleSettingsTab = 'display' | 'permissions' | 'members'
 
 const NAV: { key: Section; danger?: boolean }[] = [
   { key: 'overview' },
@@ -262,6 +264,8 @@ export default function ServerSettingsModal() {
   const [editName, setEditName] = useState('')
   const [editColor, setEditColor] = useState('#5865f2')
   const [editPermissions, setEditPermissions] = useState(0)
+  const [editHoist, setEditHoist] = useState(false)
+  const [roleSettingsTab, setRoleSettingsTab] = useState<RoleSettingsTab>('permissions')
   const [savingRole, setSavingRole] = useState(false)
   const [deletingRoleId, setDeletingRoleId] = useState<string | null>(null)
   // inline create
@@ -451,7 +455,7 @@ export default function ServerSettingsModal() {
   const { data: members = [] } = useQuery<DtoMember[]>({
     queryKey: ['members', guildId],
     queryFn: () => guildApi.guildGuildIdMembersGet({ guildId: guildId! }).then((r) => r.data ?? []),
-    enabled: open && !!guildId && (section === 'members' || section === 'bans'),
+    enabled: open && !!guildId && (section === 'roles' || section === 'members' || section === 'bans'),
     staleTime: 30_000,
   })
 
@@ -582,6 +586,8 @@ export default function ServerSettingsModal() {
   function selectEvery() {
     setSelectedRoleId(EVERYONE_ID)
     setEditPermissions(Number(guild?.permissions ?? 0))
+    setEditHoist(false)
+    setRoleSettingsTab('permissions')
     setCreatingRole(false)
     if (isMobile) setMobileRoleShowList(false)
   }
@@ -591,6 +597,9 @@ export default function ServerSettingsModal() {
     setEditName(role.name ?? '')
     setEditColor(colorToHex(role.color ?? 0))
     setEditPermissions(Number(role.permissions ?? 0))
+    setEditHoist(roleIsHoisted(role))
+    setRoleSettingsTab('display')
+    setMemberFilter('')
     setCreatingRole(false)
     if (isMobile) setMobileRoleShowList(false)
   }
@@ -724,8 +733,11 @@ export default function ServerSettingsModal() {
     try {
       const res = await rolesApi.guildGuildIdRolesPost({
         guildId,
-        req: { name: newRoleName.trim(), color: hexToColor(newRoleColor), permissions: guild?.permissions ?? 0 },
+        req: { name: newRoleName.trim(), color: hexToColor(newRoleColor), permissions: guild?.permissions ?? 0, hoist: false },
       })
+      if (res.data) {
+        queryClient.setQueryData<DtoRole[]>(['roles', guildId], (old = []) => sortRoles([...old, res.data]))
+      }
       await queryClient.invalidateQueries({ queryKey: ['roles', guildId] })
       setCreatingRole(false)
       setNewRoleName('')
@@ -754,11 +766,17 @@ export default function ServerSettingsModal() {
         toast.success(t('serverSettings.roleSaved'))
       } else {
         if (!editName.trim()) return
-        await rolesApi.guildGuildIdRolesRoleIdPatch({
+        const res = await rolesApi.guildGuildIdRolesRoleIdPatch({
           guildId,
           roleId: selectedRoleId,
-          req: { name: editName.trim(), color: hexToColor(editColor), permissions: editPermissions },
+          req: { name: editName.trim(), color: hexToColor(editColor), permissions: editPermissions, hoist: editHoist },
         })
+        if (res.data) {
+          queryClient.setQueryData<DtoRole[]>(['roles', guildId], (old = []) =>
+            old.map((role) => (String(role.id) === selectedRoleId ? res.data : role)),
+          )
+          setOrderedRoles((old) => old.map((role) => (String(role.id) === selectedRoleId ? res.data : role)))
+        }
         await queryClient.invalidateQueries({ queryKey: ['roles', guildId] })
         toast.success(t('serverSettings.roleSaved'))
       }
@@ -774,6 +792,9 @@ export default function ServerSettingsModal() {
     setDeletingRoleId(roleId)
     try {
       await rolesApi.guildGuildIdRolesRoleIdDelete({ guildId, roleId })
+      queryClient.setQueryData<DtoRole[]>(['roles', guildId], (old = []) =>
+        old.filter((role) => String(role.id) !== roleId),
+      )
       await queryClient.invalidateQueries({ queryKey: ['roles', guildId] })
       if (selectedRoleId === roleId) {
         // Fall back to @everyone after deleting the selected role
@@ -1676,6 +1697,23 @@ export default function ServerSettingsModal() {
                   {selectedRoleId ? (() => {
                     const isEveryoneSelected = selectedRoleId === EVERYONE_ID
                     const selectedRole = isEveryoneSelected ? null : roleMap.get(selectedRoleId)
+                    const selectedRoleMembers = isEveryoneSelected
+                      ? []
+                      : members.filter((member) => (member.roles ?? []).map(String).includes(selectedRoleId))
+                    const normalizedMemberFilter = memberFilter.trim().toLowerCase()
+                    const filteredRoleMembers = normalizedMemberFilter
+                      ? selectedRoleMembers.filter((member) => {
+                        const display = `${member.username ?? ''} ${member.user?.name ?? ''}`.toLowerCase()
+                        return display.includes(normalizedMemberFilter)
+                      })
+                      : selectedRoleMembers
+                    const tabs: { key: RoleSettingsTab; label: string; count?: number }[] = isEveryoneSelected
+                      ? [{ key: 'permissions', label: t('serverSettings.roleTabPermissions') }]
+                      : [
+                        { key: 'display', label: t('serverSettings.roleTabDisplay') },
+                        { key: 'permissions', label: t('serverSettings.roleTabPermissions') },
+                        { key: 'members', label: t('serverSettings.roleTabMembers'), count: selectedRoleMembers.length },
+                      ]
                     return (
                       <div className="flex h-full min-h-0 flex-col gap-6">
                         <div className="flex items-start justify-between gap-4">
@@ -1701,88 +1739,171 @@ export default function ServerSettingsModal() {
                           )}
                         </div>
 
-                        {/* Name + Color row — only for real roles */}
-                        {!isEveryoneSelected && (
-                        <div className="flex gap-3 items-end">
-                          <div className="space-y-2">
-                            <Label>{t('serverSettings.colorLabel')}</Label>
-                            <input
-                              type="color"
-                              value={editColor}
-                              onChange={(e) => setEditColor(e.target.value)}
-                              className="w-12 h-9 rounded border border-input cursor-pointer p-0.5 bg-background block"
-                              title={t('serverSettings.roleColorTitle')}
-                            />
-                          </div>
-                          <div className="flex-1 space-y-2">
-                            <Label htmlFor="edit-role-name">{t('serverSettings.roleNameLabel')}</Label>
-                            <Input
-                              id="edit-role-name"
-                              value={editName}
-                              onChange={(e) => setEditName(e.target.value)}
-                              placeholder={t('serverSettings.roleNamePlaceholder')}
-                            />
-                          </div>
+                        <div className="flex gap-2 border-b border-border">
+                          {tabs.map((tab) => (
+                            <button
+                              key={tab.key}
+                              type="button"
+                              onClick={() => setRoleSettingsTab(tab.key)}
+                              className={cn(
+                                'px-1 pb-2 text-sm font-medium transition-colors border-b-2 -mb-px',
+                                roleSettingsTab === tab.key
+                                  ? 'border-primary text-foreground'
+                                  : 'border-transparent text-muted-foreground hover:text-foreground',
+                              )}
+                            >
+                              {tab.label}{tab.count !== undefined ? ` (${tab.count})` : ''}
+                            </button>
+                          ))}
                         </div>
-                        )}
 
-                        {/* Administrator warning banner */}
-                        {isAdmin && (
-                          <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-500">
-                            <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
-                            <p className="text-xs leading-relaxed">
-                              <strong>{t('serverSettings.adminWarningTitle')}</strong> {t('serverSettings.adminWarningDesc')}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Permissions */}
                         <div className="min-h-0 flex-1 overflow-y-auto pr-2 space-y-6">
-                          {permissionDefs.map((cat) => (
-                            <div key={cat.category}>
-                              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                                {cat.category}
-                              </p>
-                              <div className="rounded-lg border border-border overflow-hidden">
-                                {cat.perms.map((perm, idx) => {
-                                  const isLast = idx === cat.perms.length - 1
-                                  const effectivelyOn = isAdmin && perm.bit !== 26
-                                    ? true
-                                    : hasPermission(perm.bit)
-                                  const isDisabled = isAdmin && perm.bit !== 26
+                          {roleSettingsTab === 'display' && !isEveryoneSelected && (
+                            <div className="space-y-6">
+                              <div className="space-y-2">
+                                <Label htmlFor="edit-role-name">{t('serverSettings.roleNameLabel')}</Label>
+                                <Input
+                                  id="edit-role-name"
+                                  value={editName}
+                                  onChange={(e) => setEditName(e.target.value)}
+                                  placeholder={t('serverSettings.roleNamePlaceholder')}
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>{t('serverSettings.colorLabel')}</Label>
+                                <div className="flex items-center gap-3">
+                                  <input
+                                    type="color"
+                                    value={editColor}
+                                    onChange={(e) => setEditColor(e.target.value)}
+                                    className="w-16 h-12 rounded border border-input cursor-pointer p-0.5 bg-background block"
+                                    title={t('serverSettings.roleColorTitle')}
+                                  />
+                                  <div className="rounded-lg border border-border bg-accent/20 px-4 py-3 flex-1 min-w-0">
+                                    <p className="text-sm font-semibold truncate" style={{ color: editColor }}>
+                                      {editName || t('serverSettings.roleNamePlaceholder')}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-0.5">{t('serverSettings.rolePreview')}</p>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-start justify-between gap-4 rounded-lg border border-border p-4">
+                                <div>
+                                  <p className="text-sm font-semibold">{t('serverSettings.roleHoistLabel')}</p>
+                                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                                    {t('serverSettings.roleHoistDesc')}
+                                  </p>
+                                </div>
+                                <Toggle value={editHoist} onToggle={() => setEditHoist((prev) => !prev)} />
+                              </div>
+                            </div>
+                          )}
+
+                          {roleSettingsTab === 'permissions' && (
+                            <>
+                              {isAdmin && (
+                                <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-500">
+                                  <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
+                                  <p className="text-xs leading-relaxed">
+                                    <strong>{t('serverSettings.adminWarningTitle')}</strong> {t('serverSettings.adminWarningDesc')}
+                                  </p>
+                                </div>
+                              )}
+                              {permissionDefs.map((cat) => (
+                                <div key={cat.category}>
+                                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                                    {cat.category}
+                                  </p>
+                                  <div className="rounded-lg border border-border overflow-hidden">
+                                    {cat.perms.map((perm, idx) => {
+                                      const isLast = idx === cat.perms.length - 1
+                                      const effectivelyOn = isAdmin && perm.bit !== 26
+                                        ? true
+                                        : hasPermission(perm.bit)
+                                      const isDisabled = isAdmin && perm.bit !== 26
+                                      return (
+                                        <div
+                                          key={perm.bit}
+                                          className={cn(
+                                            'flex items-start gap-4 px-4 py-3 transition-colors',
+                                            !isLast && 'border-b border-border',
+                                            isDisabled ? 'opacity-50' : 'hover:bg-accent/20',
+                                          )}
+                                        >
+                                          <div className="flex-1 min-w-0">
+                                            <p className={cn(
+                                              'text-sm font-medium',
+                                              perm.danger && !isDisabled && 'text-red-400',
+                                            )}>
+                                              {perm.label}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                                              {perm.desc}
+                                            </p>
+                                          </div>
+                                          <div className="pt-0.5 shrink-0">
+                                            <Toggle
+                                              value={effectivelyOn}
+                                              onToggle={() => togglePermission(perm.bit)}
+                                              disabled={isDisabled}
+                                            />
+                                          </div>
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </>
+                          )}
+
+                          {roleSettingsTab === 'members' && !isEveryoneSelected && (
+                            <div className="space-y-4">
+                              <Input
+                                value={memberFilter}
+                                onChange={(e) => setMemberFilter(e.target.value)}
+                                placeholder={t('serverSettings.searchMembers')}
+                              />
+                              <div className="space-y-1">
+                                {filteredRoleMembers.map((member) => {
+                                  const userId = String(member.user?.id ?? '')
+                                  const displayName = member.username ?? member.user?.name ?? 'Unknown'
+                                  const isSaving = savingMemberRole === `${userId}:${selectedRoleId}`
                                   return (
                                     <div
-                                      key={perm.bit}
-                                      className={cn(
-                                        'flex items-start gap-4 px-4 py-3 transition-colors',
-                                        !isLast && 'border-b border-border',
-                                        isDisabled ? 'opacity-50' : 'hover:bg-accent/20',
-                                      )}
+                                      key={userId}
+                                      className="flex items-center gap-3 rounded-md bg-accent/20 px-3 py-2"
                                     >
-                                      <div className="flex-1 min-w-0">
-                                        <p className={cn(
-                                          'text-sm font-medium',
-                                          perm.danger && !isDisabled && 'text-red-400',
-                                        )}>
-                                          {perm.label}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
-                                          {perm.desc}
+                                      <Avatar className="w-8 h-8">
+                                        <AvatarImage src={member.user?.avatar?.url} alt={displayName} className="object-cover" />
+                                        <AvatarFallback className="text-xs">{displayName.charAt(0).toUpperCase()}</AvatarFallback>
+                                      </Avatar>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-semibold">{displayName}</p>
+                                        <p className="truncate text-xs text-muted-foreground">
+                                          {member.user?.name ?? userId}
                                         </p>
                                       </div>
-                                      <div className="pt-0.5 shrink-0">
-                                        <Toggle
-                                          value={effectivelyOn}
-                                          onToggle={() => togglePermission(perm.bit)}
-                                          disabled={isDisabled}
-                                        />
-                                      </div>
+                                      <button
+                                        type="button"
+                                        disabled={isSaving}
+                                        onClick={() => void toggleMemberRole(userId, selectedRoleId, true)}
+                                        className="rounded-full p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                                        title={t('serverSettings.removeRoleMember')}
+                                      >
+                                        <X className="w-4 h-4" />
+                                      </button>
                                     </div>
                                   )
                                 })}
+                                {filteredRoleMembers.length === 0 && (
+                                  <p className="text-sm text-muted-foreground text-center py-10">
+                                    {t('serverSettings.noRoleMembers')}
+                                  </p>
+                                )}
                               </div>
                             </div>
-                          ))}
+                          )}
                         </div>
 
                         {/* Save row */}

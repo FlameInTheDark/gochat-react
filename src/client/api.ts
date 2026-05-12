@@ -1463,6 +1463,12 @@ export interface DtoRole {
      */
     'guild_id'?: number;
     /**
+     * Whether online members with this role are shown in a separate members list section.
+     * @type {boolean}
+     * @memberof DtoRole
+     */
+    'hoist'?: boolean;
+    /**
      * Role ID
      * @type {number}
      * @memberof DtoRole
@@ -2016,6 +2022,12 @@ export interface GuildCreateGuildRoleRequest {
      */
     'color'?: number;
     /**
+     * Show online members with this role in a separate section
+     * @type {boolean}
+     * @memberof GuildCreateGuildRoleRequest
+     */
+    'hoist'?: boolean;
+    /**
      * Role name
      * @type {string}
      * @memberof GuildCreateGuildRoleRequest
@@ -2304,6 +2316,12 @@ export interface GuildPatchGuildRoleRequest {
      * @memberof GuildPatchGuildRoleRequest
      */
     'color'?: number;
+    /**
+     * Show online members with this role in a separate section
+     * @type {boolean}
+     * @memberof GuildPatchGuildRoleRequest
+     */
+    'hoist'?: boolean;
     /**
      * Role name
      * @type {string}

@@ -130,6 +130,9 @@ export interface Translation {
         previewAttachments: string
         openThread: string
         createThread: string
+        searchPlaceholder: string
+        joinedThreads: string
+        otherActiveThreads: string
         threadFallback: string
         missingThread: string
         createTitle: string
@@ -682,8 +685,11 @@ export interface Translation {
         rolesTitle: string; createRole: string; roleNamePlaceholder: string; everyoneRole: string; everyoneBadge: string
         backToRoles: string; editRole: string; everyoneDesc: string; roleEditDesc: string; deleteRole: string
         colorLabel: string; roleColorTitle: string; roleNameLabel: string
+        roleTabDisplay: string; roleTabPermissions: string; roleTabMembers: string
+        rolePreview: string; roleHoistLabel: string; roleHoistDesc: string
         adminWarningTitle: string; adminWarningDesc: string
         noCustomRoles: string; selectRoleHint: string; roleIdLabel: string
+        searchMembers: string; removeRoleMember: string; noRoleMembers: string
         roleSaved: string; roleFailed: string; roleCreated: string; roleCreateFailed: string; roleDeleted: string; roleDeleteFailed: string; roleReorderFailed: string
         invitesTitle: string; inviteOneHour: string; inviteOneDay: string; inviteSevenDays: string; inviteThirtyDays: string; inviteNeverExpires: string
         inviteCreatedAt: string; inviteExpired: string; inviteExpires: string; inviteNever: string

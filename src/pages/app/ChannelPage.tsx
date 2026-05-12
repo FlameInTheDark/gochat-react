@@ -2,17 +2,17 @@ import { useState, useEffect, useMemo, useCallback, useRef, type ChangeEvent, ty
 import { motion, AnimatePresence } from 'motion/react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { Hash, Spool, Volume2, VolumeX, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, Search, X, Monitor, Loader2, RotateCcw } from 'lucide-react'
+import { Hash, Spool, Volume2, VolumeX, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, ChevronRight, Search, X, Monitor, Loader2, RotateCcw, LogIn, LogOut } from 'lucide-react'
 import axios from 'axios'
 import { Separator } from '@/components/ui/separator'
 import { guildApi, messageApi, rolesApi, searchApi } from '@/api/client'
-import { SearchMessageSearchRequestHasEnum } from '@/client'
+import { SearchMessageSearchRequestHasEnum, type DtoThreadMember } from '@/client'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useStreamStore, type StreamConnectionState } from '@/stores/streamStore'
 import { ChannelType } from '@/types'
-import type { DtoChannel, DtoGuild, DtoMessage } from '@/types'
+import type { DtoChannel, DtoGuild, DtoMember, DtoMessage } from '@/types'
 import type { ServerOutletContext } from './ServerLayout'
-import type { MentionResolver } from '@/lib/messageParser'
+import { parseMessageContent, type MentionResolver } from '@/lib/messageParser'
 import MessageList from '@/components/chat/MessageList'
 import ChatAttachmentDropZone from '@/components/chat/ChatAttachmentDropZone'
 import MessageInput, { type MessageInputHandle } from '@/components/chat/MessageInput'
@@ -20,7 +20,6 @@ import MemberList from '@/components/layout/MemberList'
 import SearchBar, { type SearchBarHandle, type AppliedFilter } from '@/components/chat/SearchBar'
 import SearchPanel from '@/components/chat/SearchPanel'
 import ThreadCreatePanel from '@/components/chat/ThreadCreatePanel'
-import ThreadListPanel from '@/components/chat/ThreadListPanel'
 import ThreadPanel from '@/components/chat/ThreadPanel'
 import { activateChannel, deactivateChannel } from '@/services/wsService'
 import { joinVoice, leaveVoice, setMuted, setDeafened, enableCamera, disableCamera } from '@/services/voiceService'
@@ -47,6 +46,7 @@ import { useUnreadStore } from '@/stores/unreadStore'
 import TypingIndicator from '@/components/chat/TypingIndicator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { useMessagePagination } from '@/hooks/useMessagePagination'
 import { useTranslation } from 'react-i18next'
@@ -55,6 +55,7 @@ import { getTopRoleColor } from '@/lib/memberColors'
 import { createJumpRequest, type JumpBehavior, type JumpRequest } from '@/lib/messageJump'
 import { isAutoThreadFollowup, isThreadChannel, sortThreadsByActivity } from '@/lib/threads'
 import { buildMessagePreviewText } from '@/lib/messagePreview'
+import { addThreadMember, removeThreadMember } from '@/lib/threadMembership'
 import { useClientMode } from '@/hooks/useClientMode'
 import StartStreamDialog from '@/components/voice/StartStreamDialog'
 
@@ -169,9 +170,24 @@ function isThreadLookupNotFound(error: unknown): boolean {
 export default function ChannelPage() {
   const { channelId, serverId } = useParams<{ channelId: string; serverId: string }>()
   const { channels } = useOutletContext<ServerOutletContext>()
-  const channel = channels.find((c) => String(c.id) === channelId)
+  const channelFromList = channels.find((c) => String(c.id) === channelId)
+  const { data: routeChannel } = useQuery({
+    queryKey: ['channel', serverId, channelId],
+    queryFn: () =>
+      guildApi.guildGuildIdChannelChannelIdGet({
+        guildId: serverId!,
+        channelId: channelId!,
+      }).then((res) => res.data),
+    enabled: !!serverId && !!channelId && !channelFromList,
+    staleTime: 30_000,
+  })
+  const channel = channelFromList ?? routeChannel
   const isVoice = channel?.type === ChannelType.ChannelTypeGuildVoice
   const isTextChannel = channel?.type === ChannelType.ChannelTypeGuild
+  const isThreadView = channel?.type === ChannelType.ChannelTypeThread
+  const parentChannel = isThreadView && channel?.parent_id != null
+    ? channels.find((c) => String(c.id) === String(channel.parent_id))
+    : undefined
 
   const navigate = useNavigate()
   const location = useLocation()
@@ -204,6 +220,8 @@ export default function ChannelPage() {
   const [isSearching, setIsSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
+  const [threadDropdownOpen, setThreadDropdownOpen] = useState(false)
+  const [threadDropdownSearch, setThreadDropdownSearch] = useState('')
   const lastSearchParamsRef = useRef<{ chips: AppliedFilter[]; text: string } | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
   const messageInputRef = useRef<MessageInputHandle | null>(null)
@@ -366,11 +384,22 @@ export default function ChannelPage() {
     : guildPermissions
   const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
   const memberRoleIds = new Set((currentMember?.roles ?? []).map(String))
-  const canAccessParentChannel = isOwner || isAdmin || !channel?.private ||
-    (channel?.roles ?? []).some((r) => memberRoleIds.has(String(r)))
+  const permissionChannel = isThreadView ? parentChannel : channel
+  const canAccessParentChannel = isOwner || isAdmin || !permissionChannel?.private ||
+    (permissionChannel?.roles ?? []).some((r) => memberRoleIds.has(String(r)))
   const canCreateThreads = canAccessParentChannel && (isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.CREATE_THREADS))
   const canSendInThreads = canAccessParentChannel && (isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.SEND_MESSAGES_IN_THREADS))
   const canManageThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_THREADS)
+  const currentThreadMemberIds = useMemo(
+    () => new Set((channel?.member_ids ?? []).map(String)),
+    [channel?.member_ids],
+  )
+  const isCurrentThreadMember = isThreadView && currentUser?.id != null && currentThreadMemberIds.has(String(currentUser.id))
+  const currentThreadClosed = isThreadView && !!channel?.closed
+  const fullThreadComposerDisabled = isThreadView && (currentThreadClosed || !canSendInThreads)
+  const fullThreadComposerDisabledReason = currentThreadClosed
+    ? t('threads.closedComposer')
+    : t('threads.noSendPermission')
 
   async function handleStartChannelStream(
     sourceType: StreamSourceType,
@@ -568,7 +597,7 @@ export default function ChannelPage() {
     return ordered
   }, [channelMessages, threadById])
 
-  const shouldLoadThreadListPreviews = rightPanelMode === 'threads'
+  const shouldLoadThreadListPreviews = false
 
   const threadPreviewTargets = useMemo(() => {
     const ordered: DtoChannel[] = []
@@ -625,6 +654,32 @@ export default function ChannelPage() {
     })
     return previews
   }, [channelThreads, threadPreviewMessageMap, t])
+
+  const filteredDropdownThreads = useMemo(() => {
+    const search = threadDropdownSearch.trim().toLowerCase()
+    if (!search) return channelThreads
+    return channelThreads.filter((thread) => {
+      const threadId = String(thread.id)
+      return [
+        thread.name ?? '',
+        thread.topic ?? '',
+        threadPreviewMap[threadId] ?? '',
+      ].some((value) => value.toLowerCase().includes(search))
+    })
+  }, [channelThreads, threadDropdownSearch, threadPreviewMap])
+
+  const { joinedDropdownThreads, otherDropdownThreads } = useMemo(() => {
+    const currentUserId = currentUser?.id != null ? String(currentUser.id) : null
+    const joined: DtoChannel[] = []
+    const other: DtoChannel[] = []
+    filteredDropdownThreads.forEach((thread) => {
+      const isJoined = currentUserId != null &&
+        (thread.member_ids ?? []).some((id) => String(id) === currentUserId)
+      if (isJoined) joined.push(thread)
+      else other.push(thread)
+    })
+    return { joinedDropdownThreads: joined, otherDropdownThreads: other }
+  }, [currentUser?.id, filteredDropdownThreads])
 
   const memberColorMap = useMemo(() => {
     const colors: Record<string, string> = {}
@@ -778,28 +833,18 @@ export default function ChannelPage() {
     setRightPanelMode('thread')
   }, [clearSearch, rightPanelMode])
 
-  const openThreadList = useCallback(() => {
-    clearSearch()
-    setCreateThreadSource(null)
-    setRightPanelModeBeforeThreads((current) => (
-      isThreadRightPanelMode(rightPanelMode) ? current : toNonThreadRightPanelMode(rightPanelMode)
-    ))
-    setActiveThreadId(null)
-    setThreadJumpRequest(null)
-    setRightPanelMode('threads')
-  }, [clearSearch, rightPanelMode])
+  const openThreadFullView = useCallback((threadId: string) => {
+    setThreadDropdownOpen(false)
+    navigate(`/app/${serverId}/${threadId}`)
+  }, [navigate, serverId])
 
-  function handleThreadButtonClick() {
+  const closeThreadSidePanel = useCallback(() => {
     clearSearch()
-    setCreateThreadSource(null)
     setActiveThreadId(null)
     setThreadJumpRequest(null)
-    setRightPanelMode((mode) => {
-      if (isThreadRightPanelMode(mode)) return rightPanelModeBeforeThreads
-      setRightPanelModeBeforeThreads(toNonThreadRightPanelMode(mode))
-      return 'threads'
-    })
-  }
+    setCreateThreadSource(null)
+    setRightPanelMode(rightPanelModeBeforeThreads)
+  }, [clearSearch, rightPanelModeBeforeThreads])
 
   function handleMembersButtonClick() {
     clearSearch()
@@ -955,12 +1000,12 @@ export default function ChannelPage() {
     if (!activeThreadId || activeThread || isActiveThreadLoading) return
     setActiveThreadId(null)
     setThreadJumpRequest(null)
-    setRightPanelMode('threads')
-  }, [activeThread, activeThreadId, isActiveThreadLoading])
+    setRightPanelMode(rightPanelModeBeforeThreads)
+  }, [activeThread, activeThreadId, isActiveThreadLoading, rightPanelModeBeforeThreads])
 
   if (!channelId) return null
 
-  const Icon = isVoice ? Volume2 : Hash
+  const Icon = isVoice ? Volume2 : isThreadView ? Spool : Hash
 
   async function handleJoinVoice() {
     if (!channel || !serverId || !channelId) return
@@ -1000,6 +1045,66 @@ export default function ChannelPage() {
       disableCamera()
     } else {
       void enableCamera()
+    }
+  }
+
+  function patchCurrentThreadMembership(joined: boolean, member?: DtoThreadMember) {
+    if (!channel || !serverId || !channelId || currentUser?.id == null) return
+    const userId = String(currentUser.id)
+    const update = (item: DtoChannel) => joined ? addThreadMember(item, userId, member) : removeThreadMember(item, userId)
+    const parentChannelId = channel.parent_id != null ? String(channel.parent_id) : null
+
+    queryClient.setQueryData<DtoChannel[]>(['channels', serverId], (old) => {
+      if (!old) return old
+      if (!joined) return old.filter((item) => String(item.id) !== channelId)
+      const found = old.some((item) => String(item.id) === channelId)
+      if (found) return old.map((item) => String(item.id) === channelId ? update(item) : item)
+      return [...old, update(channel)]
+    })
+
+    if (parentChannelId) {
+      queryClient.setQueryData<DtoChannel[]>(['channel-threads', serverId, parentChannelId], (old) =>
+        old?.map((item) => String(item.id) === channelId ? update(item) : item),
+      )
+    }
+
+    queryClient.setQueryData<DtoChannel>(['thread-channel', serverId, channelId], (old) =>
+      old ? update(old) : update(channel),
+    )
+  }
+
+  async function refreshCurrentThreadData() {
+    if (!serverId || !channelId) return
+    const parentChannelId = channel?.parent_id != null ? String(channel.parent_id) : null
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['channels', serverId] }),
+      parentChannelId
+        ? queryClient.invalidateQueries({ queryKey: ['channel-threads', serverId, parentChannelId] })
+        : Promise.resolve(),
+      queryClient.invalidateQueries({ queryKey: ['thread-channel', serverId, channelId] }),
+      queryClient.invalidateQueries({ queryKey: ['thread-preview', channelId] }),
+    ])
+  }
+
+  async function handleJoinCurrentThread() {
+    if (!serverId || !channelId || !isThreadView) return
+    try {
+      const res = await guildApi.guildGuildIdChannelChannelIdThreadMemberMePut({ guildId: serverId, channelId })
+      patchCurrentThreadMembership(true, res.data)
+      await refreshCurrentThreadData()
+    } catch {
+      toast.error(t('threads.joinFailed'))
+    }
+  }
+
+  async function handleLeaveCurrentThread() {
+    if (!serverId || !channelId || !isThreadView) return
+    try {
+      await guildApi.guildGuildIdChannelChannelIdThreadMemberMeDelete({ guildId: serverId, channelId })
+      patchCurrentThreadMembership(false)
+      await refreshCurrentThreadData()
+    } catch {
+      toast.error(t('threads.leaveFailed'))
     }
   }
 
@@ -1071,10 +1176,6 @@ export default function ChannelPage() {
         label: t('messageItem.reply'),
         onClick: () => setReplyTarget(msg),
       } : undefined,
-      threadListAction: isTextChannel ? {
-        label: t('threads.title'),
-        onClick: openThreadList,
-      } : undefined,
       onOpenReference: ({ channelId: targetChannelId, messageId }: { channelId: string; messageId: string }) => {
         void openMessageLocation(targetChannelId, messageId)
       },
@@ -1082,7 +1183,7 @@ export default function ChannelPage() {
       allowEdit: !isInformationalMessage,
       allowDelete: true,
     }
-  }, [channels, threadById, missingThreadIds, threadPreviewMessageMap, t, openThread, handleCreateThreadAction, setReplyTarget, openThreadList, openMessageLocation, isTextChannel, canCreateThreads])
+  }, [channels, threadById, missingThreadIds, threadPreviewMessageMap, t, openThread, handleCreateThreadAction, setReplyTarget, openMessageLocation, isTextChannel, canCreateThreads])
 
   const threadButtonActive =
     rightPanelMode === 'threads' ||
@@ -1350,8 +1451,24 @@ export default function ChannelPage() {
               <ChevronLeft className="w-5 h-5" />
             </button>
           )}
-          <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
-          <span className="font-semibold">{channel?.name ?? channelId}</span>
+          {isThreadView ? (
+            <div className="flex min-w-0 items-center gap-2 font-semibold">
+              {parentChannel?.name && (
+                <>
+                  <Hash className="w-5 h-5 text-muted-foreground shrink-0" />
+                  <span className="truncate">{parentChannel.name}</span>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </>
+              )}
+              <Spool className="w-5 h-5 text-muted-foreground shrink-0" />
+              <span className="truncate">{channel?.name ?? channelId}</span>
+            </div>
+          ) : (
+            <>
+              <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
+              <span className="font-semibold">{channel?.name ?? channelId}</span>
+            </>
+          )}
           {!isMobile && channel?.topic && (
             <>
               <Separator orientation="vertical" className="h-5 mx-1" />
@@ -1561,8 +1678,24 @@ export default function ChannelPage() {
               <ChevronLeft className="w-5 h-5" />
             </button>
           )}
-          <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
-          <span className="font-semibold">{channel?.name ?? channelId}</span>
+          {isThreadView ? (
+            <div className="flex min-w-0 items-center gap-2 font-semibold">
+              {parentChannel?.name && (
+                <>
+                  <Hash className="w-5 h-5 text-muted-foreground shrink-0" />
+                  <span className="truncate">{parentChannel.name}</span>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </>
+              )}
+              <Spool className="w-5 h-5 text-muted-foreground shrink-0" />
+              <span className="truncate">{channel?.name ?? channelId}</span>
+            </div>
+          ) : (
+            <>
+              <Icon className="w-5 h-5 text-muted-foreground shrink-0" />
+              <span className="font-semibold">{channel?.name ?? channelId}</span>
+            </>
+          )}
           {!isMobile && channel?.topic && (
             <>
               <Separator orientation="vertical" className="h-5 mx-1" />
@@ -1573,6 +1706,19 @@ export default function ChannelPage() {
           {/* Mobile top-right icon buttons */}
           {isMobile && (
             <div className="ml-auto flex items-center gap-1">
+              {isThreadView && (
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => void (isCurrentThreadMember ? handleLeaveCurrentThread() : handleJoinCurrentThread())}
+                      className="w-9 h-9 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+                    >
+                      {isCurrentThreadMember ? <LogOut className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{isCurrentThreadMember ? t('threads.leaveThread') : t('threads.joinThread')}</TooltipContent>
+                </Tooltip>
+              )}
               {isTextChannel && (
                 <button
                   onClick={() => {
@@ -1596,22 +1742,33 @@ export default function ChannelPage() {
                 </button>
               )}
               {isTextChannel && (
-                <Tooltip delayDuration={400}>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={handleThreadButtonClick}
-                      className={cn(
-                        'w-9 h-9 flex items-center justify-center rounded transition-colors',
-                        threadButtonActive
-                          ? 'text-foreground bg-accent'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                      )}
-                    >
-                      <Spool className="w-4 h-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">{threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}</TooltipContent>
-                </Tooltip>
+                <ThreadDropdown
+                  open={threadDropdownOpen}
+                  onOpenChange={setThreadDropdownOpen}
+                  threads={channelThreads}
+                  joinedThreads={joinedDropdownThreads}
+                  otherThreads={otherDropdownThreads}
+                  previews={threadPreviewMap}
+                  previewMessages={threadPreviewMessageMap}
+                  memberColors={memberColorMap}
+                  members={members ?? []}
+                  activeThreadId={activeThreadId}
+                  isLoading={isThreadsLoading}
+                  search={threadDropdownSearch}
+                  onSearchChange={setThreadDropdownSearch}
+                  resolver={mentionResolver}
+                  onOpenThread={openThreadFullView}
+                  onCreateThread={() => {
+                    toast.info(t('threads.createDescription'))
+                  }}
+                  canCreateThreads={canCreateThreads}
+                  triggerClassName={cn(
+                    'w-9 h-9 flex items-center justify-center rounded transition-colors',
+                    threadDropdownOpen || threadButtonActive
+                      ? 'text-foreground bg-accent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                  )}
+                />
               )}
               <Tooltip delayDuration={400}>
                 <TooltipTrigger asChild>
@@ -1635,23 +1792,47 @@ export default function ChannelPage() {
           {/* Desktop top-right controls */}
           {!isMobile && (
             <div className="ml-auto flex items-center gap-2">
-              {isTextChannel && (
+              {isThreadView && (
                 <Tooltip delayDuration={400}>
                   <TooltipTrigger asChild>
                     <button
-                      onClick={handleThreadButtonClick}
-                      className={cn(
-                        'w-8 h-8 flex items-center justify-center rounded transition-colors',
-                        threadButtonActive
-                          ? 'text-foreground bg-accent'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                      )}
+                      onClick={() => void (isCurrentThreadMember ? handleLeaveCurrentThread() : handleJoinCurrentThread())}
+                      className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
                     >
-                      <Spool className="w-4 h-4" />
+                      {isCurrentThreadMember ? <LogOut className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">{threadButtonActive ? t('threads.hideThreadList') : t('threads.showThreadList')}</TooltipContent>
+                  <TooltipContent side="bottom">{isCurrentThreadMember ? t('threads.leaveThread') : t('threads.joinThread')}</TooltipContent>
                 </Tooltip>
+              )}
+              {isTextChannel && (
+                <ThreadDropdown
+                  open={threadDropdownOpen}
+                  onOpenChange={setThreadDropdownOpen}
+                  threads={channelThreads}
+                  joinedThreads={joinedDropdownThreads}
+                  otherThreads={otherDropdownThreads}
+                  previews={threadPreviewMap}
+                  previewMessages={threadPreviewMessageMap}
+                  memberColors={memberColorMap}
+                  members={members ?? []}
+                  activeThreadId={activeThreadId}
+                  isLoading={isThreadsLoading}
+                  search={threadDropdownSearch}
+                  onSearchChange={setThreadDropdownSearch}
+                  resolver={mentionResolver}
+                  onOpenThread={openThreadFullView}
+                  onCreateThread={() => {
+                    toast.info(t('threads.createDescription'))
+                  }}
+                  canCreateThreads={canCreateThreads}
+                  triggerClassName={cn(
+                    'w-8 h-8 flex items-center justify-center rounded transition-colors',
+                    threadDropdownOpen || threadButtonActive
+                      ? 'text-foreground bg-accent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                  )}
+                />
               )}
               <Tooltip delayDuration={400}>
                 <TooltipTrigger asChild>
@@ -1700,6 +1881,7 @@ export default function ChannelPage() {
         <div ref={contentContainerRef} className="relative flex flex-1 min-h-0 overflow-hidden">
           <ChatAttachmentDropZone
             className="flex-1 min-w-0"
+            disabled={fullThreadComposerDisabled}
             onFileDrop={(files) => {
               messageInputRef.current?.addFiles(files)
               messageInputRef.current?.focusEditor()
@@ -1725,10 +1907,17 @@ export default function ChannelPage() {
             <MessageInput
               ref={messageInputRef}
               channelId={channelId}
-              channelName={channel?.name ? `#${channel.name}` : channelId}
+              channelName={channel?.name ? `${isThreadView ? '' : '#'}${channel.name}` : channelId}
+              disabled={fullThreadComposerDisabled}
+              disabledReason={fullThreadComposerDisabled ? fullThreadComposerDisabledReason : undefined}
               resolver={mentionResolver}
               replyTo={replyTarget}
               onCancelReply={() => setReplyTarget(null)}
+              onMessageQueued={isThreadView && !isCurrentThreadMember
+                ? () => {
+                    patchCurrentThreadMembership(true)
+                  }
+                : undefined}
             />
           </ChatAttachmentDropZone>
 
@@ -1808,38 +1997,24 @@ export default function ChannelPage() {
                     onOpenReferencedMessage={(targetChannelId, messageId) => {
                       void openMessageLocation(targetChannelId, messageId)
                     }}
-                    onBack={() => setRightPanelMode('threads')}
+                    onClose={closeThreadSidePanel}
                     onDeleted={() => {
                       setActiveThreadId(null)
                       setThreadJumpRequest(null)
-                      setRightPanelMode('threads')
+                      setRightPanelMode(rightPanelModeBeforeThreads)
                     }}
                   />
                 ) : rightPanelMode === 'thread-create' && createThreadSource ? (
                   <ThreadCreatePanel
                     parentChannelId={channelId}
                     sourceMessage={createThreadSource}
-                    onBack={() => {
-                      setCreateThreadSource(null)
-                      setRightPanelMode('threads')
-                    }}
+                    onBack={closeThreadSidePanel}
                     onCreateThread={handleCreateThread}
                   />
                 ) : rightPanelMode === 'thread' ? (
                   <div className="flex flex-1 min-h-0 items-center justify-center text-sm text-muted-foreground">
                     {t('common.loading')}
                   </div>
-                ) : rightPanelMode === 'threads' ? (
-                <ThreadListPanel
-                  threads={channelThreads}
-                  previews={threadPreviewMap}
-                  previewMessages={threadPreviewMessageMap}
-                  memberColors={memberColorMap}
-                  isLoading={isThreadsLoading}
-                  activeThreadId={activeThreadId}
-                  resolver={mentionResolver}
-                  onOpenThread={(threadId) => openThread(threadId)}
-                />
                 ) : (
                   <MemberList serverId={serverId} channel={channel} />
                 )}
@@ -1850,6 +2025,265 @@ export default function ChannelPage() {
         </div>
       </div>
     </>
+  )
+}
+
+function formatRelativeThreadTime(value: string | undefined): string | null {
+  if (!value) return null
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) return null
+  const diffSeconds = Math.max(1, Math.floor((Date.now() - timestamp) / 1000))
+  if (diffSeconds < 60) return 'now'
+  const units: Array<[number, string]> = [
+    [60 * 60 * 24 * 365, 'y'],
+    [60 * 60 * 24 * 30, 'mo'],
+    [60 * 60 * 24, 'd'],
+    [60 * 60, 'h'],
+    [60, 'm'],
+  ]
+  const [unitSeconds, label] = units.find(([seconds]) => diffSeconds >= seconds) ?? units[units.length - 1]
+  return `${Math.floor(diffSeconds / unitSeconds)}${label} ago`
+}
+
+function ThreadDropdown({
+  open,
+  onOpenChange,
+  threads,
+  joinedThreads,
+  otherThreads,
+  previews,
+  previewMessages,
+  memberColors,
+  members,
+  activeThreadId,
+  isLoading,
+  search,
+  onSearchChange,
+  resolver,
+  onOpenThread,
+  onCreateThread,
+  canCreateThreads,
+  triggerClassName,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  threads: DtoChannel[]
+  joinedThreads: DtoChannel[]
+  otherThreads: DtoChannel[]
+  previews: Record<string, string>
+  previewMessages: Record<string, DtoMessage | null>
+  memberColors: Record<string, string>
+  members: DtoMember[]
+  activeThreadId?: string | null
+  isLoading: boolean
+  search: string
+  onSearchChange: (value: string) => void
+  resolver: MentionResolver
+  onOpenThread: (threadId: string) => void
+  onCreateThread: () => void
+  canCreateThreads: boolean
+  triggerClassName: string
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <Tooltip delayDuration={400}>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button className={triggerClassName}>
+              <Spool className="w-4 h-4" />
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{t('threads.title')}</TooltipContent>
+      </Tooltip>
+      <PopoverContent
+        align="end"
+        sideOffset={10}
+        className="flex h-[min(720px,calc(100vh-96px))] w-[min(620px,calc(100vw-32px))] flex-col overflow-hidden rounded-lg border-sidebar-border bg-popover p-0 shadow-2xl"
+      >
+        <div className="flex h-12 shrink-0 items-center gap-3 border-b border-sidebar-border px-4">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Spool className="h-4 w-4 text-muted-foreground" />
+            <span>{t('threads.title')}</span>
+          </div>
+          <div className="relative min-w-0 flex-1">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder={t('threads.searchPlaceholder')}
+              className="h-8 w-full rounded-md border border-input bg-background/60 pl-8 pr-2 text-sm outline-none transition-colors focus:border-primary"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={onCreateThread}
+            disabled={!canCreateThreads}
+            className="h-8 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {t('common.create')}
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div key={idx} className="h-[72px] rounded-lg border border-sidebar-border/70 bg-muted/30" />
+              ))}
+            </div>
+          ) : threads.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              {t('threads.emptyTitle')}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <ThreadDropdownSection
+                label={t('threads.joinedThreads', { count: joinedThreads.length })}
+                threads={joinedThreads}
+                previews={previews}
+                previewMessages={previewMessages}
+                memberColors={memberColors}
+                members={members}
+                activeThreadId={activeThreadId}
+                resolver={resolver}
+                onOpenThread={onOpenThread}
+              />
+              <ThreadDropdownSection
+                label={t('threads.otherActiveThreads', { count: otherThreads.length })}
+                threads={otherThreads}
+                previews={previews}
+                previewMessages={previewMessages}
+                memberColors={memberColors}
+                members={members}
+                activeThreadId={activeThreadId}
+                resolver={resolver}
+                onOpenThread={onOpenThread}
+              />
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function ThreadDropdownSection({
+  label,
+  threads,
+  previews,
+  previewMessages,
+  memberColors,
+  members,
+  activeThreadId,
+  resolver,
+  onOpenThread,
+}: {
+  label: string
+  threads: DtoChannel[]
+  previews: Record<string, string>
+  previewMessages: Record<string, DtoMessage | null>
+  memberColors: Record<string, string>
+  members: DtoMember[]
+  activeThreadId?: string | null
+  resolver: MentionResolver
+  onOpenThread: (threadId: string) => void
+}) {
+  if (threads.length === 0) return null
+
+  return (
+    <section className="space-y-2">
+      <div className="px-0.5 text-xs font-bold uppercase text-muted-foreground">
+        {label}
+      </div>
+      <div className="space-y-2">
+        {threads.map((thread) => {
+          const threadId = String(thread.id)
+          const previewMessage = previewMessages[threadId] ?? null
+          const preview = previews[threadId]
+          const previewAuthorName = previewMessage?.author?.name?.trim()
+          const previewAuthorColor = previewMessage?.author?.id != null
+            ? memberColors[String(previewMessage.author.id)]
+            : undefined
+          const relativeTime = formatRelativeThreadTime(thread.created_at)
+
+          return (
+            <button
+              key={threadId}
+              type="button"
+              onClick={() => onOpenThread(threadId)}
+              className={cn(
+                'flex min-h-[72px] w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors',
+                activeThreadId === threadId
+                  ? 'border-primary/50 bg-primary/10'
+                  : 'border-sidebar-border/70 bg-muted/20 hover:border-sidebar-border hover:bg-accent/45',
+              )}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold text-foreground">
+                  {thread.name ?? threadId}
+                </div>
+                <div className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
+                  {previewAuthorName && (
+                    <span
+                      className="font-semibold"
+                      style={previewAuthorColor ? { color: previewAuthorColor } : undefined}
+                    >
+                      {previewAuthorName}
+                      {': '}
+                    </span>
+                  )}
+                  {parseMessageContent(preview, resolver)}
+                  {relativeTime && (
+                    <span className="font-medium text-foreground/80">
+                      {' · '}
+                      {relativeTime}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <ThreadMemberPips memberIds={thread.member_ids ?? []} members={members} />
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function ThreadMemberPips({ memberIds, members }: { memberIds: Array<number | string>; members: DtoMember[] }) {
+  const visibleIds = memberIds.slice(0, 4)
+  const overflow = memberIds.length - visibleIds.length
+  if (memberIds.length === 0) return null
+
+  return (
+    <div className="flex shrink-0 items-center -space-x-2">
+      {visibleIds.map((id) => {
+        const member = members.find((item) => String(item.user?.id) === String(id))
+        const name = member?.username ?? member?.user?.name ?? String(id)
+        const avatar = member?.user?.avatar?.url
+        return (
+          <div
+            key={String(id)}
+            className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full border-2 border-popover bg-muted text-[10px] font-semibold text-muted-foreground"
+            title={name}
+          >
+            {avatar ? (
+              <img src={avatar} alt={name} className="h-full w-full object-cover" />
+            ) : (
+              name.charAt(0).toUpperCase()
+            )}
+          </div>
+        )
+      })}
+      {overflow > 0 && (
+        <div className="flex h-6 min-w-6 items-center justify-center rounded-full border-2 border-popover bg-background px-1 text-[10px] font-semibold text-foreground">
+          +{overflow}
+        </div>
+      )}
+    </div>
   )
 }
 

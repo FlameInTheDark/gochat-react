@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'motion/react'
-import { ChevronDown, ChevronLeft, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye, MoreVertical } from 'lucide-react'
+import { ChevronDown, ChevronLeft, Hash, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye, MoreVertical, CornerDownRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -12,9 +12,6 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
   ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
 } from '@/components/ui/context-menu'
 import {
   DropdownMenu,
@@ -22,9 +19,6 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
   Dialog,
@@ -49,6 +43,7 @@ import { setPeerVolume } from '@/services/voiceService'
 import { ChannelType } from '@/types'
 import type { DtoChannel, DtoGuild } from '@/types'
 import { cn } from '@/lib/utils'
+import { sortThreadsByActivity } from '@/lib/threads'
 import { useTranslation } from 'react-i18next'
 import VoicePanel from '@/components/voice/VoicePanel'
 import { joinVoice } from '@/services/voiceService'
@@ -130,6 +125,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   const isCat = (ch: DtoChannel) => ch.type === ChannelType.ChannelTypeGuildCategory
   const isRegular = (ch: DtoChannel) =>
     ch.type === ChannelType.ChannelTypeGuild || ch.type === ChannelType.ChannelTypeGuildVoice
+  const isThread = (ch: DtoChannel) => ch.type === ChannelType.ChannelTypeThread
   const sorted = (arr: DtoChannel[]) => [...arr].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
 
   // Channel visibility: owners and admins see everything; for private channels,
@@ -148,6 +144,11 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   const visibleCategoryIds = new Set(categories.map((c) => String(c.id)))
 
   const allRegular = channels.filter(isRegular)
+  const joinedThreads = channels.filter((ch) => {
+    if (!isThread(ch)) return false
+    if (!currentUser?.id) return false
+    return (ch.member_ids ?? []).some((id) => String(id) === String(currentUser.id))
+  })
   // Visible regular channels: must pass own access check, and if inside a category,
   // that category must also be visible (a private inaccessible category hides its children).
   const visibleRegular = allRegular.filter((ch) => {
@@ -157,9 +158,13 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     return true
   })
 
-  const uncategorized = sorted(
-    visibleRegular.filter((c) => !c.parent_id || !categoryIds.has(String(c.parent_id))),
-  )
+  const threadsByParentId = joinedThreads.reduce<Record<string, DtoChannel[]>>((acc, thread) => {
+    if (thread.parent_id == null) return acc
+    const parentId = String(thread.parent_id)
+    if (!acc[parentId]) acc[parentId] = []
+    acc[parentId].push(thread)
+    return acc
+  }, {})
 
 
   const isDeletingCategory = deletingChannel?.type === ChannelType.ChannelTypeGuildCategory
@@ -562,34 +567,44 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                     const ch = item
                     const parentId = ch.parent_id ? String(ch.parent_id) : null
                     if (parentId && categoryIds.has(parentId)) return null // handled in category block
+                    const channelThreads = threadsByParentId[String(ch.id)] ?? []
                     return (
-                      <ChannelItemWithUnread
-                        key={String(ch.id)}
-                        channel={ch}
-                        serverId={serverId}
-                        isActive={String(ch.id) === activeChannelId}
-                        navigate={navigate}
-                        onDelete={setDeletingChannel}
-                        onVoiceJoin={handleVoiceJoin}
-                        onOpenSettings={() => openChannelSettings(serverId, String(ch.id))}
-                        isDragging={draggingId === String(ch.id)}
-                        dropIndicator={
-                          dropIndicator?.id === String(ch.id)
-                            ? dropIndicator.before ? 'top' : 'bottom'
-                            : null
-                        }
-                        onDragStart={(e) => onDragStart(e, ch)}
-                        onDragOver={(e) => onDragOver(e, ch)}
-                        onDrop={(e) => onDrop(e, ch)}
-                        onDragEnd={onDragEnd}
-                        isEditing={editingId === String(ch.id)}
-                        editName={editingName}
-                        onEditChange={setEditingName}
-                        onEditSave={() => saveEdit(ch)}
-                        onEditCancel={cancelEdit}
-                        canManageChannels={canManageChannels}
-                        members={members}
-                      />
+                      <div key={String(ch.id)}>
+                        <ChannelItemWithUnread
+                          channel={ch}
+                          serverId={serverId}
+                          isActive={String(ch.id) === activeChannelId}
+                          navigate={navigate}
+                          onDelete={setDeletingChannel}
+                          onVoiceJoin={handleVoiceJoin}
+                          onOpenSettings={() => openChannelSettings(serverId, String(ch.id))}
+                          isDragging={draggingId === String(ch.id)}
+                          dropIndicator={
+                            dropIndicator?.id === String(ch.id)
+                              ? dropIndicator.before ? 'top' : 'bottom'
+                              : null
+                          }
+                          onDragStart={(e) => onDragStart(e, ch)}
+                          onDragOver={(e) => onDragOver(e, ch)}
+                          onDrop={(e) => onDrop(e, ch)}
+                          onDragEnd={onDragEnd}
+                          isEditing={editingId === String(ch.id)}
+                          editName={editingName}
+                          onEditChange={setEditingName}
+                          onEditSave={() => saveEdit(ch)}
+                          onEditCancel={cancelEdit}
+                          canManageChannels={canManageChannels}
+                          members={members}
+                        />
+                        {channelThreads.length > 0 && (
+                          <ThreadNavItems
+                            threads={sortThreadsByActivity(channelThreads)}
+                            serverId={serverId}
+                            activeChannelId={activeChannelId}
+                            navigate={navigate}
+                          />
+                        )}
+                      </div>
                     )
                   }
 
@@ -715,35 +730,47 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                             transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
                             style={{ overflow: 'hidden' }}
                           >
-                            {catChildren.map((ch) => (
-                              <ChannelItemWithUnread
-                                key={String(ch.id)}
-                                channel={ch}
-                                serverId={serverId}
-                                isActive={String(ch.id) === activeChannelId}
-                                navigate={navigate}
-                                onDelete={setDeletingChannel}
-                                onVoiceJoin={handleVoiceJoin}
-                                onOpenSettings={() => openChannelSettings(serverId, String(ch.id))}
-                                isDragging={draggingId === String(ch.id)}
-                                dropIndicator={
-                                  dropIndicator?.id === String(ch.id)
-                                    ? dropIndicator.before ? 'top' : 'bottom'
-                                    : null
-                                }
-                                onDragStart={(e) => onDragStart(e, ch)}
-                                onDragOver={(e) => onDragOver(e, ch)}
-                                onDrop={(e) => onDrop(e, ch)}
-                                onDragEnd={onDragEnd}
-                                isEditing={editingId === String(ch.id)}
-                                editName={editingName}
-                                onEditChange={setEditingName}
-                                onEditSave={() => saveEdit(ch)}
-                                onEditCancel={cancelEdit}
-                                canManageChannels={canManageChannels}
-                                members={members}
-                              />
-                            ))}
+                            {catChildren.map((ch) => {
+                              const channelThreads = threadsByParentId[String(ch.id)] ?? []
+                              return (
+                                <div key={String(ch.id)}>
+                                  <ChannelItemWithUnread
+                                    channel={ch}
+                                    serverId={serverId}
+                                    isActive={String(ch.id) === activeChannelId}
+                                    navigate={navigate}
+                                    onDelete={setDeletingChannel}
+                                    onVoiceJoin={handleVoiceJoin}
+                                    onOpenSettings={() => openChannelSettings(serverId, String(ch.id))}
+                                    isDragging={draggingId === String(ch.id)}
+                                    dropIndicator={
+                                      dropIndicator?.id === String(ch.id)
+                                        ? dropIndicator.before ? 'top' : 'bottom'
+                                        : null
+                                    }
+                                    onDragStart={(e) => onDragStart(e, ch)}
+                                    onDragOver={(e) => onDragOver(e, ch)}
+                                    onDrop={(e) => onDrop(e, ch)}
+                                    onDragEnd={onDragEnd}
+                                    isEditing={editingId === String(ch.id)}
+                                    editName={editingName}
+                                    onEditChange={setEditingName}
+                                    onEditSave={() => saveEdit(ch)}
+                                    onEditCancel={cancelEdit}
+                                    canManageChannels={canManageChannels}
+                                    members={members}
+                                  />
+                                  {channelThreads.length > 0 && (
+                                    <ThreadNavItems
+                                      threads={sortThreadsByActivity(channelThreads)}
+                                      serverId={serverId}
+                                      activeChannelId={activeChannelId}
+                                      navigate={navigate}
+                                    />
+                                  )}
+                                </div>
+                              )
+                            })}
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -807,6 +834,43 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+function ThreadNavItems({
+  threads,
+  serverId,
+  activeChannelId,
+  navigate,
+}: {
+  threads: DtoChannel[]
+  serverId: string
+  activeChannelId?: string
+  navigate: (path: string) => void
+}) {
+  return (
+    <div className="ml-7 mt-0.5 space-y-0.5">
+      {threads.map((thread) => {
+        const threadId = String(thread.id)
+        const isActive = threadId === activeChannelId
+        return (
+          <button
+            key={threadId}
+            type="button"
+            onClick={() => navigate(`/app/${serverId}/${threadId}`)}
+            className={cn(
+              'group/thread flex h-6 w-full items-center gap-1.5 rounded px-1.5 text-left text-xs transition-colors',
+              isActive
+                ? 'bg-accent text-foreground font-medium'
+                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+            )}
+          >
+            <CornerDownRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+            <span className="min-w-0 flex-1 truncate">{thread.name ?? threadId}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
