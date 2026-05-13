@@ -2,10 +2,28 @@ import { useState, useEffect, useMemo, useCallback, useRef, type ChangeEvent, ty
 import { motion, AnimatePresence } from 'motion/react'
 import { useParams, useOutletContext, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { Hash, Spool, Volume2, VolumeX, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, ChevronRight, Search, X, Monitor, Loader2, RotateCcw, LogIn, LogOut } from 'lucide-react'
+import { Archive, Copy, Eye, Hash, Spool, Volume2, VolumeX, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Video, VideoOff, Users, ChevronLeft, ChevronRight, Search, X, Monitor, Loader2, RotateCcw, LogIn, LogOut, Pencil, Trash2 } from 'lucide-react'
 import axios from 'axios'
 import { Separator } from '@/components/ui/separator'
-import { guildApi, messageApi, rolesApi, searchApi } from '@/api/client'
+import { createChannelThread, guildApi, messageApi, rolesApi, searchApi } from '@/api/client'
+import { Button } from '@/components/ui/button'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { SearchMessageSearchRequestHasEnum, type DtoThreadMember } from '@/client'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useStreamStore, type StreamConnectionState } from '@/stores/streamStore'
@@ -57,6 +75,8 @@ import { buildMessagePreviewText } from '@/lib/messagePreview'
 import { addThreadMember, removeThreadMember } from '@/lib/threadMembership'
 import { useClientMode } from '@/hooks/useClientMode'
 import { useGuildPermissions } from '@/hooks/useGuildPermissions'
+import { useNotificationSettings } from '@/hooks/useNotificationSettings'
+import { NotificationsSubmenu } from '@/components/layout/NotificationsSubmenu'
 import StartStreamDialog from '@/components/voice/StartStreamDialog'
 
 type RightPanelMode = 'members' | 'none' | 'threads' | 'thread' | 'thread-create'
@@ -222,6 +242,12 @@ export default function ChannelPage() {
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false)
   const [threadDropdownOpen, setThreadDropdownOpen] = useState(false)
   const [threadDropdownSearch, setThreadDropdownSearch] = useState('')
+  const [editingThread, setEditingThread] = useState<DtoChannel | null>(null)
+  const [threadEditName, setThreadEditName] = useState('')
+  const [threadEditTopic, setThreadEditTopic] = useState('')
+  const [threadSaving, setThreadSaving] = useState(false)
+  const [deletingThread, setDeletingThread] = useState<DtoChannel | null>(null)
+  const [threadDeleting, setThreadDeleting] = useState(false)
   const lastSearchParamsRef = useRef<{ chips: AppliedFilter[]; text: string } | null>(null)
   const searchBarRef = useRef<SearchBarHandle>(null)
   const messageInputRef = useRef<MessageInputHandle | null>(null)
@@ -370,6 +396,7 @@ export default function ChannelPage() {
 
   const permissionChannel = isThreadView ? parentChannel : channel
   const canCreateThreads = permissions.canCreateThreads(permissionChannel)
+  const canManageThreads = permissions.canManageThreads
   const canSendInThreads = permissions.canSendInThreads(permissionChannel)
   const currentThreadMemberIds = useMemo(
     () => new Set((channel?.member_ids ?? []).map(String)),
@@ -842,6 +869,16 @@ export default function ChannelPage() {
     setRightPanelMode('thread-create')
   }, [clearSearch, rightPanelMode])
 
+  const handleCreateStandaloneThreadAction = useCallback(() => {
+    clearSearch()
+    setThreadDropdownOpen(false)
+    setRightPanelModeBeforeThreads((current) => (
+      isThreadRightPanelMode(rightPanelMode) ? current : toNonThreadRightPanelMode(rightPanelMode)
+    ))
+    setCreateThreadSource(null)
+    setRightPanelMode('thread-create')
+  }, [clearSearch, rightPanelMode])
+
   const handleCreateThread = useCallback(async ({
     name,
     content,
@@ -853,25 +890,34 @@ export default function ChannelPage() {
     content: string
     attachmentIds: number[]
     nonce: string
-    sourceMessageId: string
+    sourceMessageId?: string
   }) => {
     if (!channelId) return
-    const res = await messageApi.messageChannelChannelIdMessageIdThreadPost({
-      channelId: channelId as unknown as number,
-      messageId: sourceMessageId as unknown as number,
-      request: {
-        name,
-        content,
-        attachments: attachmentIds.length > 0 ? attachmentIds : undefined,
-        nonce,
-      },
-    })
+    const request = {
+      name,
+      content,
+      attachments: attachmentIds.length > 0 ? attachmentIds : undefined,
+      nonce,
+    }
+    const thread = sourceMessageId
+      ? (await messageApi.messageChannelChannelIdMessageIdThreadPost({
+          channelId: channelId as unknown as number,
+          messageId: sourceMessageId as unknown as number,
+          request,
+        })).data
+      : await createChannelThread(channelId, request)
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['channels', serverId] }),
       queryClient.invalidateQueries({ queryKey: ['channel-threads', serverId, channelId] }),
     ])
-    openThread(String(res.data.id))
-  }, [channelId, openThread, queryClient, serverId])
+    if (thread.id !== undefined) {
+      if (sourceMessageId) {
+        openThread(String(thread.id))
+      } else {
+        openThreadFullView(String(thread.id))
+      }
+    }
+  }, [channelId, openThread, openThreadFullView, queryClient, serverId])
 
   const openMessageLocation = useCallback(async (
     targetChannelId: string,
@@ -1089,6 +1135,142 @@ export default function ChannelPage() {
     }
   }
 
+  function patchDropdownThreadInCaches(thread: DtoChannel, updater: (item: DtoChannel) => DtoChannel | null) {
+    if (!serverId || thread.id == null) return
+    const threadId = String(thread.id)
+    const parentId = thread.parent_id != null ? String(thread.parent_id) : channelId
+
+    queryClient.setQueryData<DtoChannel[]>(['channels', serverId], (old) =>
+      old?.flatMap((item) => {
+        if (String(item.id) !== threadId) return [item]
+        const updated = updater(item)
+        return updated ? [updated] : []
+      }),
+    )
+
+    if (parentId) {
+      queryClient.setQueryData<DtoChannel[]>(['channel-threads', serverId, parentId], (old) =>
+        old?.flatMap((item) => {
+          if (String(item.id) !== threadId) return [item]
+          const updated = updater(item)
+          return updated ? [updated] : []
+        }),
+      )
+    }
+
+    queryClient.setQueryData<DtoChannel>(['thread-channel', serverId, threadId], (old) => {
+      if (!old) return old
+      return updater(old) ?? old
+    })
+  }
+
+  async function refreshDropdownThreadQueries(thread: DtoChannel) {
+    if (!serverId || thread.id == null) return
+    const parentId = thread.parent_id != null ? String(thread.parent_id) : channelId
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['channels', serverId] }),
+      queryClient.invalidateQueries({ queryKey: ['thread-channel', serverId, String(thread.id)] }),
+      queryClient.invalidateQueries({ queryKey: ['thread-preview', String(thread.id)] }),
+      parentId
+        ? queryClient.invalidateQueries({ queryKey: ['channel-threads', serverId, parentId] })
+        : Promise.resolve(),
+    ])
+  }
+
+  function openThreadEditor(thread: DtoChannel) {
+    setEditingThread(thread)
+    setThreadEditName(thread.name ?? '')
+    setThreadEditTopic(thread.topic ?? '')
+  }
+
+  async function handleSaveThreadEdit() {
+    if (!serverId || !editingThread?.id) return
+    const thread = editingThread
+    const threadId = String(thread.id)
+    const nextName = threadEditName.trim() || thread.name
+    setThreadSaving(true)
+    try {
+      patchDropdownThreadInCaches(thread, (item) => ({
+        ...item,
+        name: nextName,
+        topic: threadEditTopic,
+      }))
+      await guildApi.guildGuildIdChannelChannelIdPatch({
+        guildId: serverId,
+        channelId: threadId,
+        req: { name: nextName, topic: threadEditTopic },
+      })
+      await refreshDropdownThreadQueries(thread)
+      setEditingThread(null)
+    } catch {
+      toast.error(t('threads.updateFailed'))
+      await refreshDropdownThreadQueries(thread)
+    } finally {
+      setThreadSaving(false)
+    }
+  }
+
+  async function handleLeaveDropdownThread(thread: DtoChannel) {
+    if (!serverId || !currentUser?.id || thread.id == null) return
+    const threadId = String(thread.id)
+    const parentId = thread.parent_id != null ? String(thread.parent_id) : channelId
+
+    patchDropdownThreadInCaches(thread, (item) => removeThreadMember(item, String(currentUser.id)))
+    queryClient.setQueryData<DtoChannel[]>(['channels', serverId], (old) =>
+      old?.filter((item) => String(item.id) !== threadId),
+    )
+    if (channelId === threadId) {
+      navigate(parentId ? `/app/${serverId}/${parentId}` : `/app/${serverId}`)
+    }
+
+    try {
+      await guildApi.guildGuildIdChannelChannelIdThreadMemberMeDelete({ guildId: serverId, channelId: threadId })
+      await refreshDropdownThreadQueries(thread)
+    } catch {
+      toast.error(t('threads.leaveFailed'))
+      await refreshDropdownThreadQueries(thread)
+    }
+  }
+
+  async function handleArchiveDropdownThread(thread: DtoChannel) {
+    if (!serverId || thread.id == null) return
+    const threadId = String(thread.id)
+    const nextClosed = !thread.closed
+    patchDropdownThreadInCaches(thread, (item) => ({ ...item, closed: nextClosed }))
+    try {
+      await guildApi.guildGuildIdChannelChannelIdPatch({
+        guildId: serverId,
+        channelId: threadId,
+        req: { closed: nextClosed },
+      })
+      await refreshDropdownThreadQueries(thread)
+    } catch {
+      toast.error(t('threads.updateFailed'))
+      await refreshDropdownThreadQueries(thread)
+    }
+  }
+
+  async function handleDeleteDropdownThread() {
+    if (!serverId || !deletingThread?.id) return
+    const thread = deletingThread
+    const threadId = String(thread.id)
+    const parentId = thread.parent_id != null ? String(thread.parent_id) : channelId
+    setThreadDeleting(true)
+    try {
+      await guildApi.guildGuildIdChannelChannelIdDelete({ guildId: serverId, channelId: threadId })
+      patchDropdownThreadInCaches(thread, () => null)
+      await refreshDropdownThreadQueries(thread)
+      if (channelId === threadId) {
+        navigate(parentId ? `/app/${serverId}/${parentId}` : `/app/${serverId}`)
+      }
+      setDeletingThread(null)
+    } catch {
+      toast.error(t('threads.deleteFailed'))
+    } finally {
+      setThreadDeleting(false)
+    }
+  }
+
   const canManageActiveThread = permissions.canManageThread(activeThread)
 
   const getParentMessageProps = useCallback(function getParentMessageProps(msg: DtoMessage) {
@@ -1109,14 +1291,15 @@ export default function ChannelPage() {
       ?? (threadId ? threadById.get(threadId) : null)
       ?? (isThreadChannel(channelThreadCandidate) ? channelThreadCandidate : null)
     const isMissingThread = threadId != null && missingThreadIds.has(threadId)
+    const canOpenThread = threadId != null && linkedThread != null && !isMissingThread
     const threadPreviewMessage = threadId ? threadPreviewMessageMap[threadId] ?? null : null
-    const threadPreview = msg.type === 0 && threadId && linkedThread
+    const threadPreview = msg.type === 0 && canOpenThread
       ? {
           name: linkedThread.name ?? t('threads.threadFallback'),
           topic: linkedThread.topic?.trim() ? linkedThread.topic.trim() : null,
           previewMessage: threadPreviewMessage,
           previewText: buildThreadPreviewText(threadPreviewMessage, t),
-          onClick: () => openThread(threadId),
+          onClick: () => openThread(String(threadId)),
         }
       : undefined
 
@@ -1125,14 +1308,14 @@ export default function ChannelPage() {
           label: isMissingThread
             ? t('threads.missingThread')
             : linkedThread?.name ?? t('threads.threadFallback'),
-          onClick: isMissingThread ? undefined : () => openThread(threadId),
+          onClick: canOpenThread ? () => openThread(String(threadId)) : undefined,
         }
       : undefined
 
-    const threadAction = threadId && !isMissingThread
+    const threadAction = canOpenThread
       ? {
           label: t('threads.openThread'),
-          onClick: () => openThread(threadId),
+          onClick: () => openThread(String(threadId)),
         }
       : (
         isTextChannel &&
@@ -1743,10 +1926,14 @@ export default function ChannelPage() {
                   onSearchChange={setThreadDropdownSearch}
                   resolver={mentionResolver}
                   onOpenThread={openThreadFullView}
-                  onCreateThread={() => {
-                    toast.info(t('threads.createDescription'))
-                  }}
+                  onCreateThread={handleCreateStandaloneThreadAction}
+                  onLeaveThread={(thread) => { void handleLeaveDropdownThread(thread) }}
+                  onEditThread={openThreadEditor}
+                  onArchiveThread={(thread) => { void handleArchiveDropdownThread(thread) }}
+                  onDeleteThread={setDeletingThread}
                   canCreateThreads={canCreateThreads}
+                  canManageThreads={canManageThreads}
+                  currentUserId={currentUser?.id != null ? String(currentUser.id) : undefined}
                   triggerClassName={cn(
                     'w-9 h-9 flex items-center justify-center rounded transition-colors',
                     threadDropdownOpen || threadButtonActive
@@ -1807,10 +1994,14 @@ export default function ChannelPage() {
                   onSearchChange={setThreadDropdownSearch}
                   resolver={mentionResolver}
                   onOpenThread={openThreadFullView}
-                  onCreateThread={() => {
-                    toast.info(t('threads.createDescription'))
-                  }}
+                  onCreateThread={handleCreateStandaloneThreadAction}
+                  onLeaveThread={(thread) => { void handleLeaveDropdownThread(thread) }}
+                  onEditThread={openThreadEditor}
+                  onArchiveThread={(thread) => { void handleArchiveDropdownThread(thread) }}
+                  onDeleteThread={setDeletingThread}
                   canCreateThreads={canCreateThreads}
+                  canManageThreads={canManageThreads}
+                  currentUserId={currentUser?.id != null ? String(currentUser.id) : undefined}
                   triggerClassName={cn(
                     'w-8 h-8 flex items-center justify-center rounded transition-colors',
                     threadDropdownOpen || threadButtonActive
@@ -1989,7 +2180,7 @@ export default function ChannelPage() {
                       setRightPanelMode(rightPanelModeBeforeThreads)
                     }}
                   />
-                ) : rightPanelMode === 'thread-create' && createThreadSource ? (
+                ) : rightPanelMode === 'thread-create' ? (
                   <ThreadCreatePanel
                     parentChannelId={channelId}
                     sourceMessage={createThreadSource}
@@ -2009,6 +2200,63 @@ export default function ChannelPage() {
           </AnimatePresence>
         </div>
       </div>
+
+      <Dialog open={!!editingThread} onOpenChange={(open) => !open && setEditingThread(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('threads.editTitle')}</DialogTitle>
+            <DialogDescription>{t('threads.editDescription')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">{t('threads.threadName')}</label>
+              <Input
+                value={threadEditName}
+                onChange={(event) => setThreadEditName(event.target.value)}
+                placeholder={t('threads.threadNamePlaceholder')}
+                maxLength={256}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">{t('threads.topic')}</label>
+              <Textarea
+                value={threadEditTopic}
+                onChange={(event) => setThreadEditTopic(event.target.value)}
+                placeholder={t('threads.topicPlaceholder')}
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingThread(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={() => { void handleSaveThreadEdit() }} disabled={threadSaving}>
+              {t('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deletingThread} onOpenChange={(open) => !open && setDeletingThread(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('threads.deleteTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('threads.deleteDescription', { name: deletingThread?.name ?? deletingThread?.id })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeletingThread(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="destructive" onClick={() => { void handleDeleteDropdownThread() }} disabled={threadDeleting}>
+              {t('common.delete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </>
   )
 }
@@ -2047,7 +2295,13 @@ function ThreadDropdown({
   resolver,
   onOpenThread,
   onCreateThread,
+  onLeaveThread,
+  onEditThread,
+  onArchiveThread,
+  onDeleteThread,
   canCreateThreads,
+  canManageThreads,
+  currentUserId,
   triggerClassName,
 }: {
   open: boolean
@@ -2066,7 +2320,13 @@ function ThreadDropdown({
   resolver: MentionResolver
   onOpenThread: (threadId: string) => void
   onCreateThread: () => void
+  onLeaveThread: (thread: DtoChannel) => void
+  onEditThread: (thread: DtoChannel) => void
+  onArchiveThread: (thread: DtoChannel) => void
+  onDeleteThread: (thread: DtoChannel) => void
   canCreateThreads: boolean
+  canManageThreads: boolean
+  currentUserId?: string
   triggerClassName: string
 }) {
   const { t } = useTranslation()
@@ -2135,6 +2395,12 @@ function ThreadDropdown({
                 activeThreadId={activeThreadId}
                 resolver={resolver}
                 onOpenThread={onOpenThread}
+                onLeaveThread={onLeaveThread}
+                onEditThread={onEditThread}
+                onArchiveThread={onArchiveThread}
+                onDeleteThread={onDeleteThread}
+                canManageThreads={canManageThreads}
+                currentUserId={currentUserId}
               />
               <ThreadDropdownSection
                 label={t('threads.otherActiveThreads', { count: otherThreads.length })}
@@ -2146,6 +2412,12 @@ function ThreadDropdown({
                 activeThreadId={activeThreadId}
                 resolver={resolver}
                 onOpenThread={onOpenThread}
+                onLeaveThread={onLeaveThread}
+                onEditThread={onEditThread}
+                onArchiveThread={onArchiveThread}
+                onDeleteThread={onDeleteThread}
+                canManageThreads={canManageThreads}
+                currentUserId={currentUserId}
               />
             </div>
           )}
@@ -2165,6 +2437,12 @@ function ThreadDropdownSection({
   activeThreadId,
   resolver,
   onOpenThread,
+  onLeaveThread,
+  onEditThread,
+  onArchiveThread,
+  onDeleteThread,
+  canManageThreads,
+  currentUserId,
 }: {
   label: string
   threads: DtoChannel[]
@@ -2175,7 +2453,16 @@ function ThreadDropdownSection({
   activeThreadId?: string | null
   resolver: MentionResolver
   onOpenThread: (threadId: string) => void
+  onLeaveThread: (thread: DtoChannel) => void
+  onEditThread: (thread: DtoChannel) => void
+  onArchiveThread: (thread: DtoChannel) => void
+  onDeleteThread: (thread: DtoChannel) => void
+  canManageThreads: boolean
+  currentUserId?: string
 }) {
+  const { t } = useTranslation()
+  const { getChannelNotifications, setChannelNotifications } = useNotificationSettings()
+
   if (threads.length === 0) return null
 
   return (
@@ -2186,6 +2473,9 @@ function ThreadDropdownSection({
       <div className="space-y-2">
         {threads.map((thread) => {
           const threadId = String(thread.id)
+          const isJoined = currentUserId != null && (thread.member_ids ?? []).some((id) => String(id) === currentUserId)
+          const canManageThisThread = canManageThreads ||
+            (currentUserId != null && String(thread.creator_id) === currentUserId)
           const previewMessage = previewMessages[threadId] ?? null
           const preview = previews[threadId]
           const previewAuthorName = previewMessage?.author?.name?.trim()
@@ -2195,42 +2485,90 @@ function ThreadDropdownSection({
           const relativeTime = formatRelativeThreadTime(thread.created_at)
 
           return (
-            <button
-              key={threadId}
-              type="button"
-              onClick={() => onOpenThread(threadId)}
-              className={cn(
-                'flex min-h-[72px] w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors',
-                activeThreadId === threadId
-                  ? 'border-primary/50 bg-primary/10'
-                  : 'border-sidebar-border/70 bg-muted/20 hover:border-sidebar-border hover:bg-accent/45',
-              )}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold text-foreground">
-                  {thread.name ?? threadId}
-                </div>
-                <div className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
-                  {previewAuthorName && (
-                    <span
-                      className="font-semibold"
-                      style={previewAuthorColor ? { color: previewAuthorColor } : undefined}
+            <ContextMenu key={threadId}>
+              <ContextMenuTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onOpenThread(threadId)}
+                  className={cn(
+                    'flex min-h-[72px] w-full items-center gap-3 rounded-lg border px-4 py-3 text-left transition-colors',
+                    activeThreadId === threadId
+                      ? 'border-primary/50 bg-primary/10'
+                      : 'border-sidebar-border/70 bg-muted/20 hover:border-sidebar-border hover:bg-accent/45',
+                  )}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-foreground">
+                      {thread.name ?? threadId}
+                    </div>
+                    <div className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">
+                      {previewAuthorName && (
+                        <span
+                          className="font-semibold"
+                          style={previewAuthorColor ? { color: previewAuthorColor } : undefined}
+                        >
+                          {previewAuthorName}
+                          {': '}
+                        </span>
+                      )}
+                      {parseMessageContent(preview, resolver)}
+                      {relativeTime && (
+                        <span className="font-medium text-foreground/80">
+                          {' · '}
+                          {relativeTime}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <ThreadMemberPips memberIds={thread.member_ids ?? []} members={members} />
+                </button>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="z-[300]">
+                <ContextMenuItem onClick={() => onOpenThread(threadId)} className="gap-2">
+                  <Eye className="w-4 h-4" />
+                  {t('threads.openThread')}
+                </ContextMenuItem>
+                {isJoined && (
+                  <ContextMenuItem onClick={() => onLeaveThread(thread)} className="gap-2">
+                    <LogOut className="w-4 h-4" />
+                    {t('threads.leaveThread')}
+                  </ContextMenuItem>
+                )}
+                <ContextMenuSeparator />
+                <NotificationsSubmenu
+                  current={getChannelNotifications(threadId)}
+                  onUpdate={(patch) => { void setChannelNotifications(threadId, patch) }}
+                />
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onClick={() => { void navigator.clipboard.writeText(threadId) }}
+                  className="gap-2"
+                >
+                  <Copy className="w-4 h-4" />
+                  {t('threads.copyThreadId')}
+                </ContextMenuItem>
+                {canManageThisThread && (
+                  <>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem onClick={() => onEditThread(thread)} className="gap-2">
+                      <Pencil className="w-4 h-4" />
+                      {t('threads.editThread')}
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={() => onArchiveThread(thread)} className="gap-2">
+                      <Archive className="w-4 h-4" />
+                      {thread.closed ? t('threads.reopenThread') : t('threads.archiveThread')}
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => onDeleteThread(thread)}
+                      className="text-destructive focus:text-destructive gap-2"
                     >
-                      {previewAuthorName}
-                      {': '}
-                    </span>
-                  )}
-                  {parseMessageContent(preview, resolver)}
-                  {relativeTime && (
-                    <span className="font-medium text-foreground/80">
-                      {' · '}
-                      {relativeTime}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <ThreadMemberPips memberIds={thread.member_ids ?? []} members={members} />
-            </button>
+                      <Trash2 className="w-4 h-4" />
+                      {t('threads.deleteThread')}
+                    </ContextMenuItem>
+                  </>
+                )}
+              </ContextMenuContent>
+            </ContextMenu>
           )
         })}
       </div>

@@ -8,14 +8,14 @@ import { Input } from '@/components/ui/input'
 
 interface Props {
   parentChannelId: string
-  sourceMessage: DtoMessage
+  sourceMessage?: DtoMessage | null
   onBack: () => void
   onCreateThread: (payload: {
     name?: string
     content: string
     attachmentIds: number[]
     nonce: string
-    sourceMessageId: string
+    sourceMessageId?: string
   }) => Promise<void>
 }
 
@@ -40,13 +40,22 @@ export default function ThreadCreatePanel({
   }) {
     setIsCreating(true)
     try {
-      await onCreateThread({
+      const payload: {
+        name?: string
+        content: string
+        attachmentIds: number[]
+        nonce: string
+        sourceMessageId?: string
+      } = {
         name: threadName.trim() || undefined,
         content,
         attachmentIds,
         nonce,
-        sourceMessageId: String(sourceMessage.id),
-      })
+      }
+      if (sourceMessage?.id != null) {
+        payload.sourceMessageId = String(sourceMessage.id)
+      }
+      await onCreateThread(payload)
     } finally {
       setIsCreating(false)
     }
@@ -77,9 +86,9 @@ export default function ThreadCreatePanel({
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="px-4 py-3 border-b border-sidebar-border shrink-0 space-y-2">
           <p className="text-sm text-foreground">{t('threads.composeDescription')}</p>
-          {(sourceMessage.content ?? '').trim() && (
+          {(sourceMessage?.content ?? '').trim() && (
             <blockquote className="border-l-2 border-muted pl-3 text-sm text-muted-foreground break-words">
-              {sourceMessage.content}
+              {sourceMessage?.content}
             </blockquote>
           )}
         </div>

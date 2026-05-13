@@ -11,6 +11,8 @@ import {
   UserApi,
   VoiceApi,
   WebhookApi,
+  type DtoChannel,
+  type MessageCreateThreadRequest,
 } from '@/client'
 import JSONBig from 'json-bigint'
 import axios from 'axios'
@@ -115,3 +117,11 @@ export const uploadApi = new UploadApi(config(), undefined, axiosInstance)
 export const userApi = new UserApi(config(), undefined, axiosInstance)
 export const voiceApi = new VoiceApi(config(), undefined, axiosInstance)
 export const webhookApi = new WebhookApi(config(), undefined, axiosInstance)
+
+export async function createChannelThread(channelId: string | number, request: MessageCreateThreadRequest): Promise<DtoChannel> {
+  const response = await axiosInstance.post<DtoChannel>(
+    `${getApiBaseUrl()}/message/channel/${channelId}/thread`,
+    request,
+  )
+  return response.data
+}
