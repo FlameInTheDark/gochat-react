@@ -56,6 +56,8 @@ export interface ProfileCardBodyProps {
   accent: string
   /** Online presence status — shows a dot badge on the avatar when set */
   status?: UserStatus
+  /** Optional controls rendered in the banner's top-right corner. */
+  headerActions?: React.ReactNode
   /** Additional sections rendered inside the padded content area (member since, roles, actions…) */
   children?: React.ReactNode
 }
@@ -76,6 +78,7 @@ export default function ProfileCardBody({
   bannerColor,
   accent,
   status,
+  headerActions,
   children,
 }: ProfileCardBodyProps) {
   const bannerBg = bannerColor ?? (accent + '44')
@@ -84,7 +87,13 @@ export default function ProfileCardBody({
   return (
     <>
       {/* Banner strip */}
-      <div className="h-14 shrink-0" style={{ backgroundColor: bannerBg }} />
+      <div className="relative h-14 shrink-0" style={{ backgroundColor: bannerBg }}>
+        {headerActions && (
+          <div className="absolute right-3 top-3 flex items-center gap-2">
+            {headerActions}
+          </div>
+        )}
+      </div>
 
       {/* Avatar — overlaps the banner */}
       <div className="-mt-8 px-4 pb-0">

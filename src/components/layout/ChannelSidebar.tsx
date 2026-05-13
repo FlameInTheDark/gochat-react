@@ -39,7 +39,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
 import { useStreamStore } from '@/stores/streamStore'
-import { guildApi, rolesApi, userApi } from '@/api/client'
+import { guildApi, userApi } from '@/api/client'
 import { syncChannelStreams } from '@/services/streamService'
 import { setPeerVolume } from '@/services/voiceService'
 import { ChannelType } from '@/types'
@@ -50,9 +50,8 @@ import { useTranslation } from 'react-i18next'
 import VoicePanel from '@/components/voice/VoicePanel'
 import { joinVoice } from '@/services/voiceService'
 import UserArea from './UserArea'
-import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
-import type { DtoRole, DtoMember } from '@/client'
 import { useClientMode } from '@/hooks/useClientMode'
+import { useGuildPermissions } from '@/hooks/useGuildPermissions'
 import { useNotificationSettings } from '@/hooks/useNotificationSettings'
 import { NotificationsSubmenu, NotificationsDropdownSubmenu } from './NotificationsSubmenu'
 import { removeThreadMember } from '@/lib/threadMembership'
@@ -76,6 +75,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
   const { t } = useTranslation()
 
   const { getGuildNotifications, setGuildNotifications } = useNotificationSettings()
+  const permissions = useGuildPermissions(serverId)
 
   const openCreateChannel = useUiStore((s) => s.openCreateChannel)
   const openCreateCategory = useUiStore((s) => s.openCreateCategory)
@@ -101,26 +101,13 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     enabled: !!serverId,
     staleTime: 30_000,
   })
-  const { data: roles } = useQuery({
-    queryKey: ['roles', serverId],
-    queryFn: () => rolesApi.guildGuildIdRolesGet({ guildId: serverId }).then((r) => r.data ?? []),
-    enabled: !!serverId,
-    staleTime: 60_000,
-  })
-
-  // Resolve guild data for owner check
-  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
-  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
-
-  const currentMember = members?.find((m) => String(m.user?.id) === String(currentUser?.id))
-  const effectivePermissions = currentMember && roles
-    ? calculateEffectivePermissions(currentMember as DtoMember, roles as DtoRole[])
-    : 0
-  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
-  const canManageServer = isOwner || hasPermission(effectivePermissions, PermissionBits.MANAGE_SERVER) || isAdmin
-  const canManageChannels = isOwner || hasPermission(effectivePermissions, PermissionBits.MANAGE_CHANNELS) || isAdmin
-  const canManageThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_THREADS)
-  const canCreateInvites = isOwner || hasPermission(effectivePermissions, PermissionBits.CREATE_INVITES) || isAdmin
+  const {
+    canManageServer,
+    canManageChannels,
+    canManageThreads,
+    canCreateInvites,
+    canViewChannel,
+  } = permissions
 
   // Inline rename state
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -137,15 +124,6 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     ch.type === ChannelType.ChannelTypeGuild || ch.type === ChannelType.ChannelTypeGuildVoice
   const isThread = (ch: DtoChannel) => ch.type === ChannelType.ChannelTypeThread
   const sorted = (arr: DtoChannel[]) => [...arr].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-
-  // Channel visibility: owners and admins see everything; for private channels,
-  // the user must have at least one role listed in channel.roles.
-  const memberRoleIds = new Set((currentMember?.roles ?? []).map(String))
-  function canViewChannel(ch: DtoChannel): boolean {
-    if (isOwner || isAdmin) return true
-    if (!ch.private) return true
-    return (ch.roles ?? []).some((r) => memberRoleIds.has(String(r)))
-  }
 
   const categoryIds = new Set(channels.filter(isCat).map((c) => String(c.id)))
   const allCategories = sorted(channels.filter(isCat))

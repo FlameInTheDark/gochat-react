@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
 import {
   AlertCircle,
+  Ban,
   CornerUpRight,
   Copy,
   Hash,
@@ -18,6 +19,8 @@ import {
   SmilePlus,
   Spool,
   Trash2,
+  User,
+  UserX,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -53,7 +56,6 @@ import { useAuthStore } from '@/stores/authStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useAppearanceStore, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore'
 import { snowflakeToTime, snowflakeToDate } from '@/lib/snowflake'
-import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import { getTopRoleColor } from '@/lib/memberColors'
 import { cn } from '@/lib/utils'
 import { parseMessageContent, parseInlineMessageContent, isEmojiOnlyMessage, type MentionResolver } from '@/lib/messageParser'
@@ -67,10 +69,11 @@ import GifEmbed from '@/components/chat/GifEmbed'
 import { extractGifUrls, isGifOnlyMessage } from '@/lib/gifUrls'
 import { useGifStore } from '@/stores/gifStore'
 import { subscribeChannel, unsubscribeChannel } from '@/services/wsService'
-import type { DtoMessage, DtoMember, DtoGuild } from '@/types'
+import type { DtoGuild, DtoMessage, DtoMember } from '@/types'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { MessageChannelChannelIdGetDirectionEnum, type DtoRole } from '@/client'
 import { allEmojis, emojiIndex } from '@/lib/emojiData'
+import { useGuildPermissions } from '@/hooks/useGuildPermissions'
 
 /** Extract unique invite codes from a message string.
  *  Matches URLs of the form: http(s)://host/invite/CODE
@@ -236,6 +239,8 @@ export default function MessageItem({
 
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [moderatingAuthorAction, setModeratingAuthorAction] = useState<'kick' | 'ban' | null>(null)
+  const [pendingAuthorModerationAction, setPendingAuthorModerationAction] = useState<'kick' | 'ban' | null>(null)
   const [editing, setEditing] = useState(false)
   const [suppressEmbedsOpen, setSuppressEmbedsOpen] = useState(false)
   const [suppressEmbedsLoading, setSuppressEmbedsLoading] = useState(false)
@@ -337,28 +342,11 @@ export default function MessageItem({
     return getTopRoleColor(member?.roles, roles)
   }, [members, referencedMessage?.author?.id, roles, serverId])
 
-  const { data: currentMember } = useQuery<DtoMember>({
-    queryKey: ['member', serverId, 'me'],
-    queryFn: () => userApi.userMeGuildsGuildIdMemberGet({ guildId: serverId! }).then((r) => r.data),
-    enabled: !!serverId,
-    staleTime: MESSAGE_ITEM_QUERY_STALE_TIME,
-    refetchOnMount: false,
-  })
-
-  // Fetch guild to check if current user is owner
-  const { data: guild } = useQuery<DtoGuild>({
-    queryKey: ['guild', serverId],
-    queryFn: () => guildApi.guildGuildIdGet({ guildId: serverId! }).then((r) => r.data!),
-    enabled: !!serverId,
-    staleTime: MESSAGE_ITEM_QUERY_STALE_TIME,
-    refetchOnMount: false,
-  })
-
-  // Calculate effective permissions
-  const guildPermissions = guild?.permissions ?? 0
-  const userPermissions = currentMember && roles.length > 0
-    ? calculateEffectivePermissions(currentMember, roles, guildPermissions)
-    : guildPermissions
+  const permissions = useGuildPermissions(serverId)
+  const authorMember = useMemo(
+    () => members.find((m) => String(m.user?.id) === String(message.author?.id)),
+    [members, message.author?.id],
+  )
 
   const removeMessage = useMessageStore((s) => s.removeMessage)
   const updateMessage = useMessageStore((s) => s.updateMessage)
@@ -378,13 +366,10 @@ export default function MessageItem({
     message.type === THREAD_CREATED_MESSAGE_TYPE ||
     message.type === THREAD_INITIAL_MESSAGE_TYPE
 
-  // Check if current user is the server owner
-  const isOwner = currentUser && guild?.owner !== undefined && String(guild.owner) === String(currentUser.id)
-
-  const isAdmin = hasPermission(userPermissions, PermissionBits.ADMINISTRATOR)
-  const canManageMessages = isOwner || isAdmin || hasPermission(userPermissions, PermissionBits.MANAGE_MESSAGES)
   const canEditMessage = hasRealMessageId && !isPendingMessage && !isInformationalMessage && isOwn && allowEdit
-  const canDeleteMessage = hasRealMessageId && !isPendingMessage && allowDelete && (isOwn || canManageMessages)
+  const canDeleteMessage = hasRealMessageId && !isPendingMessage && permissions.canDeleteMessage(message, allowDelete)
+  const canKickAuthor = permissions.canKickMember(authorMember)
+  const canBanAuthor = permissions.canBanMember(authorMember)
 
   // Highlight messages that mention the current user (@id), @everyone, or @here
   const isMentioned = useMemo(() => {
@@ -460,10 +445,9 @@ export default function MessageItem({
     return picked
   }, [])
 
-  function handleAuthorClick(e: React.MouseEvent) {
-    e.stopPropagation()
+  function openAuthorProfileFromElement(element: HTMLElement) {
     if (!message.author?.id) return
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const rect = element.getBoundingClientRect()
     openUserProfile(
       String(message.author.id),
       serverId ?? null,
@@ -471,6 +455,11 @@ export default function MessageItem({
       rect.top,
       authorName,
     )
+  }
+
+  function handleAuthorClick(e: React.MouseEvent<HTMLElement>) {
+    e.stopPropagation()
+    openAuthorProfileFromElement(e.currentTarget)
   }
 
   function handleReferencedAuthorClick(e: React.MouseEvent) {
@@ -533,6 +522,46 @@ export default function MessageItem({
       }
     } catch {
       toast.error(t('memberList.dmFailed'))
+    }
+  }
+
+  async function handleKickAuthor() {
+    if (!serverId || !message.author?.id) return
+    const userId = String(message.author.id)
+    setModeratingAuthorAction('kick')
+    try {
+      await guildApi.guildGuildIdMemberUserIdKickPost({
+        guildId: serverId as unknown as number,
+        userId: userId as unknown as number,
+      })
+      queryClient.setQueryData<DtoMember[]>(['members', serverId], (old = []) =>
+        old.filter((m) => String(m.user?.id) !== userId),
+      )
+      toast.success(t('serverSettings.kickSuccess'))
+    } catch {
+      toast.error(t('serverSettings.kickFailed'))
+    } finally {
+      setModeratingAuthorAction(null)
+    }
+  }
+
+  async function handleBanAuthor() {
+    if (!serverId || !message.author?.id) return
+    const userId = String(message.author.id)
+    setModeratingAuthorAction('ban')
+    try {
+      await guildApi.guildGuildIdMemberUserIdBanPost({
+        guildId: serverId as unknown as number,
+        userId: userId as unknown as number,
+      })
+      queryClient.setQueryData<DtoMember[]>(['members', serverId], (old = []) =>
+        old.filter((m) => String(m.user?.id) !== userId),
+      )
+      toast.success(t('serverSettings.banSuccess'))
+    } catch {
+      toast.error(t('serverSettings.banFailed'))
+    } finally {
+      setModeratingAuthorAction(null)
     }
   }
 
@@ -757,6 +786,59 @@ export default function MessageItem({
     )
   }
 
+  function renderAuthorContextMenu(child: ReactNode) {
+    if (!message.author?.id) return child
+    return (
+      <ContextMenu>
+        <ContextMenuTrigger asChild>{child}</ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onClick={(e) => openAuthorProfileFromElement(e.currentTarget)} className="gap-2">
+            <User className="w-4 h-4" />
+            {t('memberList.viewProfile')}
+          </ContextMenuItem>
+          {!isOwn && (
+            <ContextMenuItem onClick={() => void handleMessageUser()} className="gap-2">
+              <MessageSquare className="w-4 h-4" />
+              {t('messageItem.messageUser')}
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem
+            onClick={() => { void navigator.clipboard.writeText(String(message.author?.id ?? '')) }}
+            className="gap-2"
+          >
+            <Copy className="w-4 h-4" />
+            {t('memberList.copyUserId')}
+          </ContextMenuItem>
+          {(canKickAuthor || canBanAuthor) && (
+            <>
+              <ContextMenuSeparator />
+              {canKickAuthor && (
+                <ContextMenuItem
+                  disabled={moderatingAuthorAction !== null}
+                  onClick={() => setPendingAuthorModerationAction('kick')}
+                  className="text-destructive focus:text-destructive gap-2"
+                >
+                  <UserX className="w-4 h-4" />
+                  {t('serverSettings.kickMember')}
+                </ContextMenuItem>
+              )}
+              {canBanAuthor && (
+                <ContextMenuItem
+                  disabled={moderatingAuthorAction !== null}
+                  onClick={() => setPendingAuthorModerationAction('ban')}
+                  className="text-destructive focus:text-destructive gap-2"
+                >
+                  <Ban className="w-4 h-4" />
+                  {t('serverSettings.banMember')}
+                </ContextMenuItem>
+              )}
+            </>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+    )
+  }
+
   // Check if this is a join message
   const isJoinMessage = message.type === JOIN_MESSAGE_TYPE
   const isThreadCreatedMessage = message.type === THREAD_CREATED_MESSAGE_TYPE
@@ -796,6 +878,12 @@ export default function MessageItem({
   const replyPreviewAuthorName = referencedMessage?.author?.name?.trim() || t('common.unknown')
   const canOpenReference = !!referenceChannelId && !!referenceMessageId && !!onOpenReference
   const showReplyPreview = message.type === 1 && referenceMessageId != null
+  const pendingAuthorModerationTitle = pendingAuthorModerationAction === 'kick'
+    ? t('serverSettings.kickMember')
+    : t('serverSettings.banMember')
+  const pendingAuthorModerationDescription = pendingAuthorModerationAction === 'kick'
+    ? t('serverSettings.kickConfirmDescription', { name: authorName })
+    : t('serverSettings.banConfirmDescription', { name: authorName })
   const informationalContent = isJoinMessage ? (
     <>{getJoinMessage(message.author?.id, joinMessages)}</>
   ) : isThreadCreatedMessage ? (
@@ -1026,29 +1114,33 @@ export default function MessageItem({
               </div>
             ) : (
               /* Full row: clickable avatar */
-              <button
-                onClick={handleAuthorClick}
-                className="shrink-0 mt-0.5 rounded-full focus:outline-none"
-                tabIndex={-1}
-              >
-                <Avatar className="w-9 h-9">
-                  <AvatarImage src={message.author?.avatar?.url} alt={authorName} className="object-cover" />
-                  <AvatarFallback className="text-sm">{initials}</AvatarFallback>
-                </Avatar>
-              </button>
+              renderAuthorContextMenu(
+                <button
+                  onClick={handleAuthorClick}
+                  className="shrink-0 mt-0.5 rounded-full focus:outline-none"
+                  tabIndex={-1}
+                >
+                  <Avatar className="w-9 h-9">
+                    <AvatarImage src={message.author?.avatar?.url} alt={authorName} className="object-cover" />
+                    <AvatarFallback className="text-sm">{initials}</AvatarFallback>
+                  </Avatar>
+                </button>,
+              )
             )}
 
             <div className="min-w-0 flex-1">
               {(!isGrouped || showReplyPreview) && !useInlineInformationalLayout && (
                 <div className="flex items-baseline gap-2">
                   {/* Clickable author name */}
-                  <button
-                    onClick={handleAuthorClick}
-                    className="font-semibold text-sm hover:underline focus:outline-none"
-                    style={authorRoleColor ? { color: authorRoleColor } : undefined}
-                  >
-                    {authorName}
-                  </button>
+                  {renderAuthorContextMenu(
+                    <button
+                      onClick={handleAuthorClick}
+                      className="font-semibold text-sm hover:underline focus:outline-none"
+                      style={authorRoleColor ? { color: authorRoleColor } : undefined}
+                    >
+                      {authorName}
+                    </button>,
+                  )}
                   <span
                     className="text-xs text-muted-foreground tabular-nums"
                     title={fullTimestamp}
@@ -1097,13 +1189,15 @@ export default function MessageItem({
                 <>
                   {useInlineInformationalLayout && (
                     <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm leading-relaxed text-muted-foreground">
-                      <button
-                        onClick={handleAuthorClick}
-                        className="font-semibold hover:underline focus:outline-none"
-                        style={authorRoleColor ? { color: authorRoleColor } : { color: 'var(--foreground)' }}
-                      >
-                        {authorName}
-                      </button>
+                      {renderAuthorContextMenu(
+                        <button
+                          onClick={handleAuthorClick}
+                          className="font-semibold hover:underline focus:outline-none"
+                          style={authorRoleColor ? { color: authorRoleColor } : { color: 'var(--foreground)' }}
+                        >
+                          {authorName}
+                        </button>,
+                      )}
                       <span>{informationalContent}</span>
                       <span
                         className="text-xs text-muted-foreground tabular-nums"
@@ -1271,6 +1365,37 @@ export default function MessageItem({
             </Button>
             <Button variant="destructive" onClick={() => void handleSuppressEmbeds()} disabled={suppressEmbedsLoading}>
               {t('messageItem.suppressEmbedsConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingAuthorModerationAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingAuthorModerationAction(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{pendingAuthorModerationTitle}</DialogTitle>
+            <DialogDescription>{pendingAuthorModerationDescription}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingAuthorModerationAction(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={moderatingAuthorAction !== null}
+              onClick={() => {
+                const action = pendingAuthorModerationAction
+                setPendingAuthorModerationAction(null)
+                if (action === 'kick') void handleKickAuthor()
+                if (action === 'ban') void handleBanAuthor()
+              }}
+            >
+              {pendingAuthorModerationTitle}
             </Button>
           </DialogFooter>
         </DialogContent>

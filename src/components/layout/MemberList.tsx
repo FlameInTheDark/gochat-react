@@ -2,10 +2,19 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { MessageSquare, Copy, Shield, User } from 'lucide-react'
+import { Ban, MessageSquare, Copy, Shield, User, UserX } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -21,15 +30,14 @@ import StatusDot from '@/components/ui/StatusDot'
 import { guildApi, rolesApi, userApi } from '@/api/client'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { useUiStore } from '@/stores/uiStore'
-import { useAuthStore } from '@/stores/authStore'
 import { addPresenceSubscription } from '@/services/wsService'
 import { cn } from '@/lib/utils'
-import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
 import { getTopRoleColor } from '@/lib/memberColors'
 import { roleColorHex, roleIsHoisted, sortRolesForDisplay } from '@/lib/roleVisuals'
 import { ChannelType } from '@/types'
 import type { DtoMember, DtoGuild, DtoChannel } from '@/types'
 import type { DtoRole } from '@/client'
+import { useGuildPermissions } from '@/hooks/useGuildPermissions'
 
 interface Props {
   serverId: string
@@ -53,6 +61,7 @@ export default function MemberList({ serverId, channel }: Props) {
   })
 
   const queryClient = useQueryClient()
+  const permissions = useGuildPermissions(serverId)
   const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
   const ownerIdStr = guild?.owner != null ? String(guild.owner) : null
 
@@ -126,21 +135,21 @@ export default function MemberList({ serverId, channel }: Props) {
               color={roleColorHex(role.color)}
             >
               {groupMembers.map((m) => (
-                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} />
+                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} permissions={permissions} />
               ))}
             </MemberGroup>
           ))}
           {online.length > 0 && (
             <MemberGroup label={t('memberList.online')} count={online.length}>
               {online.map((m) => (
-                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} />
+                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} permissions={permissions} />
               ))}
             </MemberGroup>
           )}
           {offline.length > 0 && (
             <MemberGroup label={t('memberList.offline')} count={offline.length}>
               {offline.map((m) => (
-                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} />
+                <MemberRow key={String(m.user?.id ?? m.username)} member={m} serverId={serverId} allRoles={roles} permissions={permissions} />
               ))}
             </MemberGroup>
           )}
@@ -169,7 +178,17 @@ function MemberGroup({ label, count, children, color }: {
   )
 }
 
-function MemberRow({ member, serverId, allRoles }: { member: DtoMember; serverId: string; allRoles: DtoRole[] }) {
+function MemberRow({
+  member,
+  serverId,
+  allRoles,
+  permissions,
+}: {
+  member: DtoMember
+  serverId: string
+  allRoles: DtoRole[]
+  permissions: ReturnType<typeof useGuildPermissions>
+}) {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -184,26 +203,8 @@ function MemberRow({ member, serverId, allRoles }: { member: DtoMember; serverId
   const initials = displayName.charAt(0).toUpperCase()
 
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null)
-
-  // Current user permissions check for role management
-  const currentUser = useAuthStore((s) => s.user)
-  const { data: members } = useQuery({
-    queryKey: ['members', serverId],
-    queryFn: () => guildApi.guildGuildIdMembersGet({ guildId: serverId }).then((r) => r.data ?? []),
-    enabled: !!serverId,
-    staleTime: 30_000,
-  })
-
-  // Resolve guild data for owner check
-  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
-  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
-
-  const currentMember = members?.find((m) => m.user?.id === currentUser?.id)
-  const effectivePermissions = currentMember && allRoles
-    ? calculateEffectivePermissions(currentMember as DtoMember, allRoles)
-    : 0
-  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
-  const canManageRoles = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_ROLES)
+  const [moderatingAction, setModeratingAction] = useState<'kick' | 'ban' | null>(null)
+  const [pendingModerationAction, setPendingModerationAction] = useState<'kick' | 'ban' | null>(null)
 
   // Member's current role IDs as a Set for O(1) lookup
   const memberRoleIds = new Set((member.roles ?? []).map(String))
@@ -260,10 +261,53 @@ function MemberRow({ member, serverId, allRoles }: { member: DtoMember; serverId
     }
   }
 
+  async function handleKickMember() {
+    if (!userId) return
+    setModeratingAction('kick')
+    try {
+      await guildApi.guildGuildIdMemberUserIdKickPost({ guildId: serverId as unknown as number, userId: userId as unknown as number })
+      queryClient.setQueryData<DtoMember[]>(['members', serverId], (old = []) =>
+        old.filter((m) => String(m.user?.id) !== userId),
+      )
+      toast.success(t('serverSettings.kickSuccess'))
+    } catch {
+      toast.error(t('serverSettings.kickFailed'))
+    } finally {
+      setModeratingAction(null)
+    }
+  }
+
+  async function handleBanMember() {
+    if (!userId) return
+    setModeratingAction('ban')
+    try {
+      await guildApi.guildGuildIdMemberUserIdBanPost({ guildId: serverId as unknown as number, userId: userId as unknown as number })
+      queryClient.setQueryData<DtoMember[]>(['members', serverId], (old = []) =>
+        old.filter((m) => String(m.user?.id) !== userId),
+      )
+      toast.success(t('serverSettings.banSuccess'))
+    } catch {
+      toast.error(t('serverSettings.banFailed'))
+    } finally {
+      setModeratingAction(null)
+    }
+  }
+
+  const canKickMember = permissions.canKickMember(member)
+  const canBanMember = permissions.canBanMember(member)
+
+  const pendingModerationTitle = pendingModerationAction === 'kick'
+    ? t('serverSettings.kickMember')
+    : t('serverSettings.banMember')
+  const pendingModerationDescription = pendingModerationAction === 'kick'
+    ? t('serverSettings.kickConfirmDescription', { name: displayName })
+    : t('serverSettings.banConfirmDescription', { name: displayName })
+
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <button
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <button
           onMouseMove={(e) => { lastPosRef.current = { x: e.clientX, y: e.clientY } }}
           onClick={handleRowClick}
           className={cn(
@@ -290,10 +334,10 @@ function MemberRow({ member, serverId, allRoles }: { member: DtoMember; serverId
               </p>
             )}
           </div>
-        </button>
-      </ContextMenuTrigger>
+          </button>
+        </ContextMenuTrigger>
 
-      <ContextMenuContent>
+        <ContextMenuContent>
         {/* View Profile */}
         <ContextMenuItem
           onClick={() => openUserProfile(
@@ -308,7 +352,7 @@ function MemberRow({ member, serverId, allRoles }: { member: DtoMember; serverId
         </ContextMenuItem>
 
         {/* Roles sub-menu - only show for users with Manage Roles permission, Admin, or Owner */}
-        {canManageRoles && allRoles.length > 0 && (
+        {permissions.canManageRoles && allRoles.length > 0 && (
           <ContextMenuSub>
             <ContextMenuSubTrigger className="gap-2">
               <Shield className="w-4 h-4" />
@@ -354,7 +398,63 @@ function MemberRow({ member, serverId, allRoles }: { member: DtoMember; serverId
           <Copy className="w-4 h-4" />
           {t('memberList.copyUserId')}
         </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
+        {(canKickMember || canBanMember) && (
+          <>
+            <ContextMenuSeparator />
+            {canKickMember && (
+              <ContextMenuItem
+                disabled={moderatingAction !== null}
+                onClick={() => setPendingModerationAction('kick')}
+                className="text-destructive focus:text-destructive gap-2"
+              >
+                <UserX className="w-4 h-4" />
+                {t('serverSettings.kickMember')}
+              </ContextMenuItem>
+            )}
+            {canBanMember && (
+              <ContextMenuItem
+                disabled={moderatingAction !== null}
+                onClick={() => setPendingModerationAction('ban')}
+                className="text-destructive focus:text-destructive gap-2"
+              >
+                <Ban className="w-4 h-4" />
+                {t('serverSettings.banMember')}
+              </ContextMenuItem>
+            )}
+          </>
+        )}
+        </ContextMenuContent>
+      </ContextMenu>
+      <Dialog
+        open={pendingModerationAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingModerationAction(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{pendingModerationTitle}</DialogTitle>
+            <DialogDescription>{pendingModerationDescription}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingModerationAction(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={moderatingAction !== null}
+              onClick={() => {
+                const action = pendingModerationAction
+                setPendingModerationAction(null)
+                if (action === 'kick') void handleKickMember()
+                if (action === 'ban') void handleBanMember()
+              }}
+            >
+              {pendingModerationTitle}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

@@ -4,19 +4,34 @@ import { motion, AnimatePresence, useDragControls } from 'motion/react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient, useQuery } from '@tanstack/react-query'
-import { MessageSquare, UserPlus } from 'lucide-react'
+import { Ban, Copy, MessageSquare, MoreHorizontal, Shield, UserPlus, UserX } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { guildApi, rolesApi, userApi } from '@/api/client'
-import type { DtoMember, DtoGuild } from '@/types'
+import type { DtoMember } from '@/types'
 import type { DtoRole, DtoUser } from '@/client'
 import { cn } from '@/lib/utils'
-import { PermissionBits, hasPermission, calculateEffectivePermissions } from '@/lib/permissions'
 import ProfileCardBody, { userColor, colorToHex, panelTextColors, isDark } from './ProfileCardBody'
 import { useClientMode } from '@/hooks/useClientMode'
+import { useGuildPermissions } from '@/hooks/useGuildPermissions'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +55,8 @@ export default function UserProfilePanel() {
 
   const [editingRoles, setEditingRoles] = useState(false)
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null)
+  const [pendingModerationAction, setPendingModerationAction] = useState<'kick' | 'ban' | null>(null)
+  const [moderatingAction, setModeratingAction] = useState<'kick' | 'ban' | null>(null)
   const [sheetAtTop, setSheetAtTop] = useState(true)
   const sheetScrollRef = useRef<HTMLDivElement>(null)
   const dragControls = useDragControls()
@@ -50,6 +67,10 @@ export default function UserProfilePanel() {
 
   // Reset role editor whenever the panel target changes
   useEffect(() => { setEditingRoles(false) }, [activeProfile?.userId, activeProfile?.guildId])
+  useEffect(() => {
+    setPendingModerationAction(null)
+    setModeratingAction(null)
+  }, [activeProfile?.userId, activeProfile?.guildId])
 
   // Close on outside click (desktop only — mobile uses backdrop)
   useEffect(() => {
@@ -59,7 +80,9 @@ export default function UserProfilePanel() {
     const timer = setTimeout(() => {
       if (!alive) return
       const handler = (e: MouseEvent) => {
-        if (!panelRef.current?.contains(e.target as Node)) close()
+        const target = e.target
+        if (target instanceof Element && target.closest('[data-radix-popper-content-wrapper]')) return
+        if (!panelRef.current?.contains(target as Node)) close()
       }
       document.addEventListener('mousedown', handler)
       removeHandler = () => document.removeEventListener('mousedown', handler)
@@ -82,6 +105,7 @@ export default function UserProfilePanel() {
   // ── Hooks — MUST be before any early return (Rules of Hooks) ───────────────
 
   const currentUser = useAuthStore((s) => s.user)
+  const permissions = useGuildPermissions(guildId)
   const userStatus = usePresenceStore(
     (s) => (userId ? ((s.statuses[userId] ?? 'offline') as UserStatus) : 'offline'),
   )
@@ -147,15 +171,9 @@ export default function UserProfilePanel() {
   // In DM context member is undefined; fall back to the directly-fetched user
   const userData = member?.user ?? fetchedUser
 
-  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === guildId)
-  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
-
-  const currentMember = members.find((m) => m.user?.id === currentUser?.id)
-  const effectivePermissions = currentMember && allRoles.length > 0
-    ? calculateEffectivePermissions(currentMember as DtoMember, allRoles)
-    : 0
-  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
-  const canManageRoles = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_ROLES)
+  const canManageRoles = permissions.canManageRoles
+  const canKickMember = permissions.canKickMember(member)
+  const canBanMember = permissions.canBanMember(member)
 
   const displayName = member?.username ?? userData?.name ?? activeProfile?.fallbackName ?? t('common.unknown')
   const globalName = userData?.name
@@ -191,6 +209,12 @@ export default function UserProfilePanel() {
   const isSelf = currentUser?.id !== undefined && String(currentUser.id) === userId
   const isFriend = friends.some((f) => String(f.id) === userId)
   const memberDiscriminator = userData?.discriminator
+  const pendingModerationTitle = pendingModerationAction === 'kick'
+    ? t('serverSettings.kickMember')
+    : t('serverSettings.banMember')
+  const pendingModerationDescription = pendingModerationAction === 'kick'
+    ? t('serverSettings.kickConfirmDescription', { name: displayName })
+    : t('serverSettings.banConfirmDescription', { name: displayName })
 
   async function handleSendFriendRequest() {
     if (!memberDiscriminator) return
@@ -200,6 +224,57 @@ export default function UserProfilePanel() {
       toast.success(t('friends.requestSent'))
     } catch {
       toast.error(t('friends.requestFailed'))
+    }
+  }
+
+  async function handleCopyUserId() {
+    try {
+      await navigator.clipboard.writeText(userId)
+      toast.success(t('serverSettings.copied'))
+    } catch {
+      toast.error(t('common.error'))
+    }
+  }
+
+  async function handleKickMember() {
+    if (!guildId || !userId) return
+    setModeratingAction('kick')
+    try {
+      await guildApi.guildGuildIdMemberUserIdKickPost({
+        guildId: guildId as unknown as number,
+        userId: userId as unknown as number,
+      })
+      queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
+        old.filter((m) => String(m.user?.id) !== userId),
+      )
+      toast.success(t('serverSettings.kickSuccess'))
+      setPendingModerationAction(null)
+      close()
+    } catch {
+      toast.error(t('serverSettings.kickFailed'))
+    } finally {
+      setModeratingAction(null)
+    }
+  }
+
+  async function handleBanMember() {
+    if (!guildId || !userId) return
+    setModeratingAction('ban')
+    try {
+      await guildApi.guildGuildIdMemberUserIdBanPost({
+        guildId: guildId as unknown as number,
+        userId: userId as unknown as number,
+      })
+      queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
+        old.filter((m) => String(m.user?.id) !== userId),
+      )
+      toast.success(t('serverSettings.banSuccess'))
+      setPendingModerationAction(null)
+      close()
+    } catch {
+      toast.error(t('serverSettings.banFailed'))
+    } finally {
+      setModeratingAction(null)
     }
   }
 
@@ -271,22 +346,101 @@ export default function UserProfilePanel() {
       </div>
     )
 
+    const showAddFriendButton = !isSelf && !isFriend && !!memberDiscriminator
+    const showModerationActions = canKickMember || canBanMember
+    const headerActions = (
+      <>
+        {showAddFriendButton && (
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            className="h-8 w-8 rounded-full p-0 bg-background/85 text-foreground shadow-sm hover:bg-background"
+            onClick={() => void handleSendFriendRequest()}
+            aria-label={t('userProfile.addFriend')}
+            title={t('userProfile.addFriend')}
+          >
+            <UserPlus className="w-4 h-4" />
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              className="h-8 w-8 rounded-full p-0 bg-background/85 text-foreground shadow-sm hover:bg-background"
+              aria-label={t('common.more')}
+              title={t('common.more')}
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={6} className="z-[230] w-48">
+            {!isSelf && (
+              <DropdownMenuItem onSelect={() => void handleMessage()}>
+                <MessageSquare className="w-4 h-4" />
+                {t('userProfile.sendMessage')}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => void handleCopyUserId()}>
+              <Copy className="w-4 h-4" />
+              {t('memberList.copyUserId')}
+            </DropdownMenuItem>
+            {canManageRoles && guildId && (
+              <DropdownMenuItem onSelect={() => setEditingRoles((v) => !v)}>
+                <Shield className="w-4 h-4" />
+                {editingRoles ? t('common.done') : t('serverSettings.permManageRoles')}
+              </DropdownMenuItem>
+            )}
+            {showModerationActions && (
+              <>
+                <DropdownMenuSeparator />
+                {canKickMember && (
+                  <DropdownMenuItem
+                    disabled={moderatingAction !== null}
+                    variant="destructive"
+                    onSelect={() => setPendingModerationAction('kick')}
+                  >
+                    <UserX className="w-4 h-4" />
+                    {t('serverSettings.kickMember')}
+                  </DropdownMenuItem>
+                )}
+                {canBanMember && (
+                  <DropdownMenuItem
+                    disabled={moderatingAction !== null}
+                    variant="destructive"
+                    onSelect={() => setPendingModerationAction('ban')}
+                  >
+                    <Ban className="w-4 h-4" />
+                    {t('serverSettings.banMember')}
+                  </DropdownMenuItem>
+                )}
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </>
+    )
+
     return (
-      <ProfileCardBody
-        userId={userId}
-        displayName={displayName}
-        globalName={globalName}
-        discriminator={discriminator}
-        avatarUrl={userData?.avatar?.url}
-        bio={mobile ? undefined : userData?.bio}
-        panelColor={rawPanelColor}
-        bannerColor={rawBannerColor}
-        accent={accent}
-        status={userStatus}
-      >
-        {mobile ? (
+      <>
+        <ProfileCardBody
+          userId={userId}
+          displayName={displayName}
+          globalName={globalName}
+          discriminator={discriminator}
+          avatarUrl={userData?.avatar?.url}
+          bio={mobile ? undefined : userData?.bio}
+          panelColor={rawPanelColor}
+          bannerColor={rawBannerColor}
+          accent={accent}
+          status={userStatus}
+          headerActions={headerActions}
+        >
+          {mobile ? (
           // ── Mobile: grouped semi-transparent blocks ────────────────────────
-          <>
+            <>
             {/* Block 1: Bio + Member Since */}
             {(userData?.bio || joinDate) && (
               <div className="rounded-2xl p-3 space-y-2.5" style={{ backgroundColor: blockBg }}>
@@ -388,22 +542,16 @@ export default function UserProfilePanel() {
             {/* Block 3: Actions */}
             {!isSelf && (
               <div className="rounded-2xl p-3 space-y-2" style={{ backgroundColor: blockBg }}>
-                {!isFriend && memberDiscriminator && (
-                  <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleSendFriendRequest()}>
-                    <UserPlus className="w-4 h-4" />
-                    {t('userProfile.addFriend')}
-                  </Button>
-                )}
                 <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleMessage()}>
                   <MessageSquare className="w-4 h-4" />
                   {t('userProfile.sendMessage')}
                 </Button>
               </div>
             )}
-          </>
-        ) : (
+            </>
+          ) : (
           // ── Desktop: original flat layout ──────────────────────────────────
-          <>
+            <>
             {/* Member since */}
             {joinDate && (
               <div>
@@ -499,12 +647,6 @@ export default function UserProfilePanel() {
 
             {/* Actions */}
             <div className="space-y-2">
-              {!isSelf && !isFriend && memberDiscriminator && (
-                <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleSendFriendRequest()}>
-                  <UserPlus className="w-4 h-4" />
-                  {t('userProfile.addFriend')}
-                </Button>
-              )}
               {!isSelf && (
                 <Button size="sm" variant="secondary" className="w-full gap-2" onClick={() => void handleMessage()}>
                   <MessageSquare className="w-4 h-4" />
@@ -512,9 +654,31 @@ export default function UserProfilePanel() {
                 </Button>
               )}
             </div>
-          </>
-        )}
-      </ProfileCardBody>
+            </>
+          )}
+        </ProfileCardBody>
+
+        <Dialog open={pendingModerationAction !== null} onOpenChange={(open) => !open && setPendingModerationAction(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{pendingModerationTitle}</DialogTitle>
+              <DialogDescription>{pendingModerationDescription}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPendingModerationAction(null)}>
+                {t('common.cancel')}
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={moderatingAction !== null}
+                onClick={() => pendingModerationAction === 'kick' ? void handleKickMember() : void handleBanMember()}
+              >
+                {pendingModerationTitle}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
     )
   }
 

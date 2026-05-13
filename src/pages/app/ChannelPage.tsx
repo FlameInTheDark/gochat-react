@@ -50,13 +50,13 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import { useMessagePagination } from '@/hooks/useMessagePagination'
 import { useTranslation } from 'react-i18next'
-import { calculateEffectivePermissions, hasPermission, PermissionBits } from '@/lib/permissions'
 import { getTopRoleColor } from '@/lib/memberColors'
 import { createJumpRequest, type JumpBehavior, type JumpRequest } from '@/lib/messageJump'
 import { isAutoThreadFollowup, isThreadChannel, sortThreadsByActivity } from '@/lib/threads'
 import { buildMessagePreviewText } from '@/lib/messagePreview'
 import { addThreadMember, removeThreadMember } from '@/lib/threadMembership'
 import { useClientMode } from '@/hooks/useClientMode'
+import { useGuildPermissions } from '@/hooks/useGuildPermissions'
 import StartStreamDialog from '@/components/voice/StartStreamDialog'
 
 type RightPanelMode = 'members' | 'none' | 'threads' | 'thread' | 'thread-create'
@@ -351,16 +351,8 @@ export default function ChannelPage() {
   }, [channelId, isVoice, voiceChannelId])
 
   const currentUser = useAuthStore((s) => s.user)
-  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find(
-    (g) => String(g.id) === serverId,
-  )
-
-  const { data: guildDetail } = useQuery({
-    queryKey: ['guild', serverId],
-    queryFn: () => guildApi.guildGuildIdGet({ guildId: serverId! }).then((r) => r.data),
-    enabled: !!serverId,
-    staleTime: 30_000,
-  })
+  const permissions = useGuildPermissions(serverId)
+  const guildName = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === String(serverId))?.name
   const { data: members } = useQuery({
     queryKey: ['members', serverId],
     queryFn: () =>
@@ -376,20 +368,9 @@ export default function ChannelPage() {
     staleTime: 60_000,
   })
 
-  const currentMember = members?.find((m) => String(m.user?.id) === String(currentUser?.id))
-  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
-  const guildPermissions = guildDetail?.permissions ?? 0
-  const effectivePermissions = currentMember && roles
-    ? calculateEffectivePermissions(currentMember, roles, guildPermissions)
-    : guildPermissions
-  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
-  const memberRoleIds = new Set((currentMember?.roles ?? []).map(String))
   const permissionChannel = isThreadView ? parentChannel : channel
-  const canAccessParentChannel = isOwner || isAdmin || !permissionChannel?.private ||
-    (permissionChannel?.roles ?? []).some((r) => memberRoleIds.has(String(r)))
-  const canCreateThreads = canAccessParentChannel && (isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.CREATE_THREADS))
-  const canSendInThreads = canAccessParentChannel && (isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.SEND_MESSAGES_IN_THREADS))
-  const canManageThreads = isOwner || isAdmin || hasPermission(effectivePermissions, PermissionBits.MANAGE_THREADS)
+  const canCreateThreads = permissions.canCreateThreads(permissionChannel)
+  const canSendInThreads = permissions.canSendInThreads(permissionChannel)
   const currentThreadMemberIds = useMemo(
     () => new Set((channel?.member_ids ?? []).map(String)),
     [channel?.member_ids],
@@ -1020,7 +1001,7 @@ export default function ChannelPage() {
           }))
             .data.voice_region ?? undefined
         }
-        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token, guild?.name ?? undefined, voiceRegion)
+        await joinVoice(serverId, channelId, channel.name ?? channelId, res.data.sfu_url, res.data.sfu_token, guildName, voiceRegion)
       }
     } catch {
       toast.error(t('channelSidebar.joinVoiceFailed'))
@@ -1108,10 +1089,7 @@ export default function ChannelPage() {
     }
   }
 
-  const canManageActiveThread = !!activeThread && (
-    canManageThreads ||
-    (currentUser?.id !== undefined && String(activeThread.creator_id) === String(currentUser.id))
-  )
+  const canManageActiveThread = permissions.canManageThread(activeThread)
 
   const getParentMessageProps = useCallback(function getParentMessageProps(msg: DtoMessage) {
     const isInformationalMessage = msg.type === 2 || msg.type === 3 || msg.type === 4
@@ -1175,6 +1153,13 @@ export default function ChannelPage() {
       replyAction: canReply ? {
         label: t('messageItem.reply'),
         onClick: () => setReplyTarget(msg),
+      } : undefined,
+      threadListAction: msg.type === 3 && isTextChannel ? {
+        label: t('threads.title'),
+        onClick: () => {
+          setThreadDropdownSearch('')
+          setThreadDropdownOpen(true)
+        },
       } : undefined,
       onOpenReference: ({ channelId: targetChannelId, messageId }: { channelId: string; messageId: string }) => {
         void openMessageLocation(targetChannelId, messageId)

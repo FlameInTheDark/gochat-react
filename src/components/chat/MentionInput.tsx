@@ -5,9 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Hash, Shield, Paperclip, SendHorizontal } from 'lucide-react'
 import { guildApi, rolesApi } from '@/api/client'
 import { ChannelType } from '@/types'
-import type { DtoChannel, DtoGuild, DtoMember, DtoRole } from '@/client'
-import { calculateEffectivePermissions, hasPermission, PermissionBits } from '@/lib/permissions'
-import { useAuthStore } from '@/stores/authStore'
+import type { DtoChannel, DtoGuild } from '@/client'
 import { Smile, ImagePlay } from 'lucide-react'
 import EmojiPicker from './EmojiPicker'
 import GifPicker from './GifPicker'
@@ -17,6 +15,7 @@ import { useClientMode } from '@/hooks/useClientMode'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { emojiUrl } from '@/lib/emoji'
 import { allEmojis } from '@/lib/emojiData'
+import { useGuildPermissions } from '@/hooks/useGuildPermissions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -263,7 +262,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
   const { t } = useTranslation()
   const isMobile = useClientMode() === 'mobile'
   const queryClient = useQueryClient()
-  const currentUser = useAuthStore((s) => s.user)
+  const permissions = useGuildPermissions(serverId)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
@@ -307,7 +306,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
   const { data: members } = useQuery({
     queryKey: ['members', serverId],
     queryFn: () =>
-      guildApi.guildGuildIdMembersGet({ guildId: serverId! }).then((r) => r.data ?? []),
+      guildApi.guildGuildIdMembersGet({ guildId: serverId! as unknown as number }).then((r) => r.data ?? []),
     enabled: !!serverId,
     staleTime: 30_000,
   })
@@ -315,7 +314,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
   const { data: channels } = useQuery({
     queryKey: ['channels', serverId],
     queryFn: () =>
-      guildApi.guildGuildIdChannelGet({ guildId: serverId! }).then((r) => r.data ?? []),
+      guildApi.guildGuildIdChannelGet({ guildId: serverId! as unknown as number }).then((r) => r.data ?? []),
     enabled: !!serverId,
     staleTime: 30_000,
   })
@@ -323,25 +322,13 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
   const { data: roles } = useQuery({
     queryKey: ['roles', serverId],
     queryFn: () =>
-      rolesApi.guildGuildIdRolesGet({ guildId: serverId! }).then((r) => r.data ?? []),
+      rolesApi.guildGuildIdRolesGet({ guildId: serverId! as unknown as number }).then((r) => r.data ?? []),
     enabled: !!serverId,
     staleTime: 60_000,
   })
 
-  // Channel visibility — mirrors ChannelSidebar logic
-  const guild = queryClient.getQueryData<DtoGuild[]>(['guilds'])?.find((g) => String(g.id) === serverId)
-  const isOwner = guild?.owner != null && currentUser?.id !== undefined && String(guild.owner) === String(currentUser.id)
-  const currentMember = members?.find((m) => m.user?.id === currentUser?.id)
-  const effectivePermissions = currentMember && roles
-    ? calculateEffectivePermissions(currentMember as DtoMember, roles as DtoRole[])
-    : 0
-  const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
-  const memberRoleIds = new Set((currentMember?.roles ?? []).map(String))
-
   function canViewChannel(ch: DtoChannel): boolean {
-    if (isOwner || isAdmin) return true
-    if (!ch.private) return true
-    return (ch.roles ?? []).some((r) => memberRoleIds.has(String(r)))
+    return permissions.canViewChannel(ch)
   }
 
   const allChannels = channels ?? []

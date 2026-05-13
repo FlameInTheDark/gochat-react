@@ -66,8 +66,8 @@ import { useUnreadStore } from '@/stores/unreadStore'
 import { useMentionStore } from '@/stores/mentionStore'
 import { cn } from '@/lib/utils'
 import type { DtoGuild } from '@/types'
-import { hasPermission, calculateEffectivePermissions, PermissionBits } from '@/lib/permissions'
 import type { DtoRole, DtoMember } from '@/client'
+import { createPermissionChecker } from '@/lib/permissionChecker'
 import { useNotificationSettings } from '@/hooks/useNotificationSettings'
 import { NotificationsSubmenu } from './NotificationsSubmenu'
 import Logo from "@/assets/logo.svg?react";
@@ -1026,7 +1026,7 @@ export default function ServerSidebar() {
       await Promise.all(
         guilds.map(async (g) => {
           try {
-            const members = await guildApi.guildGuildIdMembersGet({ guildId: String(g.id) })
+            const members = await guildApi.guildGuildIdMembersGet({ guildId: g.id as unknown as number })
             results.set(String(g.id), members.data ?? [])
           } catch {
             results.set(String(g.id), [])
@@ -1047,7 +1047,7 @@ export default function ServerSidebar() {
       await Promise.all(
         guilds.map(async (g) => {
           try {
-            const roles = await rolesApi.guildGuildIdRolesGet({ guildId: String(g.id) })
+            const roles = await rolesApi.guildGuildIdRolesGet({ guildId: g.id as unknown as number })
             results.set(String(g.id), roles.data ?? [])
           } catch {
             results.set(String(g.id), [])
@@ -1069,22 +1069,9 @@ export default function ServerSidebar() {
       const guildId = String(guild.id)
       const members = membersMap.get(guildId) ?? []
       const roles = rolesMap.get(guildId) ?? []
-      const member = members.find((m) => m.user?.id === currentUser.id)
-      
-      // Check if user is the owner
-      const isOwner = guild.owner != null && String(guild.owner) === String(currentUser.id)
-      
-      if (member && roles.length > 0) {
-        const effectivePermissions = calculateEffectivePermissions(member as DtoMember, roles as DtoRole[])
-        const isAdmin = hasPermission(effectivePermissions, PermissionBits.ADMINISTRATOR)
-        map.set(
-          guildId,
-          isOwner || hasPermission(effectivePermissions, PermissionBits.MANAGE_SERVER) || isAdmin,
-        )
-      } else {
-        // Owner always has permission even if not a member
-        map.set(guildId, isOwner)
-      }
+      const member = members.find((m) => String(m.user?.id) === String(currentUser.id))
+      const checker = createPermissionChecker({ currentUser, guild, currentMember: member, roles })
+      map.set(guildId, checker.canManageServer)
     }
     return map
   }, [guilds, membersMap, rolesMap, currentUser])
@@ -1096,8 +1083,8 @@ export default function ServerSidebar() {
 
     for (const guild of guilds) {
       const guildId = String(guild.id)
-      const isOwner = guild.owner != null && String(guild.owner) === String(currentUser.id)
-      map.set(guildId, isOwner)
+      const checker = createPermissionChecker({ currentUser, guild })
+      map.set(guildId, checker.isOwner)
     }
     return map
   }, [guilds, currentUser])

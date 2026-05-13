@@ -147,6 +147,8 @@ export interface Translation {
         backToList: string
         editThread: string
         deleteThread: string
+        archiveThread: string
+        copyThreadId: string
         editTitle: string
         editDescription: string
         topic: string
@@ -663,6 +665,7 @@ export interface Translation {
         loading: string
         error: string
         unknown: string
+        more: string
         todayAt: string
         yesterdayAt: string
         done: string
@@ -680,6 +683,7 @@ export interface Translation {
         systemChannelLabel: string; systemChannelDesc: string; systemChannelNone: string
         iconUploaded: string; iconFailed: string; iconFileFailed: string
         membersTitle: string; filterOf: string; filterPlaceholder: string; joined: string; kickMember: string; banMember: string
+        kickConfirmDescription: string; banConfirmDescription: string
         kickSuccess: string; kickFailed: string; banSuccess: string; banFailed: string; noMembersMatch: string; noMembers: string
         bansTitle: string; noBans: string; banReason: string; unbanning: string; unban: string; unbanSuccess: string; unbanFailed: string
         rolesTitle: string; createRole: string; roleNamePlaceholder: string; everyoneRole: string; everyoneBadge: string
