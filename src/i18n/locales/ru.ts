@@ -162,6 +162,8 @@ const ru: Translation = {
         backToList: 'Назад к списку тредов',
         editThread: 'Редактировать тред',
         deleteThread: 'Удалить тред',
+        archiveThread: 'Архивировать тред',
+        copyThreadId: 'Скопировать ID треда',
         editTitle: 'Редактировать тред',
         editDescription: 'Обновите параметры этого треда.',
         topic: 'Тема',

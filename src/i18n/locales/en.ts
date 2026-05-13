@@ -162,6 +162,8 @@ const en: Translation = {
         backToList: 'Back to thread list',
         editThread: 'Edit Thread',
         deleteThread: 'Delete Thread',
+        archiveThread: 'Archive Thread',
+        copyThreadId: 'Copy Thread ID',
         editTitle: 'Edit Thread',
         editDescription: 'Update this thread\'s details.',
         topic: 'Topic',

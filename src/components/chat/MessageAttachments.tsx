@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize, Star, ZoomIn, ZoomOut } from 'lucide-react'
+import { FileText, Download, X, Play, Pause, ChevronLeft, ChevronRight, Volume1, Volume2, VolumeX, Maximize, Minimize, Star, ZoomIn, ZoomOut, ImageIcon, Link } from 'lucide-react'
+import { toast } from 'sonner'
 import { getFileExtension, isSvgFileLike } from '@/lib/fileTypes'
 import { cn } from '@/lib/utils'
 import PendingAttachmentBar from '@/components/chat/PendingAttachmentBar'
@@ -7,6 +8,12 @@ import type { PendingUploadAttachment } from '@/lib/pendingAttachments'
 import type { DtoAttachment } from '@/types'
 import AnimatedImage from '@/components/ui/AnimatedImage'
 import { useGifStore } from '@/stores/gifStore'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 
 // ── GIF favorite star button ──────────────────────────────────────────────────
 function GifStarButton({ url }: { url: string }) {
@@ -129,6 +136,94 @@ function groupForRender(attachments: DtoAttachment[]): RenderGroup[] {
   flush()
 
   return groups
+}
+
+async function copyMediaLink(meta: AttachmentMeta) {
+  if (!meta.url) return
+  try {
+    await navigator.clipboard.writeText(meta.url)
+    toast.success('Media link copied')
+  } catch {
+    toast.error('Failed to copy media link')
+  }
+}
+
+async function copyImage(meta: AttachmentMeta) {
+  const source = meta.url ?? meta.previewUrl
+  if (!source) return
+  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+    await copyMediaLink(meta)
+    return
+  }
+
+  try {
+    const response = await fetch(source)
+    const blob = await response.blob()
+    const type = blob.type || meta.contentType || 'image/png'
+    await navigator.clipboard.write([new ClipboardItem({ [type]: blob })])
+    toast.success('Image copied')
+  } catch {
+    try {
+      const html = `<img src="${escapeHtmlAttribute(source)}" alt="${escapeHtmlAttribute(meta.name)}">`
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([source], { type: 'text/plain' }),
+        }),
+      ])
+      toast.success('Image copied')
+    } catch {
+      await copyMediaLink(meta)
+    }
+  }
+}
+
+function escapeHtmlAttribute(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function AttachmentContextMenu({
+  meta,
+  includeCopyImage = false,
+  renderMessageContextMenu,
+  children,
+}: {
+  meta: AttachmentMeta
+  includeCopyImage?: boolean
+  renderMessageContextMenu?: (mediaCopyItems: React.ReactNode) => React.ReactNode
+  children: React.ReactNode
+}) {
+  if (!meta.url && !meta.previewUrl && !renderMessageContextMenu) return <>{children}</>
+
+  const mediaCopyItems = (
+    <>
+      {includeCopyImage && (
+        <ContextMenuItem onSelect={() => void copyImage(meta)}>
+          <ImageIcon className="w-4 h-4" />
+          Copy Image
+        </ContextMenuItem>
+      )}
+      {meta.url && (
+        <ContextMenuItem onSelect={() => void copyMediaLink(meta)}>
+          <Link className="w-4 h-4" />
+          Copy Media Link
+        </ContextMenuItem>
+      )}
+    </>
+  )
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuContent>
+        {renderMessageContextMenu ? renderMessageContextMenu(mediaCopyItems) : mediaCopyItems}
+      </ContextMenuContent>
+    </ContextMenu>
+  )
 }
 
 // ── Shared image lightbox (navigable for galleries) ───────────────────────────
@@ -330,43 +425,55 @@ function ImageTile({
   onClick,
   className,
   style,
+  renderMessageContextMenu,
 }: {
   item: RenderItem
   onClick: () => void
   className?: string
   style?: React.CSSProperties
+  renderMessageContextMenu?: (mediaCopyItems: React.ReactNode) => React.ReactNode
 }) {
   const { meta } = item
   return (
-    <div
-      className={`rounded overflow-hidden cursor-zoom-in relative group ${className ?? ''}`}
-      style={style}
-      onClick={onClick}
-    >
-      {meta.isGif ? (
-        <AnimatedImage
-          src={meta.url ?? ''}
-          preview={meta.previewUrl !== meta.url ? (meta.previewUrl ?? undefined) : undefined}
-          alt={meta.name}
-          className="w-full h-full object-cover"
-          draggable={false}
-        />
-      ) : (
-        <img
-          src={meta.previewUrl ?? ''}
-          alt={meta.name}
-          className="w-full h-full object-cover"
-          loading="lazy"
-          draggable={false}
-        />
-      )}
-      {meta.isGif && meta.url && <GifStarButton url={meta.url} />}
-    </div>
+    <AttachmentContextMenu meta={meta} includeCopyImage renderMessageContextMenu={renderMessageContextMenu}>
+      <div
+        className={`rounded overflow-hidden cursor-zoom-in relative group ${className ?? ''}`}
+        style={style}
+        onClick={onClick}
+      >
+        {meta.isGif ? (
+          <AnimatedImage
+            src={meta.url ?? ''}
+            preview={meta.previewUrl !== meta.url ? (meta.previewUrl ?? undefined) : undefined}
+            alt={meta.name}
+            className="w-full h-full object-cover"
+            draggable={false}
+          />
+        ) : (
+          <img
+            src={meta.previewUrl ?? ''}
+            alt={meta.name}
+            className="w-full h-full object-cover"
+            loading="lazy"
+            draggable={false}
+          />
+        )}
+        {meta.isGif && meta.url && <GifStarButton url={meta.url} />}
+      </div>
+    </AttachmentContextMenu>
   )
 }
 
 // ── Single image with lightbox ────────────────────────────────────────────────
-function AttachmentImage({ item, maxDim }: { item: RenderItem; maxDim: number }) {
+function AttachmentImage({
+  item,
+  maxDim,
+  renderMessageContextMenu,
+}: {
+  item: RenderItem
+  maxDim: number
+  renderMessageContextMenu?: (mediaCopyItems: React.ReactNode) => React.ReactNode
+}) {
   const [open, setOpen] = useState(false)
   const { meta } = item
   if (!meta.previewUrl) return null
@@ -378,6 +485,7 @@ function AttachmentImage({ item, maxDim }: { item: RenderItem; maxDim: number })
         item={item}
         onClick={() => setOpen(true)}
         style={{ width: bounds.width, height: bounds.height, maxWidth: '100%' }}
+        renderMessageContextMenu={renderMessageContextMenu}
       />
       {open && (
         <Lightbox items={[item]} startIndex={0} onClose={() => setOpen(false)} />
@@ -387,7 +495,15 @@ function AttachmentImage({ item, maxDim }: { item: RenderItem; maxDim: number })
 }
 
 // ── Image gallery grid with shared navigable lightbox ────────────────────────
-function GalleryGroup({ items, maxDim }: { items: RenderItem[]; maxDim: number }) {
+function GalleryGroup({
+  items,
+  maxDim,
+  renderMessageContextMenu,
+}: {
+  items: RenderItem[]
+  maxDim: number
+  renderMessageContextMenu?: (mediaCopyItems: React.ReactNode) => React.ReactNode
+}) {
   const [openIndex, setOpenIndex] = useState<number | null>(null)
   const cols = items.length === 1 ? 1 : 2
 
@@ -406,6 +522,7 @@ function GalleryGroup({ items, maxDim }: { items: RenderItem[]; maxDim: number }
             item={item}
             onClick={() => setOpenIndex(i)}
             className="aspect-square"
+            renderMessageContextMenu={renderMessageContextMenu}
           />
         ))}
       </div>
@@ -421,7 +538,15 @@ function GalleryGroup({ items, maxDim }: { items: RenderItem[]; maxDim: number }
 }
 
 // ── Video: custom player ───────────────────────────────────────────────────────
-function AttachmentVideo({ item, maxDim }: { item: RenderItem; maxDim: number }) {
+function AttachmentVideo({
+  item,
+  maxDim,
+  renderMessageContextMenu,
+}: {
+  item: RenderItem
+  maxDim: number
+  renderMessageContextMenu?: (mediaCopyItems: React.ReactNode) => React.ReactNode
+}) {
   const { meta } = item
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -437,6 +562,8 @@ function AttachmentVideo({ item, maxDim }: { item: RenderItem; maxDim: number })
   const [hasStarted, setHasStarted] = useState(false)
   const [bufferedEnd, setBufferedEnd] = useState(0)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [volumeVisible, setVolumeVisible] = useState(false)
+  const [seekPreview, setSeekPreview] = useState<{ left: number; time: number } | null>(null)
 
   useEffect(() => {
     const onFsChange = () => setIsFullscreen(!!document.fullscreenElement)
@@ -459,25 +586,27 @@ function AttachmentVideo({ item, maxDim }: { item: RenderItem; maxDim: number })
   // ── Pre-play: thumbnail + play button, no <video> in DOM ─────────────────────
   if (!hasStarted) {
     return (
-      <div
-        className="relative rounded overflow-hidden bg-zinc-900 inline-block cursor-pointer group"
-        style={containerStyle}
-        onClick={() => setHasStarted(true)}
-      >
-        {meta.previewUrl && (
-          <img
-            src={meta.previewUrl}
-            alt={meta.name}
-            className="w-full h-full object-cover"
-            draggable={false}
-          />
-        )}
-        <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/35 transition-colors">
-          <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm group-hover:scale-110 transition-transform">
-            <Play className="w-7 h-7 fill-white stroke-none ml-0.5" />
+      <AttachmentContextMenu meta={meta} renderMessageContextMenu={renderMessageContextMenu}>
+        <div
+          className="relative rounded overflow-hidden bg-zinc-900 inline-block cursor-pointer group"
+          style={containerStyle}
+          onClick={() => setHasStarted(true)}
+        >
+          {meta.previewUrl && (
+            <img
+              src={meta.previewUrl}
+              alt={meta.name}
+              className="w-full h-full object-cover"
+              draggable={false}
+            />
+          )}
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/35 transition-colors">
+            <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center backdrop-blur-sm group-hover:scale-110 transition-transform">
+              <Play className="w-7 h-7 fill-white stroke-none ml-0.5" />
+            </div>
           </div>
         </div>
-      </div>
+      </AttachmentContextMenu>
     )
   }
 
@@ -542,13 +671,14 @@ function AttachmentVideo({ item, maxDim }: { item: RenderItem; maxDim: number })
   const bufPct = duration > 0 ? (bufferedEnd / duration) * 100 : 0
 
   return (
-    <div
-      ref={containerRef}
-      className="relative rounded overflow-hidden bg-black select-none inline-block"
-      style={containerStyle}
-      onMouseMove={revealControls}
-      onMouseLeave={() => { if (isPlaying) setControlsVisible(false) }}
-    >
+    <AttachmentContextMenu meta={meta} renderMessageContextMenu={renderMessageContextMenu}>
+      <div
+        ref={containerRef}
+        className="relative rounded overflow-hidden bg-black select-none inline-block"
+        style={containerStyle}
+        onMouseMove={revealControls}
+        onMouseLeave={() => { if (isPlaying) setControlsVisible(false) }}
+      >
       {/* Video — mounted only after first click, autoPlay since it was a user gesture */}
       <video
         ref={videoRef}
@@ -576,6 +706,20 @@ function AttachmentVideo({ item, maxDim }: { item: RenderItem; maxDim: number })
         muted={muted}
       />
 
+      {/* Top-right download button */}
+      <a
+        href={meta.url}
+        download={meta.name}
+        className={cn(
+          'absolute right-2 top-2 z-40 flex h-9 w-9 items-center justify-center rounded-md bg-black/65 text-white shadow-lg backdrop-blur-sm transition-opacity hover:bg-black/80',
+          controlsVisible || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none',
+        )}
+        onClick={(e) => e.stopPropagation()}
+        title={`Download ${meta.name}`}
+      >
+        <Download className="h-5 w-5" />
+      </a>
+
       {/* Controls overlay — fades out 2.5 s after last mouse move while playing */}
       <div
         className={cn(
@@ -584,97 +728,115 @@ function AttachmentVideo({ item, maxDim }: { item: RenderItem; maxDim: number })
         )}
       >
         {/* Gradient backdrop */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/35 to-transparent pointer-events-none" />
 
-        <div className="relative px-3 pb-2.5 pt-8">
-          {/* Seek bar */}
-          <div className="relative py-1 mb-1 group/seek cursor-pointer">
-            <div className="relative h-[3px]">
-              <div className="absolute inset-0 rounded-full bg-white/25" />
-              <div className="absolute inset-y-0 left-0 rounded-full bg-white/45" style={{ width: `${bufPct}%` }} />
-              <div className="absolute inset-y-0 left-0 rounded-full bg-primary" style={{ width: `${pct}%` }} />
-              {/* Thumb dot — appears on hover */}
-              <div
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-white shadow opacity-0 group-hover/seek:opacity-100 transition-opacity pointer-events-none"
-                style={{ left: `${pct}%` }}
-              />
-            </div>
-            {/* Transparent range input covers the seek bar for interaction */}
-            <input
-              type="range"
-              min={0}
-              max={duration || 100}
-              step={0.1}
-              value={currentTime}
-              onChange={handleSeek}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-          </div>
-
+        <div className="relative px-2.5 pb-2 pt-10">
           {/* Controls row */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             {/* Play / Pause */}
             <button
               onClick={togglePlay}
-              className="flex items-center justify-center w-7 h-7 rounded text-white hover:text-white/70 transition-colors shrink-0"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-white transition-colors hover:text-white/70"
+              aria-label={isPlaying ? 'Pause' : 'Play'}
             >
               {isPlaying
-                ? <Pause className="w-4 h-4 fill-white stroke-none" />
-                : <Play className="w-4 h-4 fill-white stroke-none" />}
+                ? <Pause className="h-5 w-5 fill-white stroke-none" />
+                : <Play className="h-5 w-5 fill-white stroke-none" />}
             </button>
 
-            {/* Mute toggle */}
-            <button
-              onClick={toggleMute}
-              className="flex items-center justify-center w-7 h-7 rounded text-white hover:text-white/70 transition-colors shrink-0"
+            {/* Seek bar */}
+            <div
+              className="group/seek relative min-w-0 flex-1 cursor-pointer py-2"
+              onMouseMove={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
+                setSeekPreview({ left: ratio * 100, time: ratio * (duration || 0) })
+              }}
+              onMouseLeave={() => setSeekPreview(null)}
             >
-              {(muted || volume === 0)
-                ? <VolumeX className="w-4 h-4" />
-                : volume < 0.5
-                  ? <Volume1 className="w-4 h-4" />
-                  : <Volume2 className="w-4 h-4" />}
-            </button>
+              {seekPreview && duration > 0 && (
+                <div
+                  className="pointer-events-none absolute bottom-7 z-20 -translate-x-1/2 rounded bg-black/85 px-2 py-1 text-xs font-semibold text-white shadow"
+                  style={{ left: `${seekPreview.left}%` }}
+                >
+                  {formatTime(seekPreview.time)}
+                </div>
+              )}
+              <div className="relative h-1">
+                <div className="absolute inset-0 rounded-full bg-white/25" />
+                <div className="absolute inset-y-0 left-0 rounded-full bg-white/45" style={{ width: `${bufPct}%` }} />
+                <div className="absolute inset-y-0 left-0 rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                <div
+                  className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow transition-opacity group-hover/seek:opacity-100"
+                  style={{ left: `${pct}%` }}
+                />
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={duration || 100}
+                step={0.1}
+                value={currentTime}
+                onChange={handleSeek}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                aria-label={`${formatTime(currentTime)} / ${formatTime(duration)}`}
+              />
+            </div>
 
-            {/* Volume slider */}
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={muted ? 0 : volume}
-              onChange={handleVolumeChange}
-              className="w-16 shrink-0 cursor-pointer"
-              style={{ accentColor: 'white' }}
-            />
-
-            {/* Time */}
-            <span className="text-[11px] text-white/80 tabular-nums ml-1.5 flex-1 whitespace-nowrap">
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </span>
-
-            {/* Download */}
-            <a
-              href={meta.url}
-              download={meta.name}
-              className="flex items-center justify-center w-7 h-7 rounded text-white/60 hover:text-white transition-colors shrink-0"
-              onClick={(e) => e.stopPropagation()}
-              title={`Download ${meta.name}`}
+            {/* Mute + vertical volume */}
+            <div
+              className="relative flex h-7 w-7 shrink-0 items-center justify-center"
+              onMouseEnter={() => setVolumeVisible(true)}
+              onMouseLeave={() => setVolumeVisible(false)}
             >
-              <Download className="w-4 h-4" />
-            </a>
+              <div
+                className={cn(
+                  'absolute bottom-7 left-1/2 flex h-32 w-8 -translate-x-1/2 items-center justify-center rounded-full bg-black/60 py-3 shadow-lg backdrop-blur-sm transition-opacity',
+                  volumeVisible ? 'opacity-100' : 'pointer-events-none opacity-0',
+                )}
+              >
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={muted ? 0 : volume}
+                  onChange={handleVolumeChange}
+                  className="h-24 w-24 cursor-pointer"
+                  style={{
+                    accentColor: 'rgb(99 102 241)',
+                    transform: 'rotate(-90deg)',
+                  }}
+                  aria-label="Volume"
+                />
+              </div>
+              <button
+                onClick={toggleMute}
+                className="flex h-7 w-7 items-center justify-center rounded text-white transition-colors hover:text-white/70"
+                aria-label={muted || volume === 0 ? 'Unmute' : 'Mute'}
+              >
+                {(muted || volume === 0)
+                  ? <VolumeX className="h-5 w-5" />
+                  : volume < 0.5
+                    ? <Volume1 className="h-5 w-5" />
+                    : <Volume2 className="h-5 w-5" />}
+              </button>
+            </div>
 
             {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
-              className="flex items-center justify-center w-7 h-7 rounded text-white/60 hover:text-white transition-colors shrink-0"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-white transition-colors hover:text-white/70"
               title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
             >
-              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+              {isFullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}
             </button>
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </AttachmentContextMenu>
   )
 }
 
@@ -722,12 +884,14 @@ interface Props {
   attachments: DtoAttachment[] | null | undefined
   pendingAttachments?: PendingUploadAttachment[] | null | undefined
   maxWidth?: number
+  renderMessageContextMenu?: (mediaCopyItems: React.ReactNode) => React.ReactNode
 }
 
 export default function MessageAttachments({
   attachments,
   pendingAttachments,
   maxWidth = MAX_DIM,
+  renderMessageContextMenu,
 }: Props) {
   if (pendingAttachments?.length) {
     return (
@@ -747,12 +911,12 @@ export default function MessageAttachments({
     <div className="mt-1 flex flex-col gap-1">
       {groups.map((group, gi) => {
         if (group.type === 'gallery') {
-          return <GalleryGroup key={gi} items={group.items} maxDim={maxWidth} />
+          return <GalleryGroup key={gi} items={group.items} maxDim={maxWidth} renderMessageContextMenu={renderMessageContextMenu} />
         }
         const { item } = group
         switch (item.meta.kind) {
-          case 'image': return <AttachmentImage key={gi} item={item} maxDim={maxWidth} />
-          case 'video': return <AttachmentVideo key={gi} item={item} maxDim={maxWidth} />
+          case 'image': return <AttachmentImage key={gi} item={item} maxDim={maxWidth} renderMessageContextMenu={renderMessageContextMenu} />
+          case 'video': return <AttachmentVideo key={gi} item={item} maxDim={maxWidth} renderMessageContextMenu={renderMessageContextMenu} />
           case 'audio': return <AttachmentAudio key={gi} item={item} />
           default:      return <AttachmentFile  key={gi} item={item} />
         }

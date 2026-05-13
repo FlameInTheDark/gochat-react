@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, type ComponentType } from 'react'
+import { useState, useRef, useEffect, useMemo, type ComponentType, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -355,9 +355,10 @@ export default function MessageItem({
   })
 
   // Calculate effective permissions
+  const guildPermissions = guild?.permissions ?? 0
   const userPermissions = currentMember && roles.length > 0
-    ? calculateEffectivePermissions(currentMember, roles)
-    : 0
+    ? calculateEffectivePermissions(currentMember, roles, guildPermissions)
+    : guildPermissions
 
   const removeMessage = useMessageStore((s) => s.removeMessage)
   const updateMessage = useMessageStore((s) => s.updateMessage)
@@ -380,7 +381,8 @@ export default function MessageItem({
   // Check if current user is the server owner
   const isOwner = currentUser && guild?.owner !== undefined && String(guild.owner) === String(currentUser.id)
 
-  const canManageMessages = isOwner || hasPermission(userPermissions, PermissionBits.MANAGE_MESSAGES)
+  const isAdmin = hasPermission(userPermissions, PermissionBits.ADMINISTRATOR)
+  const canManageMessages = isOwner || isAdmin || hasPermission(userPermissions, PermissionBits.MANAGE_MESSAGES)
   const canEditMessage = hasRealMessageId && !isPendingMessage && !isInformationalMessage && isOwn && allowEdit
   const canDeleteMessage = hasRealMessageId && !isPendingMessage && allowDelete && (isOwn || canManageMessages)
 
@@ -439,6 +441,7 @@ export default function MessageItem({
   const fullTimestamp = createdAtDate.toLocaleString()
   const isEdited = !!message.updated_at &&
     new Date(message.updated_at).getTime() - createdAtDate.getTime() > 5000
+  const hasTextContent = !!message.content?.trim()
   const quickReactionEmojis = useMemo(() => {
     const picked: string[] = []
     const seen = new Set<string>()
@@ -647,6 +650,7 @@ export default function MessageItem({
   function renderMessageActionMenu(
     Item: ComponentType<any>,
     Separator: ComponentType<any>,
+    copySegmentExtra?: ReactNode,
   ) {
     return (
       <>
@@ -720,10 +724,13 @@ export default function MessageItem({
           <Separator />
         )}
 
-        <Item onClick={handleCopy} className="gap-2">
-          <Copy className="w-4 h-4" />
-          {t('messageItem.copyText')}
-        </Item>
+        {copySegmentExtra}
+        {hasTextContent && (
+          <Item onClick={handleCopy} className="gap-2">
+            <Copy className="w-4 h-4" />
+            {t('messageItem.copyText')}
+          </Item>
+        )}
         {hasRealMessageId && (
           <Item
             onClick={() => { void navigator.clipboard.writeText(messageId) }}
@@ -1130,6 +1137,9 @@ export default function MessageItem({
                     attachments={message.attachments}
                     pendingAttachments={pendingAttachmentDrafts}
                     maxWidth={attachmentMaxWidth}
+                    renderMessageContextMenu={(mediaCopyItems) =>
+                      renderMessageActionMenu(ContextMenuItem, ContextMenuSeparator, mediaCopyItems)
+                    }
                   />
                   {/* Message embeds (rich, video, image, link, article, gifv) */}
                   {backendEmbeds.length > 0 && (

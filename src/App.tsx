@@ -1,4 +1,5 @@
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import { useClientMode } from '@/hooks/useClientMode'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from '@/lib/queryClient'
@@ -77,6 +78,22 @@ const router = createBrowserRouter([
 ], { basename: import.meta.env.VITE_BASE_PATH || '/' })
 
 export default function App() {
+  useEffect(() => {
+    function normalizeHashRoute() {
+      const hash = window.location.hash
+      if (!hash.startsWith('#/')) return
+
+      const target = hash.slice(1)
+      if (!target.startsWith('/app') && !target.startsWith('/invite')) return
+
+      void router.navigate(target, { replace: true })
+    }
+
+    normalizeHashRoute()
+    window.addEventListener('hashchange', normalizeHashRoute)
+    return () => window.removeEventListener('hashchange', normalizeHashRoute)
+  }, [])
+
   function handleAuthProblemLogout() {
     performLogout()
     void router.navigate('/')
