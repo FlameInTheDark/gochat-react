@@ -145,10 +145,11 @@ export default function VoicePanel() {
   const pingValue = connectionState === 'connected' && displayPing > 0 ? displayPing : null
 
   const navigate = useNavigate()
+  const isDMCall = guildId === '@me'
 
   function handleChannelClick() {
     if (guildId && channelId) {
-      void navigate(`/app/${guildId}/${channelId}`)
+      void navigate(isDMCall ? `/app/@me/${channelId}` : `/app/${guildId}/${channelId}`)
     }
   }
 
@@ -278,7 +279,7 @@ export default function VoicePanel() {
                     onClick={handleChannelClick}
                     className="min-w-0 text-[10px] text-muted-foreground truncate leading-tight hover:text-foreground hover:underline transition-colors text-left block"
                   >
-                    {guildName ? `${guildName} / ${channelName ?? channelId}` : (channelName ?? channelId)}
+                    {isDMCall ? (channelName ?? 'Direct call') : guildName ? `${guildName} / ${channelName ?? channelId}` : (channelName ?? channelId)}
                   </button>
                 </div>
               </div>

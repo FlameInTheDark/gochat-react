@@ -8,6 +8,7 @@ import { useReadStateStore } from '@/stores/readStateStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useStreamStore } from '@/stores/streamStore'
 import { useAuthStore } from '@/stores/authStore'
+import { useDMCallStore } from '@/stores/dmCallStore'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { playMentionSound } from '@/lib/sounds'
 import { refreshAuthToken } from '@/lib/authRefresh'
@@ -318,6 +319,55 @@ interface WsPayload {
   op: number
   t?: number
   d?: unknown
+}
+
+interface RawDMCallSummary {
+  call_id?: string | number
+  channel_id?: string | number
+  caller_id?: string | number
+  recipient_id?: string | number
+  region?: string
+  participants?: Record<string, string | number>
+  started_at?: number
+  solo_since?: number
+  dismissed?: boolean
+}
+
+function normalizeDMCall(raw?: RawDMCallSummary) {
+  const participants: Record<string, number> = {}
+  for (const [userId, joinedAt] of Object.entries(raw?.participants ?? {})) {
+    participants[String(userId)] = Number(joinedAt ?? 0)
+  }
+  return {
+    callId: String(raw?.call_id ?? ''),
+    channelId: String(raw?.channel_id ?? ''),
+    callerId: String(raw?.caller_id ?? ''),
+    recipientId: String(raw?.recipient_id ?? ''),
+    region: raw?.region,
+    participants,
+    startedAt: Number(raw?.started_at ?? 0),
+    soloSince: raw?.solo_since ? Number(raw.solo_since) : undefined,
+    dismissed: raw?.dismissed ?? false,
+  }
+}
+
+function handleDMCallUpdate(raw: unknown, options?: { incoming?: boolean }) {
+  const eventData = raw as { call?: RawDMCallSummary; user_id?: string | number } | undefined
+  const call = normalizeDMCall(eventData?.call)
+  if (!call.callId || !call.channelId) return
+
+  useDMCallStore.getState().upsertCall(call)
+
+  const currentUserId = String(useAuthStore.getState().user?.id ?? '')
+  if (
+    options?.incoming
+    && currentUserId
+    && call.recipientId === currentUserId
+    && call.callerId !== currentUserId
+    && !call.dismissed
+  ) {
+    useDMCallStore.getState().setIncoming(call.channelId)
+  }
 }
 
 interface WsHelloData {
@@ -1080,6 +1130,80 @@ function handleMessage(event: MessageEvent) {
     // t=406: User Profile Update
     if (t === 406) {
       window.dispatchEvent(new CustomEvent('ws:user_update', { detail: d }))
+      return
+    }
+
+    // t=408..412: private DM voice call updates
+    if (t === 408) {
+      handleDMCallUpdate(d, { incoming: true })
+      window.dispatchEvent(new CustomEvent('ws:dm_call_started', { detail: d }))
+      return
+    }
+    if (t === 409) {
+      handleDMCallUpdate(d)
+      window.dispatchEvent(new CustomEvent('ws:dm_call_joined', { detail: d }))
+      return
+    }
+    if (t === 410) {
+      handleDMCallUpdate(d)
+      const call = normalizeDMCall((d as { call?: RawDMCallSummary } | undefined)?.call)
+      if (call.channelId && call.dismissed) useDMCallStore.getState().markDismissed(call.channelId)
+      window.dispatchEvent(new CustomEvent('ws:dm_call_declined', { detail: d }))
+      return
+    }
+    if (t === 411) {
+      handleDMCallUpdate(d)
+      window.dispatchEvent(new CustomEvent('ws:dm_call_left', { detail: d }))
+      return
+    }
+    if (t === 412) {
+      const call = normalizeDMCall((d as { call?: RawDMCallSummary } | undefined)?.call)
+      if (call.channelId) useDMCallStore.getState().removeCall(call.channelId)
+      window.dispatchEvent(new CustomEvent('ws:dm_call_ended', { detail: d }))
+      return
+    }
+
+    // t=413/414: private DM call stream updates
+    if (t === 413) {
+      const eventData = d as {
+        call?: RawDMCallSummary
+        channel_id?: string | number
+        user_id?: string | number
+        stream?: {
+          id?: string | number
+          channel_id?: string | number
+          source_type?: 'screen' | 'application'
+          audio_mode?: 'desktop' | 'application' | 'none'
+          started_at?: number
+        }
+      } | undefined
+      const channelId = eventData?.channel_id ?? eventData?.call?.channel_id ?? eventData?.stream?.channel_id
+      if (eventData?.stream?.id != null && eventData.user_id != null && channelId != null) {
+        useStreamStore.getState().upsertChannelStream({
+          id: String(eventData.stream.id),
+          ownerUserId: String(eventData.user_id),
+          channelId: String(channelId),
+          sourceType: eventData.stream.source_type ?? 'screen',
+          audioMode: eventData.stream.audio_mode ?? 'none',
+          startedAt: Number(eventData.stream.started_at ?? 0),
+        })
+      }
+      window.dispatchEvent(new CustomEvent('ws:member_start_stream', { detail: d }))
+      window.dispatchEvent(new CustomEvent('ws:dm_call_stream_started', { detail: d }))
+      return
+    }
+    if (t === 414) {
+      const eventData = d as {
+        call?: RawDMCallSummary
+        channel_id?: string | number
+        stream_id?: string | number
+      } | undefined
+      const channelId = eventData?.channel_id ?? eventData?.call?.channel_id
+      if (channelId != null && eventData?.stream_id != null) {
+        useStreamStore.getState().removeChannelStream(String(channelId), String(eventData.stream_id))
+      }
+      window.dispatchEvent(new CustomEvent('ws:member_stop_stream', { detail: d }))
+      window.dispatchEvent(new CustomEvent('ws:dm_call_stream_stopped', { detail: d }))
       return
     }
   }

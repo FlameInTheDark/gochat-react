@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Users, ChevronLeft, Search, X } from 'lucide-react'
+import { Users, ChevronLeft, Search, X, Phone, Maximize2, Minimize2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { activateChannel, deactivateChannel } from '@/services/wsService'
 import ChatAttachmentDropZone from '@/components/chat/ChatAttachmentDropZone'
 import MessageList from '@/components/chat/MessageList'
@@ -17,6 +18,12 @@ import type { DtoMember, DtoMessage } from '@/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { useClientMode } from '@/hooks/useClientMode'
+import { dmCallApi } from '@/services/dmCallApi'
+import { joinVoice, leaveVoice } from '@/services/voiceService'
+import { syncChannelStreams } from '@/services/streamService'
+import { useDMCallStore } from '@/stores/dmCallStore'
+import { useVoiceStore } from '@/stores/voiceStore'
+import VoiceCallStage, { type VoiceCallParticipant } from '@/components/voice/VoiceCallStage'
 
 interface DMPageLocationState {
   jumpToMessageId?: string
@@ -35,6 +42,8 @@ export default function DMPage() {
   const jumpBehaviorFromState = locationState?.jumpBehavior ?? 'direct-scroll'
   const jumpPositionFromState = locationState?.jumpToMessagePosition ?? null
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null)
+  const [callPanelHeight, setCallPanelHeight] = useState(360)
+  const [isCallChatHidden, setIsCallChatHidden] = useState(false)
 
   // Derive jump from location state synchronously so useMessagePagination sees it
   // on the same render that channelId changes, preventing a spurious loadInitialWindow.
@@ -128,6 +137,11 @@ export default function DMPage() {
   const searchBarRef = useRef<SearchBarHandle>(null)
   const isMobile = useClientMode() === 'mobile'
   const messageInputRef = useRef<MessageInputHandle | null>(null)
+  const activeCall = useDMCallStore((state) => channelId ? state.calls[channelId] : null)
+  const upsertCall = useDMCallStore((state) => state.upsertCall)
+  const voice = useVoiceStore()
+  const isInThisCall = voice.guildId === '@me' && voice.channelId === channelId
+  const isChatVisible = !activeCall || !isCallChatHidden
 
   const clearSearch = useCallback(() => {
     setSearchResults([])
@@ -210,6 +224,76 @@ export default function DMPage() {
   const avatarInitial = (isGroupDm ? (dmChannel?.name ?? 'G') : (participantUser?.name ?? displayName))
     .replace('@', '').charAt(0).toUpperCase()
 
+  async function handleStartOrJoinCall() {
+    if (!channelId || isGroupDm) return
+    try {
+      const response = activeCall
+        ? await dmCallApi.joinCall(channelId)
+        : await dmCallApi.startCall(channelId)
+      upsertCall(response.call)
+      await joinVoice(
+        '@me',
+        channelId,
+        displayName,
+        response.sfuUrl,
+        response.sfuToken,
+        'Direct Messages',
+        response.region,
+        { privateCall: true },
+      )
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to start call')
+    }
+  }
+
+  async function handleLeaveCall() {
+    try {
+      await leaveVoice()
+    } catch {
+      toast.error('Unable to leave call')
+    }
+  }
+
+  const handleCallPanelResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = callPanelHeight
+    const pointerId = event.pointerId
+    event.currentTarget.setPointerCapture(pointerId)
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const maxHeight = Math.max(280, Math.round(window.innerHeight * 0.72))
+      const nextHeight = Math.max(260, Math.min(maxHeight, startHeight + moveEvent.clientY - startY))
+      setCallPanelHeight(nextHeight)
+    }
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      window.removeEventListener('pointercancel', handlePointerUp)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp, { once: true })
+    window.addEventListener('pointercancel', handlePointerUp, { once: true })
+  }, [callPanelHeight])
+
+  useEffect(() => {
+    if (!channelId || !isInThisCall) return
+    void syncChannelStreams('@me', channelId)
+  }, [channelId, isInThisCall])
+
+  const callParticipants = useMemo<VoiceCallParticipant[]>(() => {
+    const items: VoiceCallParticipant[] = []
+    if (participantId && participantUser) {
+      items.push({
+        id: participantId,
+        name: participantUser.name ?? displayName.replace(/^@/, ''),
+        avatarUrl: participantUser.avatar?.url,
+      })
+    }
+    return items
+  }, [displayName, participantId, participantUser])
+
   if (!channelId) return null
 
   return (
@@ -239,6 +323,15 @@ export default function DMPage() {
 
         {isMobile && (
           <div className="ml-auto flex items-center gap-1">
+            {!isGroupDm && (
+              <button
+                onClick={() => void handleStartOrJoinCall()}
+                title={activeCall ? 'Join call' : 'Start call'}
+                className="w-9 h-9 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
+              >
+                <Phone className="w-4 h-4" />
+              </button>
+            )}
             <button
               onClick={() => {
                 const opening = !mobileSearchOpen
@@ -264,6 +357,15 @@ export default function DMPage() {
 
         {!isMobile && (
           <div className="ml-auto flex items-center gap-2">
+            {!isGroupDm && (
+              <button
+                onClick={() => void handleStartOrJoinCall()}
+                title={activeCall ? 'Join call' : 'Start call'}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              >
+                <Phone className="h-4 w-4" />
+              </button>
+            )}
             <SearchBar
               ref={searchBarRef}
               className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
@@ -301,20 +403,64 @@ export default function DMPage() {
             messageInputRef.current?.focusEditor()
           }}
         >
-          <MessageList
-            key={channelId}
-            rows={rows}
-            mode={mode}
-            isLoadingInitial={isLoadingInitial}
-            jumpTargetRowKey={jumpTargetRowKey}
-            focusTargetRowKey={focusTargetRowKey}
-            highlightRequest={effectiveJumpRequest}
-            onHighlightHandled={handleJumpHandled}
-            onLoadGap={loadGap}
-            onJumpToPresent={jumpToPresent}
-            onAckLatest={ackLatest}
-          />
-          <MessageInput ref={messageInputRef} channelId={channelId} channelName={displayName} />
+          {activeCall && (
+            <div
+              className={cn(
+                'relative overflow-hidden border-b border-sidebar-border',
+                isCallChatHidden ? 'flex-1' : 'shrink-0',
+              )}
+              style={isCallChatHidden ? undefined : { height: callPanelHeight }}
+            >
+              <VoiceCallStage
+                guildId="@me"
+                channelId={channelId}
+                title={`Voice call with ${displayName}`}
+                region={activeCall.region}
+                participants={callParticipants}
+                onJoin={handleStartOrJoinCall}
+                onLeave={handleLeaveCall}
+                showHeader={false}
+                className="h-full min-h-0 border-b-0"
+              />
+              <button
+                type="button"
+                onClick={() => setIsCallChatHidden((hidden) => !hidden)}
+                title={isCallChatHidden ? 'Show chat' : 'Hide chat'}
+                className="absolute right-3 top-3 z-30 flex h-8 w-8 items-center justify-center rounded-full bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
+              >
+                {isCallChatHidden ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+              </button>
+              {!isCallChatHidden && (
+                <div
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label="Resize call panel"
+                  onPointerDown={handleCallPanelResizePointerDown}
+                  className="absolute inset-x-0 bottom-0 z-20 flex h-2 cursor-row-resize items-center justify-center bg-transparent transition-colors hover:bg-primary/10"
+                >
+                  <div className="h-0.5 w-12 rounded-full bg-border" />
+                </div>
+              )}
+            </div>
+          )}
+          {isChatVisible && (
+            <>
+              <MessageList
+                key={channelId}
+                rows={rows}
+                mode={mode}
+                isLoadingInitial={isLoadingInitial}
+                jumpTargetRowKey={jumpTargetRowKey}
+                focusTargetRowKey={focusTargetRowKey}
+                highlightRequest={effectiveJumpRequest}
+                onHighlightHandled={handleJumpHandled}
+                onLoadGap={loadGap}
+                onJumpToPresent={jumpToPresent}
+                onAckLatest={ackLatest}
+              />
+              <MessageInput ref={messageInputRef} channelId={channelId} channelName={displayName} />
+            </>
+          )}
         </ChatAttachmentDropZone>
 
         {/* Search results panel — full-screen overlay on mobile, side panel on desktop */}

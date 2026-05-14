@@ -11,6 +11,7 @@ import JoinServerModal from '@/components/modals/JoinServerModal'
 import AppSettingsModal from '@/components/modals/AppSettingsModal'
 import ServerSettingsModal from '@/components/modals/ServerSettingsModal'
 import ChannelSettingsModal from '@/components/modals/ChannelSettingsModal'
+import DMCallIncomingModal from '@/components/dm/DMCallIncomingModal'
 import UserProfilePanel from '@/components/layout/UserProfilePanel'
 import type { DtoUser } from '@/types'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
@@ -29,6 +30,8 @@ import { useAuthProblemStore } from '@/stores/authProblemStore'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { compareSnowflakes } from '@/lib/snowflake'
 import { voiceSettingsFromDevices } from '@/lib/voiceSettings'
+import { normalizeDMCall, type RawDMCallSummary } from '@/services/dmCallApi'
+import { useDMCallStore } from '@/stores/dmCallStore'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 
@@ -63,6 +66,7 @@ function AuthenticatedApp() {
       <AppSettingsModal />
       <ServerSettingsModal />
       <ChannelSettingsModal />
+      <DMCallIncomingModal />
       <UserProfilePanel />
     </AppShell>
   )
@@ -191,6 +195,20 @@ export default function AppLayout() {
         // determine where to scroll on channel open (unread separator position).
         if (settingsRes?.data) {
           useReadStateStore.getState().setFromSettings(settingsRes.data)
+
+          const rawDMCalls = ((settingsRes.data as unknown as { dm_calls?: RawDMCallSummary[] }).dm_calls ?? [])
+          const dmCalls = rawDMCalls
+            .map(normalizeDMCall)
+            .filter((call) => call.callId && call.channelId)
+          const currentUserId = String(userRes.data.id ?? '')
+          const dmCallStore = useDMCallStore.getState()
+          dmCallStore.setCalls(dmCalls)
+          const incoming = dmCalls.find((call) =>
+            call.recipientId === currentUserId
+            && call.callerId !== currentUserId
+            && !call.dismissed
+          )
+          dmCallStore.setIncoming(incoming?.channelId ?? null)
 
           // Seed mention badges from the `mentions` snapshot in the settings response.
           // The Go server sends PascalCase keys (ChannelId, MessageId) at runtime,

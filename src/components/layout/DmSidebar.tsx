@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils'
 import { usePresenceStore } from '@/stores/presenceStore'
 import { addPresenceSubscription } from '@/services/wsService'
 import UserArea from './UserArea'
+import VoicePanel from '@/components/voice/VoicePanel'
 import { useTranslation } from 'react-i18next'
 import { useClientMode } from '@/hooks/useClientMode'
 
@@ -178,6 +179,7 @@ export default function DmSidebar() {
       {/* Add friend tab — mobile only */}
       {isMobile && mobileTab === 'add' && <MobileAddFriend />}
 
+      <VoicePanel />
       <Separator />
       <div className="p-2 shrink-0">
         <UserArea />

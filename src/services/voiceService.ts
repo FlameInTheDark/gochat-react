@@ -43,6 +43,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
 import { handleVoiceDisconnect } from './streamService'
+import { dmCallApi } from './dmCallApi'
 import { sendRaw, sendPresenceStatus, setPresenceSelfVideo, setPresenceVoiceChannel } from './wsService'
 import {
   buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression,
@@ -93,6 +94,7 @@ let localVideoSender: RTCRtpSender | null = null
 let bindingAliveTimer: number | null = null
 let sfuHeartbeatTimer: number | null = null
 let currentChannelId: string | null = null
+let currentPrivateCall = false
 
 // v=2 gateway session state
 let sfuSessionId: string | null = null
@@ -2071,6 +2073,7 @@ function cleanupDenoiserNode() {
 
 function cleanup(sendPresenceClear = true) {
   vlog('cleanup: tearing down voice connection')
+  const wasPrivateCall = currentPrivateCall
   stopInputMonitor()
 
   if (peerConnection) {
@@ -2175,6 +2178,7 @@ function cleanup(sendPresenceClear = true) {
   // Save before nulling so we can clear the presence store for this channel
   const savedChannelId = currentChannelId
   currentChannelId = null
+  currentPrivateCall = false
 
   if (memberEventCleanup) {
     memberEventCleanup()
@@ -2186,7 +2190,7 @@ function cleanup(sendPresenceClear = true) {
     usePresenceStore.getState().removeUserFromVoiceChannel(savedChannelId, currentUserId())
   }
 
-  if (sendPresenceClear) {
+  if (sendPresenceClear && !wasPrivateCall) {
     setPresenceVoiceChannel(null)
     setPresenceSelfVideo(false)
     // Send explicit voice_channel_id: 0 — some backends use patch semantics and
@@ -2215,6 +2219,7 @@ export async function joinVoice(
   sfuToken: string,
   guildName?: string,
   voiceRegion?: string,
+  options?: { privateCall?: boolean },
 ): Promise<void> {
   vlog('joinVoice: guildId=%s channelId=%s channelName=%s', guildId, channelId, channelName)
   vlog('joinVoice: sfuUrl=%s', sfuUrl)
@@ -2226,6 +2231,7 @@ export async function joinVoice(
   }
 
   currentChannelId = channelId
+  currentPrivateCall = options?.privateCall ?? false
 
   // Reset DAVE state for new session
   daveMode = 'passthrough'
@@ -2368,15 +2374,17 @@ export async function joinVoice(
 
   // Periodically refresh the SFU route binding via the main WS gateway
   bindingAliveTimer = window.setInterval(() => {
-    sendRaw({ op: 7, t: 509, d: { channel: BigInt(channelId) } })
+    sendRaw({ op: 7, t: 509, d: { channel: BigInt(channelId), dm_call: currentPrivateCall } })
     vlog('binding-alive sent for channelId=%s', channelId)
   }, BINDING_ALIVE_INTERVAL)
 
   // Update voice store and presence
   useVoiceStore.getState().setVoiceChannel(guildId, channelId, channelName, guildName, sfuUrl, voiceRegion)
-  setPresenceVoiceChannel(channelId)
-  setPresenceSelfVideo(false)
-  sendPresenceStatus('online')
+  if (!currentPrivateCall) {
+    setPresenceVoiceChannel(channelId)
+    setPresenceSelfVideo(false)
+    sendPresenceStatus('online')
+  }
 
   // Listen for other users joining/leaving this voice channel via main gateway events
   const handleMemberJoinVoice = (e: Event) => {
@@ -2464,8 +2472,12 @@ export async function joinVoice(
 
 export async function leaveVoice() {
   vlog('leaveVoice: disconnecting')
-  if (currentChannelId) {
-    await handleVoiceDisconnect(currentChannelId)
+  const leavingChannelId = currentChannelId
+  const leavingPrivateCall = currentPrivateCall
+  if (leavingChannelId && !leavingPrivateCall) {
+    await handleVoiceDisconnect(leavingChannelId)
+  } else if (leavingChannelId && leavingPrivateCall) {
+    await dmCallApi.leaveCall(leavingChannelId).catch(() => undefined)
   }
   if (sfuSocket) {
     sfuSocket.close()

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, memo } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query'
 import {
   LogOut,
   Settings,
@@ -12,6 +12,7 @@ import {
   Folder,
   Plus,
   Compass,
+  PhoneCall,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -64,12 +65,14 @@ import { useUiStore } from '@/stores/uiStore'
 import { useFolderStore, type GuildFolder } from '@/stores/folderStore'
 import { useUnreadStore } from '@/stores/unreadStore'
 import { useMentionStore } from '@/stores/mentionStore'
+import { useDMCallStore } from '@/stores/dmCallStore'
 import { cn } from '@/lib/utils'
-import type { DtoGuild } from '@/types'
+import type { DtoGuild, DtoUser } from '@/types'
 import type { DtoRole, DtoMember } from '@/client'
 import { createPermissionChecker } from '@/lib/permissionChecker'
 import { useNotificationSettings } from '@/hooks/useNotificationSettings'
 import { NotificationsSubmenu } from './NotificationsSubmenu'
+import type { DMCallSummary } from '@/services/dmCallApi'
 import Logo from "@/assets/logo.svg?react";
 
 const TOP_LEVEL_DROP_TOP = 'sidebar-top-level-drop-top'
@@ -277,6 +280,57 @@ function UnreadPill({
             : `h-0 opacity-0 ${groupClass}:h-5 ${groupClass}:opacity-100`,
       )}
     />
+  )
+}
+
+function DMCallRailIcon({
+  call,
+  peer,
+  isActive,
+  onNavigate,
+}: {
+  call: DMCallSummary
+  peer?: DtoUser | null
+  isActive: boolean
+  onNavigate: () => void
+}) {
+  const label = peer?.name ? `Call with ${peer.name}` : 'Active DM call'
+  const fallback = (peer?.name ?? '?').charAt(0).toUpperCase()
+
+  return (
+    <div className="relative flex w-full items-center justify-center group/dm-call">
+      <UnreadPill isActive={isActive} isUnread={!isActive} groupClass="group/dm-call" />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={onNavigate}
+            aria-label={label}
+            className={cn(
+              'relative h-12 w-12 shrink-0 transition-all active:scale-95',
+              'hover:brightness-110',
+            )}
+          >
+            <span
+              className={cn(
+                'block h-12 w-12 overflow-hidden squircle bg-muted transition-all',
+                isActive && 'bg-indigo-500',
+              )}
+            >
+              <Avatar className="h-12 w-12 rounded-none squircle">
+                <AvatarImage src={peer?.avatar?.url} alt={peer?.name ?? ''} className="object-cover" />
+                <AvatarFallback className="rounded-none bg-muted text-sm font-bold text-muted-foreground">
+                  {fallback}
+                </AvatarFallback>
+              </Avatar>
+            </span>
+            <span className="absolute bottom-0 right-0 flex h-5 w-5 items-center justify-center rounded-full border-2 border-sidebar bg-emerald-500 text-white">
+              <PhoneCall className="h-3 w-3" />
+            </span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">{label}</TooltipContent>
+      </Tooltip>
+    </div>
   )
 }
 
@@ -1448,6 +1502,26 @@ export default function ServerSidebar() {
   const activeFolderGuilds = activeFolder
     ? activeFolder.guildIds.map((id) => guildById.get(id)).filter((g): g is DtoGuild => !!g)
     : []
+  const currentUserId = String(currentUser?.id ?? '')
+  const activeDMCallMap = useDMCallStore((state) => state.calls)
+  const sortedActiveDMCalls = useMemo(
+    () => Object.values(activeDMCallMap).sort((a, b) => b.startedAt - a.startedAt),
+    [activeDMCallMap],
+  )
+  const dmCallPeerIds = useMemo(
+    () => sortedActiveDMCalls.map((call) => (
+      call.callerId === currentUserId ? call.recipientId : call.callerId
+    )),
+    [sortedActiveDMCalls, currentUserId],
+  )
+  const dmCallPeerQueries = useQueries({
+    queries: dmCallPeerIds.map((peerId) => ({
+      queryKey: ['user', peerId],
+      queryFn: () => userApi.userUserIdGet({ userId: peerId }).then((r) => r.data ?? null),
+      enabled: !!peerId,
+      staleTime: 5 * 60 * 1000,
+    })),
+  })
   const dmActive = location.pathname === '/app/@me' || location.pathname.startsWith('/app/@me/')
   const discoveryActive = location.pathname === '/app/discovery'
 
@@ -1463,6 +1537,19 @@ export default function ServerSidebar() {
         onDragEnd={onDragEnd}
       >
         <div className="flex flex-col w-[72px] bg-sidebar border-r border-sidebar-border items-center py-3 gap-3 shrink-0 overflow-y-auto overflow-x-hidden scrollbar-none">
+          {sortedActiveDMCalls.map((call, index) => {
+            const isCallActive = location.pathname === `/app/@me/${call.channelId}`
+            return (
+              <DMCallRailIcon
+                key={call.channelId}
+                call={call}
+                peer={(dmCallPeerQueries[index]?.data as DtoUser | null | undefined) ?? null}
+                isActive={isCallActive}
+                onNavigate={() => navigate(`/app/@me/${call.channelId}`)}
+              />
+            )
+          })}
+
           {/* DMs button */}
           <div className="relative flex w-full items-center justify-center group/dm">
             <UnreadPill isActive={dmActive} isUnread={false} groupClass="group/dm" />

@@ -15,7 +15,7 @@ import { useAppearanceStore, DEFAULT_CHAT_SPACING, DEFAULT_FONT_SCALE } from '@/
 import { applyVoiceSettings } from '@/services/voiceService'
 import { buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression, type DenoiserNode } from '@/services/denoiserService'
 import { useNavigate } from 'react-router-dom'
-import { userApi, uploadApi, axiosInstance } from '@/api/client'
+import { userApi, uploadApi, axiosInstance, voiceApi } from '@/api/client'
 import { saveSettings } from '@/lib/settingsApi'
 import type { ModelUserSettingsData, DtoUser } from '@/client'
 import { cn } from '@/lib/utils'
@@ -34,6 +34,11 @@ import type { VoiceSettings } from '@/stores/voiceStore'
 import { eventToKeyCombo, formatKeyCombo } from '@/lib/keyCombo'
 
 type Section = 'account' | 'appearance' | 'voice' | 'language' | 'security' | 'danger'
+type UserSettingsWithVoice = ModelUserSettingsData & {
+  voice?: {
+    preferred_region?: string
+  }
+}
 
 function numToHex(n: number | undefined | null, fallback: string): string {
   if (n == null) return fallback
@@ -119,6 +124,7 @@ export default function AppSettingsModal() {
   const [pushToTalkKey, setPushToTalkKey] = useState('')
   const [pushToTalkToggle, setPushToTalkToggle] = useState(false)
   const [isRecordingPTTKey, setIsRecordingPTTKey] = useState(false)
+  const [preferredVoiceRegion, setPreferredVoiceRegion] = useState('auto')
   const [savingVoice, setSavingVoice] = useState(false)
   const [voiceDirty, setVoiceDirty] = useState(false)
   const [audioInputDevices, setAudioInputDevices] = useState<MediaDeviceInfo[]>([])
@@ -142,9 +148,16 @@ export default function AppSettingsModal() {
   // Load saved settings
   const { data: settingsData } = useQuery({
     queryKey: ['user-settings'],
-    queryFn: () => userApi.userMeSettingsGet({}).then((r) => r.data?.settings),
+    queryFn: () => userApi.userMeSettingsGet({}).then((r) => r.data?.settings as UserSettingsWithVoice | undefined),
     enabled: open,
     staleTime: 60_000,
+  })
+
+  const { data: voiceRegions = [] } = useQuery({
+    queryKey: ['voice-regions'],
+    queryFn: () => voiceApi.voiceRegionsGet().then((r) => r.data?.regions ?? []),
+    enabled: open && section === 'voice',
+    staleTime: 5 * 60 * 1000,
   })
 
   // Init account form when modal opens
@@ -207,8 +220,9 @@ export default function AppSettingsModal() {
     setVoiceActivityThreshold(next.voiceActivityThreshold ?? -60)
     setPushToTalkKey(next.pushToTalkKey ?? '')
     setPushToTalkToggle(next.pushToTalkToggle ?? false)
+    setPreferredVoiceRegion(settingsData?.voice?.preferred_region?.trim() || 'auto')
     setVoiceDirty(false)
-  }, [open, settingsData?.devices, voiceDirty])
+  }, [open, settingsData?.devices, settingsData?.voice?.preferred_region, voiceDirty])
 
   // Enumerate audio/video devices when switching to Voice section.
   // On mobile, device labels/IDs are empty until permission is granted — request
@@ -372,7 +386,7 @@ export default function AppSettingsModal() {
     { key: 'danger', label: t('settings.dangerZone'), danger: true },
   ]
 
-  async function patchSettings(update: Partial<ModelUserSettingsData>) {
+  async function patchSettings(update: Partial<UserSettingsWithVoice>) {
     await saveSettings(update)
   }
 
@@ -526,6 +540,7 @@ export default function AppSettingsModal() {
       }
       await patchSettings({
         devices: devicesFromVoiceSettings(nextVoiceSettings),
+        voice: { preferred_region: preferredVoiceRegion || 'auto' },
       })
       useVoiceStore.getState().setSettings(nextVoiceSettings)
       applyVoiceSettings()
@@ -552,6 +567,7 @@ export default function AppSettingsModal() {
     setPushToTalkKey('')
     setPushToTalkToggle(false)
     setVideoInputDevice('')
+    setPreferredVoiceRegion('auto')
     setVoiceDirty(true)
   }
 
@@ -925,6 +941,28 @@ export default function AppSettingsModal() {
               {section === 'voice' && (
                 <div className="space-y-6">
                   <h2 className="text-xl font-bold">{t('settings.voiceVideo')}</h2>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="preferred-voice-region">Preferred Voice Region</Label>
+                    <select
+                      id="preferred-voice-region"
+                      value={preferredVoiceRegion}
+                      onChange={(e) => { setPreferredVoiceRegion(e.target.value); markVoiceDirty() }}
+                      className={selectClass}
+                    >
+                      <option value="auto">Automatic</option>
+                      {voiceRegions.map((region) => (
+                        <option key={region.id ?? region.name} value={region.id ?? ''}>
+                          {region.name || region.id}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      Used for DM calls and automatic voice channels.
+                    </p>
+                  </div>
+
+                  <Separator />
 
                   {/* ── Input Device ── */}
                   <div className="space-y-2">

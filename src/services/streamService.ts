@@ -24,6 +24,7 @@ import {
   type StreamSourceType,
   type VoiceStreamSummary,
 } from './streamApi'
+import { dmCallApi } from './dmCallApi'
 
 const _bigJsonParse = JSONBig({ storeAsString: true })
 
@@ -1120,6 +1121,39 @@ function httpStatus(error: unknown): number | null {
 
 function channelSyncKey(guildId: string, channelId: string): string {
   return `${guildId}:${channelId}`
+}
+
+function isDMVoiceScope(guildId: string): boolean {
+  return guildId === '@me'
+}
+
+function listScopedStreams(guildId: string, channelId: string): Promise<VoiceStreamSummary[]> {
+  return isDMVoiceScope(guildId)
+    ? dmCallApi.listStreams(channelId)
+    : streamApi.listStreams(guildId, channelId)
+}
+
+function startScopedStream(
+  guildId: string,
+  channelId: string,
+  sourceType: StreamSourceType,
+  audioMode: StreamAudioMode,
+) {
+  return isDMVoiceScope(guildId)
+    ? dmCallApi.startStream(channelId, sourceType, audioMode)
+    : streamApi.startStream(guildId, channelId, sourceType, audioMode)
+}
+
+function joinScopedStream(guildId: string, channelId: string, streamId: string) {
+  return isDMVoiceScope(guildId)
+    ? dmCallApi.joinStream(channelId, streamId)
+    : streamApi.joinStream(guildId, channelId, streamId)
+}
+
+function stopScopedStream(guildId: string, channelId: string, streamId: string) {
+  return isDMVoiceScope(guildId)
+    ? dmCallApi.stopStream(channelId, streamId)
+    : streamApi.stopStream(guildId, channelId, streamId)
 }
 
 function clearChannelStreamsSyncRetry(guildId: string, channelId: string) {
@@ -2865,7 +2899,7 @@ async function reconnectPublishingStream(reason: 'manual' | 'rebind') {
   closePublisherTransport(runtime, false)
 
   try {
-    const response = await streamApi.startStream(
+    const response = await startScopedStream(
       runtime.guildId,
       runtime.channelId,
       runtime.sourceType,
@@ -2895,7 +2929,7 @@ async function reconnectWatchingStream(streamId: string, reason: 'manual' | 'reb
   })
 
   try {
-    const response = await streamApi.joinStream(runtime.guildId, runtime.channelId, runtime.streamId)
+    const response = await joinScopedStream(runtime.guildId, runtime.channelId, runtime.streamId)
     await connectViewerRuntime(runtime, response.streamUrl, response.streamToken)
   } catch (error) {
     updateWatchingState(
@@ -2960,7 +2994,7 @@ function ensureEventBindings() {
 
 export async function syncChannelStreams(guildId: string, channelId: string, retryAttempt = 0): Promise<void> {
   try {
-    const streams = await streamApi.listStreams(guildId, channelId)
+    const streams = await listScopedStreams(guildId, channelId)
     clearChannelStreamsSyncRetry(guildId, channelId)
     useStreamStore.getState().setChannelStreams(channelId, streams)
   } catch (error) {
@@ -2988,7 +3022,7 @@ export async function startScreenShare(
 
   const normalizedQuality = normalizeStreamQuality(quality)
   const { stream: captureStream, sourceStream, effectiveAudioMode } = await captureDisplayStream(sourceType, audioMode, normalizedQuality)
-  const response = await streamApi.startStream(guildId, channelId, sourceType, effectiveAudioMode)
+  const response = await startScopedStream(guildId, channelId, sourceType, effectiveAudioMode)
   if (!response.streamId || !response.streamUrl || !response.streamToken) {
     stopMediaStream(captureStream)
     throw new Error('Invalid stream response')
@@ -3065,7 +3099,7 @@ export async function startScreenShare(
     publisherRuntime = null
     closePublisherTransport(runtime, true)
     useStreamStore.getState().setPublishing(null)
-    void streamApi.stopStream(guildId, channelId, response.streamId).catch(() => undefined)
+    void stopScopedStream(guildId, channelId, response.streamId).catch(() => undefined)
     throw error
   }
 }
@@ -3083,7 +3117,7 @@ export async function stopScreenShare(
 
   if (reason !== 'remote_ended') {
     try {
-      await streamApi.stopStream(runtime.guildId, runtime.channelId, runtime.streamId)
+      await stopScopedStream(runtime.guildId, runtime.channelId, runtime.streamId)
     } catch {
       // noop
     }
@@ -3136,7 +3170,7 @@ export async function watchStream(
     return
   }
 
-  const response = await streamApi.joinStream(guildId, channelId, stream.id)
+  const response = await joinScopedStream(guildId, channelId, stream.id)
   if (!response.streamId || !response.streamUrl || !response.streamToken) {
     throw new Error('Invalid stream response')
   }
