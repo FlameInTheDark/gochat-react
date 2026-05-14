@@ -74,6 +74,7 @@ const GW_DAVE_EXECUTE_TRANSITION = 22  // SFU → Client: commit the pending tra
 const GW_DAVE_TRANSITION_READY   = 23  // Client → SFU: receiver side is ready
 const GW_DAVE_PREPARE_EPOCH      = 24  // SFU → Client: MLS group creation/recreation
 const GW_DAVE_INVALID_COMMIT     = 31  // Client → SFU: invalid MLS material, recreate
+const GW_ERROR                   = 4000 // SFU → Client: structured close/error reason
 // DAVE binary opcodes (first byte of ArrayBuffer message)
 const DAVE_BIN_EXTERNAL_SENDER = 25
 const DAVE_BIN_KEY_PACKAGE     = 26
@@ -83,6 +84,10 @@ const DAVE_BIN_ANNOUNCE_COMMIT = 29
 const DAVE_BIN_WELCOME         = 30
 // How often to send BindingAlive (t=509) to the main WS gateway (ms)
 const BINDING_ALIVE_INTERVAL = 25_000
+const VOICE_GATEWAY_READY_TIMEOUT_MS = 3_000
+const VOICE_WEBSOCKET_OPEN_TIMEOUT_MS = 10_000
+const VOICE_RECONNECT_DELAY_MS = 250
+const VOICE_RECONNECT_MAX_DELAY_MS = 5_000
 
 // ── Module-level state ────────────────────────────────────────────────────────
 
@@ -93,8 +98,27 @@ let localVideoStream: MediaStream | null = null
 let localVideoSender: RTCRtpSender | null = null
 let bindingAliveTimer: number | null = null
 let sfuHeartbeatTimer: number | null = null
+let voiceConnectWatchdogTimer: number | null = null
+let voiceReconnectTimer: number | null = null
 let currentChannelId: string | null = null
 let currentPrivateCall = false
+let voiceSessionGeneration = 0
+let voiceReconnectInFlight = false
+let voiceReconnectAttempt = 0
+const intentionallyClosedVoiceSockets = new WeakSet<WebSocket>()
+
+type VoiceJoinTarget = {
+  guildId: string
+  channelId: string
+  channelName: string
+  guildName?: string
+  sfuUrl: string
+  sfuToken: string
+  voiceRegion?: string
+  privateCall: boolean
+}
+
+let currentVoiceTarget: VoiceJoinTarget | null = null
 
 // v=2 gateway session state
 let sfuSessionId: string | null = null
@@ -1178,6 +1202,94 @@ function waitForIceGatheringComplete(pc: RTCPeerConnection, maxTimeoutMs = 3000)
   })
 }
 
+function clearVoiceConnectWatchdog() {
+  if (voiceConnectWatchdogTimer !== null) {
+    clearTimeout(voiceConnectWatchdogTimer)
+    voiceConnectWatchdogTimer = null
+  }
+}
+
+function clearVoiceReconnectTimer() {
+  if (voiceReconnectTimer !== null) {
+    clearTimeout(voiceReconnectTimer)
+    voiceReconnectTimer = null
+  }
+}
+
+function armVoiceConnectWatchdog(reason: string, timeoutMs = VOICE_GATEWAY_READY_TIMEOUT_MS) {
+  const generation = voiceSessionGeneration
+  clearVoiceConnectWatchdog()
+  voiceConnectWatchdogTimer = window.setTimeout(() => {
+    if (generation !== voiceSessionGeneration) return
+    const voiceState = useVoiceStore.getState().connectionState
+    if (voiceState === 'routing' || voiceState === 'dtls' || voiceState === 'connected') return
+    const pcState = peerConnection?.connectionState ?? 'none'
+    const iceState = peerConnection?.iceConnectionState ?? 'none'
+    const socketState = sfuSocket ? ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'][sfuSocket.readyState] : 'null'
+    void restartVoiceFromBeginning(`pre-routing timeout after ${timeoutMs}ms (${reason}; voice=${voiceState}, pc=${pcState}, ice=${iceState}, socket=${socketState})`)
+  }, timeoutMs)
+  vlog('voice pre-routing watchdog armed (%s, %d ms)', reason, timeoutMs)
+}
+
+async function restartVoiceFromBeginning(reason: string) {
+  if (voiceReconnectInFlight) return
+  const target = currentVoiceTarget
+  if (!target || !currentChannelId || currentChannelId !== target.channelId) {
+    vwarn('voice reconnect skipped: no matching active target (%s)', reason)
+    return
+  }
+
+  voiceReconnectInFlight = true
+  voiceReconnectAttempt += 1
+  const attempt = voiceReconnectAttempt
+  vwarn('voice reconnect #%d: %s', attempt, reason)
+
+  clearVoiceConnectWatchdog()
+  clearVoiceReconnectTimer()
+
+  const socketToClose = sfuSocket
+  sfuSocket = null
+  try {
+    if (socketToClose) {
+      intentionallyClosedVoiceSockets.add(socketToClose)
+      socketToClose.close(4000, 'connect timeout')
+    }
+  } catch {
+    // Best effort: cleanup below closes the peer connection and media graph.
+  }
+  cleanup(false, true)
+
+  const reconnectDelay = Math.min(
+    VOICE_RECONNECT_DELAY_MS * Math.pow(2, Math.max(0, attempt - 1)),
+    VOICE_RECONNECT_MAX_DELAY_MS,
+  )
+  vlog('voice reconnect #%d scheduled in %d ms', attempt, reconnectDelay)
+
+  voiceReconnectTimer = window.setTimeout(() => {
+    void (async () => {
+      try {
+        await joinVoice(
+          target.guildId,
+          target.channelId,
+          target.channelName,
+          target.sfuUrl,
+          target.sfuToken,
+          target.guildName,
+          target.voiceRegion,
+          { privateCall: target.privateCall, reconnectAttempt: attempt },
+        )
+      } catch (err) {
+        verr('voice reconnect #%d failed: %o', attempt, err)
+        useVoiceStore.getState().setConnectionState('disconnected')
+        toast.error('Voice connection failed. Try joining again.')
+        currentVoiceTarget = null
+      } finally {
+        voiceReconnectInFlight = false
+      }
+    })()
+  }, reconnectDelay)
+}
+
 // ── SFU send ──────────────────────────────────────────────────────────────────
 
 interface SfuPacket {
@@ -1311,7 +1423,9 @@ async function handleSfuReady(d: {
   // Generate a stable RTC connection ID for this PC lifecycle
   sfuRtcConnectionId = crypto.randomUUID()
 
-  // Create and send the client-driven initial offer
+  // Create and send the client-driven initial offer. From this point onward,
+  // routing can legitimately take longer than the pre-routing reconnect window.
+  clearVoiceConnectWatchdog()
   useVoiceStore.getState().setConnectionState('routing')
   vlog('handleSfuReady: creating local SDP offer (rtc_connection_id=%s)', sfuRtcConnectionId)
   try {
@@ -1331,6 +1445,7 @@ async function handleSfuReady(d: {
     })
   } catch (err) {
     verr('handleSfuReady: failed to create/send offer: %o', err)
+    void restartVoiceFromBeginning('failed to create/send initial offer')
     return
   }
 
@@ -1611,6 +1726,15 @@ function onSfuMessage(event: MessageEvent) {
   console.debug(TAG + ' ← SFU op=%d', S, op, d)
 
   switch (op) {
+    case GW_ERROR: {
+      const error = d as { code?: number; reason?: string } | undefined
+      const reason = error?.reason || 'Voice connection closed'
+      verr('SFU error code=%s reason=%s', error?.code ?? 'unknown', reason)
+      useVoiceStore.getState().setConnectionState('disconnected')
+      toast.error(reason)
+      break
+    }
+
     case GW_HELLO:
       handleSfuHello(d as { v?: number; heartbeat_interval: number; session_id: string })
       break
@@ -1796,6 +1920,7 @@ function createPeerConnection(): RTCPeerConnection {
     }
     if (pc.iceConnectionState === 'failed') {
       verr('ICE FAILED — no media path could be established')
+      void restartVoiceFromBeginning('ICE connection failed')
     }
   }
 
@@ -1808,6 +1933,9 @@ function createPeerConnection(): RTCPeerConnection {
     vevt('PC connection state → %s', state)
     if (state === 'connected') {
       vlog('WebRTC CONNECTED — media should be flowing')
+      clearVoiceConnectWatchdog()
+      voiceReconnectAttempt = 0
+      voiceReconnectInFlight = false
       useVoiceStore.getState().setConnectionState('connected')
       // createEncodedStreams() becomes available once the DTLS/ICE connection is up.
       // Retry any transforms that were unavailable at ontrack time.
@@ -1817,6 +1945,7 @@ function createPeerConnection(): RTCPeerConnection {
       vlog('WebRTC CONNECTING — establishing connection')
     } else if (state === 'failed') {
       verr('PC connection FAILED')
+      void restartVoiceFromBeginning('PC connection failed')
     }
   }
 
@@ -2071,9 +2200,10 @@ function cleanupDenoiserNode() {
   denoiserNode = null
 }
 
-function cleanup(sendPresenceClear = true) {
+function cleanup(sendPresenceClear = true, preserveReconnectTarget = false) {
   vlog('cleanup: tearing down voice connection')
   const wasPrivateCall = currentPrivateCall
+  clearVoiceConnectWatchdog()
   stopInputMonitor()
 
   if (peerConnection) {
@@ -2179,6 +2309,12 @@ function cleanup(sendPresenceClear = true) {
   const savedChannelId = currentChannelId
   currentChannelId = null
   currentPrivateCall = false
+  if (!preserveReconnectTarget) {
+    currentVoiceTarget = null
+    voiceReconnectAttempt = 0
+    voiceReconnectInFlight = false
+    clearVoiceReconnectTimer()
+  }
 
   if (memberEventCleanup) {
     memberEventCleanup()
@@ -2219,10 +2355,11 @@ export async function joinVoice(
   sfuToken: string,
   guildName?: string,
   voiceRegion?: string,
-  options?: { privateCall?: boolean },
+  options?: { privateCall?: boolean; reconnectAttempt?: number },
 ): Promise<void> {
   vlog('joinVoice: guildId=%s channelId=%s channelName=%s', guildId, channelId, channelName)
   vlog('joinVoice: sfuUrl=%s', sfuUrl)
+  clearVoiceReconnectTimer()
 
   // Tear down any existing voice connection first
   if (sfuSocket || peerConnection) {
@@ -2230,8 +2367,21 @@ export async function joinVoice(
     await leaveVoice()
   }
 
+  voiceSessionGeneration += 1
+  const generation = voiceSessionGeneration
+  voiceReconnectAttempt = options?.reconnectAttempt ?? 0
   currentChannelId = channelId
   currentPrivateCall = options?.privateCall ?? false
+  currentVoiceTarget = {
+    guildId,
+    channelId,
+    channelName,
+    guildName,
+    sfuUrl,
+    sfuToken,
+    voiceRegion,
+    privateCall: currentPrivateCall,
+  }
 
   // Reset DAVE state for new session
   daveMode = 'passthrough'
@@ -2339,21 +2489,35 @@ export async function joinVoice(
   signalUrl.searchParams.set('v', '2')
   vlog('joinVoice: opening SFU WebSocket → %s', signalUrl.toString())
 
+  const socketStartedAt = performance.now()
   sfuSocket = new WebSocket(signalUrl.toString())
+  const socket = sfuSocket
   sfuSocket.binaryType = 'arraybuffer'   // required for DAVE binary messages
   sfuSocket.addEventListener('message', onSfuMessage)
+  armVoiceConnectWatchdog('sfu-websocket-open-pending', VOICE_WEBSOCKET_OPEN_TIMEOUT_MS)
 
   sfuSocket.addEventListener('open', () => {
-    vlog('joinVoice: SFU WebSocket OPEN — sending Identify (op=%d)', GW_IDENTIFY)
+    if (generation !== voiceSessionGeneration) return
+    vlog('joinVoice: SFU WebSocket OPEN after %d ms — sending Identify (op=%d)',
+      Math.round(performance.now() - socketStartedAt), GW_IDENTIFY)
     const daveCapable = supportsEncodedTransforms()
     vlog('joinVoice: DAVE capable (encoded transforms)=%s', daveCapable)
     sfuSend({
       op: GW_IDENTIFY,
       d: buildVoiceGatewayIdentifyData(channelId, sfuToken, daveCapable),
     })
+    armVoiceConnectWatchdog('sfu-identify-sent')
   })
 
   sfuSocket.addEventListener('close', (ev) => {
+    if (intentionallyClosedVoiceSockets.has(socket)) {
+      vlog('joinVoice: ignored intentionally closed SFU WebSocket close')
+      return
+    }
+    if (generation !== voiceSessionGeneration) {
+      vlog('joinVoice: ignored stale SFU WebSocket close for generation=%d', generation)
+      return
+    }
     vwarn('joinVoice: SFU WebSocket CLOSED code=%d reason=%s wasClean=%s',
       ev.code, ev.reason || '(none)', ev.wasClean)
     if (ev.code === 4017) {
@@ -2362,13 +2526,27 @@ export async function joinVoice(
         : 'Voice encryption is required. Use a Chromium-based browser, or run the local SFU with dave_required_default: false for Firefox testing.'
       toast.error(message)
     }
+    const voiceState = useVoiceStore.getState().connectionState
+    const shouldRetryAbnormalPreRoutingClose =
+      ev.code === 1006 &&
+      (voiceState === 'connecting') &&
+      currentVoiceTarget?.channelId === channelId
+
+    if (shouldRetryAbnormalPreRoutingClose) {
+      void restartVoiceFromBeginning('SFU WebSocket closed abnormally before routing')
+      return
+    }
+
     if (currentChannelId === channelId) {
       vlog('joinVoice: cleaning up after unexpected close')
+      sfuSocket = null
       cleanup()
     }
   })
 
   sfuSocket.addEventListener('error', (ev) => {
+    if (intentionallyClosedVoiceSockets.has(socket)) return
+    if (generation !== voiceSessionGeneration) return
     verr('joinVoice: SFU WebSocket ERROR', ev)
   })
 
@@ -2472,6 +2650,12 @@ export async function joinVoice(
 
 export async function leaveVoice() {
   vlog('leaveVoice: disconnecting')
+  voiceSessionGeneration += 1
+  clearVoiceConnectWatchdog()
+  clearVoiceReconnectTimer()
+  currentVoiceTarget = null
+  voiceReconnectInFlight = false
+  voiceReconnectAttempt = 0
   const leavingChannelId = currentChannelId
   const leavingPrivateCall = currentPrivateCall
   if (leavingChannelId && !leavingPrivateCall) {

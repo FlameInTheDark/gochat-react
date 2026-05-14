@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { DMCallSummary } from '@/services/dmCallApi'
+import { hasDMCallParticipants, type DMCallSummary } from '@/services/dmCallApi'
 
 interface DMCallState {
   calls: Record<string, DMCallSummary>
@@ -16,18 +16,35 @@ export const useDMCallStore = create<DMCallState>((set) => ({
   incomingChannelId: null,
 
   setCalls: (calls) =>
-    set(() => ({
-      calls: Object.fromEntries(calls.map((call) => [call.channelId, call])),
+    set((state) => ({
+      calls: Object.fromEntries(
+        calls
+          .filter((call) => call.callId && call.channelId && hasDMCallParticipants(call))
+          .map((call) => [call.channelId, call]),
+      ),
+      incomingChannelId: calls.some((call) => call.channelId === state.incomingChannelId && hasDMCallParticipants(call))
+        ? state.incomingChannelId
+        : null,
     })),
 
   upsertCall: (call) =>
-    set((state) => ({
-      calls: {
-        ...state.calls,
-        [call.channelId]: call,
-      },
-      incomingChannelId: state.incomingChannelId,
-    })),
+    set((state) => {
+      if (!call.callId || !call.channelId || !hasDMCallParticipants(call)) {
+        const next = { ...state.calls }
+        delete next[call.channelId]
+        return {
+          calls: next,
+          incomingChannelId: state.incomingChannelId === call.channelId ? null : state.incomingChannelId,
+        }
+      }
+      return {
+        calls: {
+          ...state.calls,
+          [call.channelId]: call,
+        },
+        incomingChannelId: state.incomingChannelId,
+      }
+    }),
 
   removeCall: (channelId) =>
     set((state) => {

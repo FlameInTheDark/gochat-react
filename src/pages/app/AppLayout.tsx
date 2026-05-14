@@ -30,7 +30,7 @@ import { useAuthProblemStore } from '@/stores/authProblemStore'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { compareSnowflakes } from '@/lib/snowflake'
 import { voiceSettingsFromDevices } from '@/lib/voiceSettings'
-import { normalizeDMCall, type RawDMCallSummary } from '@/services/dmCallApi'
+import { hasDMCallParticipants, normalizeDMCall, type RawDMCallSummary } from '@/services/dmCallApi'
 import { useDMCallStore } from '@/stores/dmCallStore'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
@@ -199,7 +199,7 @@ export default function AppLayout() {
           const rawDMCalls = ((settingsRes.data as unknown as { dm_calls?: RawDMCallSummary[] }).dm_calls ?? [])
           const dmCalls = rawDMCalls
             .map(normalizeDMCall)
-            .filter((call) => call.callId && call.channelId)
+            .filter((call) => call.callId && call.channelId && hasDMCallParticipants(call))
           const currentUserId = String(userRes.data.id ?? '')
           const dmCallStore = useDMCallStore.getState()
           dmCallStore.setCalls(dmCalls)

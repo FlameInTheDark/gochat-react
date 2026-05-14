@@ -39,6 +39,7 @@ const GW_DAVE_EXECUTE_TRANSITION = 22
 const GW_DAVE_TRANSITION_READY = 23
 const GW_DAVE_PREPARE_EPOCH = 24
 const GW_DAVE_INVALID_COMMIT = 31
+const GW_ERROR = 4000
 
 const DAVE_BIN_EXTERNAL_SENDER = 25
 const DAVE_BIN_KEY_PACKAGE = 26
@@ -2230,6 +2231,14 @@ async function connectPublisherRuntime(runtime: PublisherRuntime, url: string, t
         if (!packet) return
 
         switch (packet.op) {
+          case GW_ERROR: {
+            const error = packet.d as { code?: number; reason?: string } | undefined
+            const reason = error?.reason || 'Stream connection closed'
+            swarn('stream publisher service error code=%s reason=%s', error?.code ?? 'unknown', reason)
+            fail(reason)
+            return
+          }
+
           case GW_HELLO: {
             const hello = packet.d as GatewayHello | undefined
             const interval = Math.max(3_000, Number(hello?.heartbeat_interval ?? 15_000) - 1_000)
@@ -2451,6 +2460,14 @@ async function connectViewerRuntime(runtime: ViewerRuntime, url: string, token: 
         if (!packet) return
 
         switch (packet.op) {
+          case GW_ERROR: {
+            const error = packet.d as { code?: number; reason?: string } | undefined
+            const reason = error?.reason || 'Stream connection closed'
+            swarn('stream viewer service error code=%s reason=%s', error?.code ?? 'unknown', reason)
+            fail(reason)
+            return
+          }
+
           case GW_HELLO: {
             const hello = packet.d as GatewayHello | undefined
             const interval = Math.max(3_000, Number(hello?.heartbeat_interval ?? 15_000) - 1_000)

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Compass, Search, Users } from 'lucide-react'
+import { ArrowLeft, Compass, Search, Users } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { guildApi, searchApi } from '@/api/client'
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import { useClientMode } from '@/hooks/useClientMode'
 
 const PAGE_SIZE = 16
 
@@ -101,6 +102,7 @@ function GuildDiscoveryCard({
 export default function DiscoveryPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const isMobile = useClientMode() === 'mobile'
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const q = searchParams.get('q')?.trim() ?? ''
@@ -156,6 +158,14 @@ export default function DiscoveryPage() {
     updateSearch({ q: draft, page: 0 })
   }
 
+  function goBack() {
+    if (window.history.length > 1) {
+      navigate(-1)
+      return
+    }
+    navigate('/app')
+  }
+
   const guilds = data?.guilds ?? []
   const pages = data?.pages ?? 0
   const activeJoinId = joinMutation.variables ? String(joinMutation.variables.id) : null
@@ -164,7 +174,21 @@ export default function DiscoveryPage() {
     <main className="min-w-0 flex-1 overflow-y-auto bg-background">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
           <header className="space-y-2">
-            <h1 className="text-2xl font-semibold tracking-normal">{t('discovery.title')}</h1>
+            <div className="flex items-center gap-2">
+              {isMobile ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="-ml-2 size-9 shrink-0"
+                  onClick={goBack}
+                  aria-label={t('common.back')}
+                >
+                  <ArrowLeft className="size-5" />
+                </Button>
+              ) : null}
+              <h1 className="text-2xl font-semibold tracking-normal">{t('discovery.title')}</h1>
+            </div>
             <p className="text-sm text-muted-foreground">{t('discovery.subtitle')}</p>
           </header>
 

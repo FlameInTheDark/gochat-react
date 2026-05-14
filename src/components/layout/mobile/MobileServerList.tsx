@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Users, PlusCircle, MessageSquare, ChevronRight, ChevronDown, Folder, Settings, Copy, LogOut, Pencil, Trash2 } from 'lucide-react'
+import { Users, PlusCircle, MessageSquare, ChevronRight, ChevronDown, Folder, Settings, Copy, LogOut, Pencil, Trash2, Compass } from 'lucide-react'
 import { toast } from 'sonner'
 import { userApi } from '@/api/client'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -233,7 +233,6 @@ export default function MobileServerList() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const openCreateServer = useUiStore((s) => s.openCreateServer)
-  const openJoinServer = useUiStore((s) => s.openJoinServer)
   const openServerSettings = useUiStore((s) => s.openServerSettings)
   const { folders, itemOrder, deleteFolder, updateFolder, syncGuilds, settingsVersion } = useFolderStore()
 
@@ -366,8 +365,9 @@ export default function MobileServerList() {
 
       {/* Bottom action buttons */}
       <div className="p-4 flex gap-2 border-t border-sidebar-border shrink-0">
-        <Button variant="outline" className="flex-1" onClick={openJoinServer}>
-          {t('modals.joinServer')}
+        <Button variant="outline" className="flex-1" onClick={() => navigate('/app/discovery')}>
+          <Compass className="w-4 h-4 mr-1.5" />
+          {t('serverSidebar.discoverServers')}
         </Button>
         <Button className="flex-1" onClick={openCreateServer}>
           <PlusCircle className="w-4 h-4 mr-1.5" />

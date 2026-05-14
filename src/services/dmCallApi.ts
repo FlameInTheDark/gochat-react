@@ -64,6 +64,10 @@ export function normalizeDMCall(raw: RawDMCallSummary | undefined): DMCallSummar
   }
 }
 
+export function hasDMCallParticipants(call: Pick<DMCallSummary, 'participants'> | null | undefined): boolean {
+  return Object.keys(call?.participants ?? {}).length > 0
+}
+
 function normalizeJoin(raw: RawDMCallJoinResponse): DMCallJoinResponse {
   return {
     call: normalizeDMCall(raw.call),

@@ -9,6 +9,7 @@ import { useVoiceStore } from '@/stores/voiceStore'
 import { useStreamStore } from '@/stores/streamStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useDMCallStore } from '@/stores/dmCallStore'
+import { hasDMCallParticipants } from './dmCallApi'
 import { useEmojiStore } from '@/stores/emojiStore'
 import { playMentionSound } from '@/lib/sounds'
 import { refreshAuthToken } from '@/lib/authRefresh'
@@ -355,6 +356,10 @@ function handleDMCallUpdate(raw: unknown, options?: { incoming?: boolean }) {
   const eventData = raw as { call?: RawDMCallSummary; user_id?: string | number } | undefined
   const call = normalizeDMCall(eventData?.call)
   if (!call.callId || !call.channelId) return
+  if (!hasDMCallParticipants(call)) {
+    useDMCallStore.getState().removeCall(call.channelId)
+    return
+  }
 
   useDMCallStore.getState().upsertCall(call)
 
