@@ -5,10 +5,14 @@ import { useAuthStore } from '@/stores/authStore'
 import { userApi } from '@/api/client'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
 import { useFolderStore } from '@/stores/folderStore'
-import { ChannelType, type DtoChannel, type DtoGuild } from '@/types'
+import { ChannelType, type DtoChannel, type DtoGuild, type DtoUser } from '@/types'
 import { useAppearanceStore, DEFAULT_CHAT_SPACING, DEFAULT_FONT_SCALE } from '@/stores/appearanceStore'
 import { useNotificationSettingsStore } from '@/stores/notificationSettingsStore'
+import { useReadStateStore } from '@/stores/readStateStore'
+import { useDMCallStore } from '@/stores/dmCallStore'
+import { hasDMCallParticipants, normalizeDMCall, type RawDMCallSummary } from '@/services/dmCallApi'
 import i18n from '@/i18n'
+import type { ModelUserSettingsData, UserUserSettingsResponse } from '@/client'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 
@@ -28,6 +32,13 @@ interface WsThreadEventDetail {
 interface ThreadLinkQueryResult {
   thread: DtoChannel | null
   missing: boolean
+}
+
+interface GatewayReadyDetail extends Partial<UserUserSettingsResponse> {
+  user?: DtoUser
+  settings?: ModelUserSettingsData
+  guilds?: DtoGuild[]
+  dm_calls?: RawDMCallSummary[]
 }
 
 function isThreadChannelType(type: string | number | undefined): boolean {
@@ -159,6 +170,67 @@ export function useWebSocket() {
       subscribeGuilds(guilds.map((g) => String(g.id)))
     }
   }, [guilds])
+
+  useEffect(() => {
+    function onGatewayReady(e: Event) {
+      const detail = (e as CustomEvent<GatewayReadyDetail | undefined>).detail
+      if (!detail) return
+      if (detail.user) {
+        useAuthStore.getState().setUser(detail.user)
+      }
+      if (detail.guilds) {
+        queryClient.setQueryData(['guilds'], detail.guilds)
+        subscribeGuilds(detail.guilds.map((g) => String(g.id)))
+      }
+      if (detail.read_states || detail.guilds_last_messages || detail.threads_last_messages) {
+        useReadStateStore.getState().setFromSettings(detail as UserUserSettingsResponse)
+      }
+      if (Array.isArray(detail.dm_calls)) {
+        const dmCalls = detail.dm_calls
+          .map(normalizeDMCall)
+          .filter((call) => call.callId && call.channelId && hasDMCallParticipants(call))
+        const currentUserId = String(useAuthStore.getState().user?.id ?? detail.user?.id ?? '')
+        const dmCallStore = useDMCallStore.getState()
+        dmCallStore.setCalls(dmCalls)
+        const incoming = dmCalls.find((call) =>
+          call.recipientId === currentUserId
+          && call.callerId !== currentUserId
+          && !call.dismissed
+        )
+        dmCallStore.setIncoming(incoming?.channelId ?? null)
+      }
+      const settings = detail.settings
+      if (!settings) return
+
+      queryClient.setQueryData(['user-settings'], settings)
+
+      const savedStatus = settings.status?.status
+      const savedCustomText = settings.status?.custom_status_text ?? ''
+      if (savedStatus && VALID_STATUSES.has(savedStatus)) {
+        setOwnStatus(savedStatus as UserStatus)
+        sendPresenceStatus(savedStatus as UserStatus, savedCustomText)
+      }
+
+      useFolderStore.getState().loadFromSettings(settings.guild_folders, settings.guilds)
+
+      const { setFontScale, setChatSpacing } = useAppearanceStore.getState()
+      setFontScale(settings.appearance?.chat_font_scale ?? DEFAULT_FONT_SCALE)
+      setChatSpacing(settings.appearance?.chat_spacing ?? DEFAULT_CHAT_SPACING)
+
+      if (settings.language) {
+        void i18n.changeLanguage(settings.language)
+      }
+
+      useNotificationSettingsStore.getState().setSettings({
+        guilds: settings.guilds,
+        channels: settings.channels,
+        users: settings.users,
+      })
+    }
+
+    window.addEventListener('ws:gateway_ready', onGatewayReady)
+    return () => window.removeEventListener('ws:gateway_ready', onGatewayReady)
+  }, [queryClient, setOwnStatus])
 
   // ── React to guild-related WS events ──────────────────────────────────────
 
@@ -486,5 +558,5 @@ export function useWebSocket() {
 
     window.addEventListener('ws:user_settings_update', onUserSettingsUpdate)
     return () => window.removeEventListener('ws:user_settings_update', onUserSettingsUpdate)
-  }, [setOwnStatus])
+  }, [queryClient, setOwnStatus])
 }

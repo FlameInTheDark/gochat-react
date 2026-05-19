@@ -45,6 +45,7 @@ let heartbeatWorker: Worker | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null  // fallback only
 let heartbeatIntervalMs = 0
 let lastHeartbeatAt = 0
+let heartbeatAckPending = false
 
 // Reconnect state
 let currentToken: string | null = null
@@ -75,6 +76,10 @@ let lastEventId = 0
 // Passed as heartbeat_session_id on reconnect so the server reuses the
 // existing presence session, avoiding spurious offline→online transitions.
 let currentSessionId: string | null = null
+let currentConnectionId: string | null = null
+let currentGeneration = 0
+
+const CLIENT_INSTANCE_STORAGE_KEY = 'gochat:ws:client_instance_id'
 
 // True once the server has confirmed auth for the current socket (op:1 received).
 // Reset to false each time createSocket() opens a new socket. Used in onClose()
@@ -106,11 +111,27 @@ function sendJson(data: unknown) {
   }
 }
 
+function getClientInstanceId(): string {
+  if (typeof window === 'undefined') return 'server'
+  const existing = window.sessionStorage.getItem(CLIENT_INSTANCE_STORAGE_KEY)
+  if (existing) return existing
+  const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  window.sessionStorage.setItem(CLIENT_INSTANCE_STORAGE_KEY, id)
+  return id
+}
+
 function sendHeartbeat() {
   if (socket?.readyState === WebSocket.OPEN) {
+    if (heartbeatAckPending) {
+      socket.close(4009, 'Heartbeat ACK timeout')
+      return
+    }
+    heartbeatAckPending = true
     // op=2: Heartbeat — echo the last event ID we've processed.
     // The server resets its timeout timer only if e >= its internal counter.
-    socket.send(JSON.stringify({ op: 2, d: { e: lastEventId } }))
+    socket.send(JSON.stringify({ op: 2, d: { e: lastEventId, connection_id: currentConnectionId } }))
   }
 }
 
@@ -161,6 +182,7 @@ function getOrCreateHeartbeatWorker(): Worker | null {
 function clearHeartbeat() {
   heartbeatIntervalMs = 0
   lastHeartbeatAt = 0
+  heartbeatAckPending = false
   if (heartbeatWorker) {
     heartbeatWorker.postMessage({ type: 'stop' })
   }
@@ -319,6 +341,7 @@ function resubscribe() {
 interface WsPayload {
   op: number
   t?: number
+  s?: number
   d?: unknown
 }
 
@@ -378,6 +401,31 @@ function handleDMCallUpdate(raw: unknown, options?: { incoming?: boolean }) {
 interface WsHelloData {
   heartbeat_interval?: number
   session_id?: string
+  connection_id?: string
+  generation?: number
+  protocol_version?: number
+}
+
+interface WsGatewayReady {
+  user?: unknown
+  settings?: unknown
+  settings_version?: number
+  guilds?: unknown[]
+  friends?: unknown[]
+  friend_requests?: unknown[]
+  server_time?: number
+  session?: {
+    session_id?: string
+    connection_id?: string
+    client_instance_id?: string
+    generation?: number
+    protocol_version?: number
+  }
+  auto_subscriptions?: {
+    guilds?: unknown[]
+    friends?: unknown[]
+    presence?: unknown[]
+  }
 }
 
 interface WsDeletedMessage {
@@ -519,6 +567,9 @@ function handleMessage(event: MessageEvent) {
   }
 
   const { op, t, d } = payload
+  if (typeof payload.s === 'number' && payload.s >= lastEventId) {
+    lastEventId = payload.s
+  }
 
   // ── Op 1: Hello Reply ────────────────────────────────────────────────────
   // Server sends {op:1, d:{heartbeat_interval, session_id}} after validating
@@ -526,13 +577,33 @@ function handleMessage(event: MessageEvent) {
   if (op === 1) {
     authSucceeded = true   // auth confirmed — onClose will use normal backoff if it fires
     resetReconnectDelay()
-    lastEventId = 0
     const hello = d as WsHelloData | undefined
     // Persist session_id so we can pass it as heartbeat_session_id on reconnect,
     // letting the server reuse the presence session and avoid spurious offline events.
     if (hello?.session_id) currentSessionId = hello.session_id
+    if (hello?.connection_id) currentConnectionId = hello.connection_id
+    if (typeof hello?.generation === 'number') currentGeneration = hello.generation
     const interval = (hello?.heartbeat_interval ?? 30_000) - 1_000
     startHeartbeat(interval)
+    resubscribe()
+    return
+  }
+
+  // ── Op 8: Heartbeat ACK ─────────────────────────────────────────────────
+  if (op === 8) {
+    heartbeatAckPending = false
+    return
+  }
+
+  // ── Op 0, t=1: Gateway Ready bootstrap ──────────────────────────────────
+  if (op === 0 && t === 1) {
+    const ready = d as WsGatewayReady | undefined
+    if (ready?.session?.session_id) currentSessionId = ready.session.session_id
+    if (ready?.session?.connection_id) currentConnectionId = ready.session.connection_id
+    if (typeof ready?.session?.generation === 'number') currentGeneration = ready.session.generation
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('ws:gateway_ready', { detail: ready }))
+    }
     resubscribe()
     return
   }
@@ -549,6 +620,9 @@ function handleMessage(event: MessageEvent) {
       // Always sync custom_status_text — empty string clears a previously set status
       store.setCustomStatus(uid, presence.custom_status_text ?? '')
       store.setActiveStream(uid, normalizeActiveStream(presence.active_stream))
+      if (normalizeStatus(presence.status) === 'offline' && presence.voice_channel_id === undefined) {
+        store.removeUserFromAllVoiceChannels(uid)
+      }
 
       // Sync mute/deafen state for users in voice channels.
       // Only act when voice_channel_id is explicitly present in the payload —
@@ -1252,10 +1326,17 @@ function createSocket(token: string) {
   socket.addEventListener('close', onClose)
   socket.addEventListener('open', () => {
     socketOpenTime = Date.now()
-    // Op 1: authenticate.  Include the previous session_id (if any) so the
-    // server can reuse the presence session instead of publishing offline→online.
-    const helloData: Record<string, unknown> = { token }
-    if (currentSessionId) helloData.heartbeat_session_id = currentSessionId
+    const helloData: Record<string, unknown> = {
+      token,
+      client_instance_id: getClientInstanceId(),
+      last_seq: lastEventId,
+    }
+    if (currentSessionId) {
+      helloData.resume_session_id = currentSessionId
+      helloData.resume_generation = currentGeneration
+      // Legacy alias while older WS services roll out.
+      helloData.heartbeat_session_id = currentSessionId
+    }
     socket!.send(JSON.stringify({ op: 1, d: helloData }))
   })
 }
@@ -1263,6 +1344,7 @@ function createSocket(token: string) {
 function onClose() {
   clearHeartbeat()
   socket = null
+  currentConnectionId = null
 
   const openTime = socketOpenTime
   socketOpenTime = null
@@ -1409,8 +1491,9 @@ export function deactivateChannel(channelId: string) {
 // Replace the full presence subscription set (op=6, d.set).
 // IDs sent as int64 BigInt.
 export function subscribePresence(userIds: string[]) {
+  activePresenceSubs.clear()
   for (const id of userIds) activePresenceSubs.add(id)
-  if (socket?.readyState === WebSocket.OPEN && userIds.length > 0) {
+  if (socket?.readyState === WebSocket.OPEN) {
     sendJson({ op: 6, d: { set: [...activePresenceSubs].map((id) => BigInt(id)) } })
   }
 }
@@ -1448,7 +1531,20 @@ export function sendPresenceStatus(status: UserStatus, customStatusText?: string
 // Update the tracked voice channel for presence broadcasts.
 // Call with null when leaving voice — the next sendPresenceStatus will omit voice_channel_id.
 export function setPresenceVoiceChannel(channelId: string | null) {
+  const previous = currentVoiceChannelId
   currentVoiceChannelId = channelId
+  if (previous && channelId === null && socket?.readyState === WebSocket.OPEN) {
+    sendJson({
+      op: 3,
+      d: {
+        status: currentOwnStatus,
+        platform: 'web',
+        ...(currentCustomStatusText ? { custom_status_text: currentCustomStatusText } : {}),
+        voice_channel_id: 0,
+        self_video: currentSelfVideo,
+      },
+    })
+  }
 }
 
 // Update the tracked local camera state for presence broadcasts.
@@ -1485,6 +1581,8 @@ export function disconnect() {
   intentionalClose = true
   currentToken = null
   currentSessionId = null
+  currentConnectionId = null
+  currentGeneration = 0
   lastEventId = 0
   activeGuildSubs.clear()
   explicitChannelCounts.clear()
