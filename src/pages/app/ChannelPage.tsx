@@ -1614,7 +1614,7 @@ export default function ChannelPage() {
             <button
               onClick={() => navigate(`/app/${serverId}`)}
               className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 -ml-1"
-              title="Back to channels"
+              aria-label="Back to channels"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -1755,70 +1755,95 @@ export default function ChannelPage() {
           {isConnected ? (
             <>
               <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
-                <button
-                  onClick={voiceToggleMute}
-                  title={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
-                  className={cn(
-                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
-                    localMuted
-                      ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
-                      : localSpeaking
-                        ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                        : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {localMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-                </button>
-                <button
-                  onClick={voiceToggleDeafen}
-                  title={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
-                  className={cn(
-                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
-                    localDeafened
-                      ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
-                      : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {localDeafened ? <HeadphoneOff className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
-                </button>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={voiceToggleMute}
+                      aria-label={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
+                      className={cn(
+                        'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                        localMuted
+                          ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                          : localSpeaking
+                            ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                            : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {localMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">{localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}</TooltipContent>
+                </Tooltip>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={voiceToggleDeafen}
+                      aria-label={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
+                      className={cn(
+                        'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                        localDeafened
+                          ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                          : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {localDeafened ? <HeadphoneOff className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">{localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}</TooltipContent>
+                </Tooltip>
               </div>
 
               <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
-                <button
-                  onClick={voiceToggleCamera}
-                  title={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
-                  className={cn(
-                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
-                    localCameraEnabled
-                      ? 'bg-primary/20 text-primary hover:bg-primary/30'
-                      : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {localCameraEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-                </button>
-                <button
-                  onClick={() => { void handleToggleChannelStream() }}
-                  disabled={streamButtonDisabled}
-                  title={isStreamingHere ? t('streams.stop') : t('streams.start')}
-                  className={cn(
-                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                    isStreamingHere
-                      ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                      : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {isStartingStream ? <Loader2 className="w-5 h-5 animate-spin" /> : <Monitor className="w-5 h-5" />}
-                </button>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={voiceToggleCamera}
+                      aria-label={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
+                      className={cn(
+                        'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                        localCameraEnabled
+                          ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                          : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {localCameraEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">{localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}</TooltipContent>
+                </Tooltip>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => { void handleToggleChannelStream() }}
+                      disabled={streamButtonDisabled}
+                      aria-label={isStreamingHere ? t('streams.stop') : t('streams.start')}
+                      className={cn(
+                        'flex h-10 w-10 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                        isStreamingHere
+                          ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                          : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {isStartingStream ? <Loader2 className="w-5 h-5 animate-spin" /> : <Monitor className="w-5 h-5" />}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">{isStreamingHere ? t('streams.stop') : t('streams.start')}</TooltipContent>
+                </Tooltip>
               </div>
 
               <div className="flex items-center rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
-                <button
-                  onClick={leaveVoice}
-                  title={t('voicePanel.disconnect')}
-                  className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
-                >
-                  <PhoneOff className="w-5 h-5" />
-                </button>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={leaveVoice}
+                      aria-label={t('voicePanel.disconnect')}
+                      className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+                    >
+                      <PhoneOff className="w-5 h-5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">{t('voicePanel.disconnect')}</TooltipContent>
+                </Tooltip>
               </div>
             </>
           ) : (
@@ -1849,7 +1874,7 @@ export default function ChannelPage() {
             <button
               onClick={() => navigate(`/app/${serverId}`)}
               className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 -ml-1"
-              title="Back to channels"
+              aria-label="Back to channels"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
@@ -1896,26 +1921,31 @@ export default function ChannelPage() {
                 </Tooltip>
               )}
               {isTextChannel && (
-                <button
-                  onClick={() => {
-                    const opening = !mobileSearchOpen
-                    setMobileSearchOpen(opening)
-                    if (opening) {
-                      setTimeout(() => searchBarRef.current?.focus(), 50)
-                    } else {
-                      clearSearch()
-                    }
-                  }}
-                  title="Search"
-                  className={cn(
-                    'w-9 h-9 flex items-center justify-center rounded transition-colors',
-                    mobileSearchOpen || hasSearched
-                      ? 'text-foreground bg-accent'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                  )}
-                >
-                  <Search className="w-4 h-4" />
-                </button>
+                <Tooltip delayDuration={400}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => {
+                        const opening = !mobileSearchOpen
+                        setMobileSearchOpen(opening)
+                        if (opening) {
+                          setTimeout(() => searchBarRef.current?.focus(), 50)
+                        } else {
+                          clearSearch()
+                        }
+                      }}
+                      aria-label="Search"
+                      className={cn(
+                        'w-9 h-9 flex items-center justify-center rounded transition-colors',
+                        mobileSearchOpen || hasSearched
+                          ? 'text-foreground bg-accent'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                      )}
+                    >
+                      <Search className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Search</TooltipContent>
+                </Tooltip>
               )}
               {isTextChannel && (
                 <ThreadDropdown
@@ -2599,7 +2629,7 @@ function ThreadMemberPips({ memberIds, members }: { memberIds: Array<number | st
           <div
             key={String(id)}
             className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full border-2 border-popover bg-muted text-[10px] font-semibold text-muted-foreground"
-            title={name}
+            aria-label={name}
           >
             {avatar ? (
               <img src={avatar} alt={name} className="h-full w-full object-cover" />
@@ -3166,15 +3196,19 @@ function VoiceParticipant({
             </span>
           )}
           {isStreamErrored && onReconnectStream && (
-            <button
-              type="button"
-              onClick={onReconnectStream}
-              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/70 px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-accent"
-              title={streamError ?? undefined}
-            >
-              <RotateCcw className="h-3 w-3" />
-              {t('streams.reconnect')}
-            </button>
+            <Tooltip delayDuration={400}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onReconnectStream}
+                  className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/70 px-2 py-1 text-[10px] font-medium text-foreground transition-colors hover:bg-accent"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  {t('streams.reconnect')}
+                </button>
+              </TooltipTrigger>
+              {streamError && <TooltipContent side="top">{streamError}</TooltipContent>}
+            </Tooltip>
           )}
         </div>
       )}

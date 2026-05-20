@@ -107,7 +107,7 @@ function PermStateButton({
       <button
         type="button"
         onClick={onClick}
-        title="Allow"
+        aria-label="Allow"
         className={cn(
           baseClass,
           isActive
@@ -124,7 +124,7 @@ function PermStateButton({
       <button
         type="button"
         onClick={onClick}
-        title="Deny"
+        aria-label="Deny"
         className={cn(
           baseClass,
           isActive
@@ -141,7 +141,7 @@ function PermStateButton({
     <button
       type="button"
       onClick={onClick}
-      title="Inherit from role"
+      aria-label="Inherit from role"
       className={cn(
         baseClass,
         isActive

@@ -416,7 +416,6 @@ const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput
         onClick={onCancelReply}
         className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label={t('messageItem.cancelReply')}
-        title={t('messageItem.cancelReply')}
       >
         <X className="h-4 w-4" />
       </button>

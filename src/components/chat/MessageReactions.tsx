@@ -248,7 +248,6 @@ export default function MessageReactions({ reactions, channelId, messageId, onAd
               type="button"
               onClick={() => void handleToggle(reaction)}
               disabled={pending.has(name)}
-              title={undefined}
               className={cn(
                 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-sm transition-colors select-none',
                 'hover:border-primary/50 hover:bg-primary/10',

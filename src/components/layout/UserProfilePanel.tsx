@@ -358,7 +358,6 @@ export default function UserProfilePanel() {
             className="h-8 w-8 rounded-full p-0 bg-background/85 text-foreground shadow-sm hover:bg-background"
             onClick={() => void handleSendFriendRequest()}
             aria-label={t('userProfile.addFriend')}
-            title={t('userProfile.addFriend')}
           >
             <UserPlus className="w-4 h-4" />
           </Button>
@@ -371,7 +370,6 @@ export default function UserProfilePanel() {
               variant="secondary"
               className="h-8 w-8 rounded-full p-0 bg-background/85 text-foreground shadow-sm hover:bg-background"
               aria-label={t('common.more')}
-              title={t('common.more')}
             >
               <MoreHorizontal className="w-4 h-4" />
             </Button>

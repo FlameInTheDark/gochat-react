@@ -1133,7 +1133,7 @@ export default function ServerSettingsModal() {
                   <div
                     className="relative shrink-0 group cursor-pointer"
                     onClick={() => !uploadingIcon && iconInputRef.current?.click()}
-                    title={t('serverSettings.changeIcon')}
+                    aria-label={t('serverSettings.changeIcon')}
                   >
                     <div
                       className={cn(
@@ -1776,7 +1776,7 @@ export default function ServerSettingsModal() {
                                     value={editColor}
                                     onChange={(e) => setEditColor(e.target.value)}
                                     className="w-16 h-12 rounded border border-input cursor-pointer p-0.5 bg-background block"
-                                    title={t('serverSettings.roleColorTitle')}
+                                    aria-label={t('serverSettings.roleColorTitle')}
                                   />
                                   <div className="rounded-lg border border-border bg-accent/20 px-4 py-3 flex-1 min-w-0">
                                     <p className="text-sm font-semibold truncate" style={{ color: editColor }}>
@@ -1888,7 +1888,7 @@ export default function ServerSettingsModal() {
                                         disabled={isSaving}
                                         onClick={() => void toggleMemberRole(userId, selectedRoleId, true)}
                                         className="rounded-full p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-50"
-                                        title={t('serverSettings.removeRoleMember')}
+                                        aria-label={t('serverSettings.removeRoleMember')}
                                       >
                                         <X className="w-4 h-4" />
                                       </button>
@@ -2004,7 +2004,7 @@ export default function ServerSettingsModal() {
                           }}
                           disabled={!invite.code}
                           className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                          title={t('serverSettings.copyInviteLink')}
+                          aria-label={t('serverSettings.copyInviteLink')}
                         >
                           <Copy className="w-4 h-4" />
                         </button>
@@ -2012,7 +2012,7 @@ export default function ServerSettingsModal() {
                         <button
                           onClick={() => void handleRevokeInvite(inviteId)}
                           className="p-1.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors shrink-0"
-                          title={t('serverSettings.revokeInvite')}
+                          aria-label={t('serverSettings.revokeInvite')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -2060,7 +2060,7 @@ export default function ServerSettingsModal() {
                             ? 'border-primary/40 bg-muted/20 hover:brightness-90'
                             : 'border-border hover:border-primary/50 bg-muted/30 hover:bg-muted/50',
                         )}
-                        title={t('serverSettings.emojiSelectFile')}
+                        aria-label={t('serverSettings.emojiSelectFile')}
                       >
                         {emojiPreviewUrl ? (
                           <img src={emojiPreviewUrl} className="w-full h-full object-contain" alt="" />
@@ -2167,7 +2167,7 @@ export default function ServerSettingsModal() {
                                 className="h-8 w-8 p-0"
                                 onClick={() => void handleRenameEmoji(eid)}
                                 disabled={isSaving || !editingEmojiName.trim()}
-                                title={t('common.save')}
+                                aria-label={t('common.save')}
                               >
                                 <Check className="h-4 w-4" />
                               </Button>
@@ -2176,7 +2176,7 @@ export default function ServerSettingsModal() {
                                 variant="ghost"
                                 className="h-8 w-8 p-0"
                                 onClick={() => setEditingEmojiId(null)}
-                                title={t('common.cancel')}
+                                aria-label={t('common.cancel')}
                               >
                                 <X className="h-4 w-4" />
                               </Button>
@@ -2188,19 +2188,20 @@ export default function ServerSettingsModal() {
                           </span>
                         )}
                         {canManageEmoji && !isEditing && (
-                          <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                          <div className="absolute -bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 overflow-hidden rounded-lg border border-white/[0.1] bg-[#0f1015] shadow-sm opacity-0 transition-opacity group-hover:opacity-100">
                             <button
                               onClick={() => { setEditingEmojiId(eid); setEditingEmojiName(emoji.name ?? '') }}
-                              className="flex h-6 w-6 items-center justify-center rounded bg-background/90 text-muted-foreground shadow-sm ring-1 ring-border/70 transition-colors hover:bg-accent hover:text-foreground"
-                              title={t('serverSettings.emojiRename')}
+                              className="flex h-6 w-6 items-center justify-center text-muted-foreground transition-colors hover:bg-white/[0.07] hover:text-foreground"
+                              aria-label={t('serverSettings.emojiRename')}
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </button>
+                            <div className="h-3.5 w-px bg-border" />
                             <button
                               onClick={() => void handleDeleteEmoji(eid)}
                               disabled={isDeleting}
-                              className="flex h-6 w-6 items-center justify-center rounded bg-background/90 text-muted-foreground shadow-sm ring-1 ring-border/70 transition-colors hover:bg-destructive/10 hover:text-destructive"
-                              title={t('serverSettings.emojiDeleteBtn')}
+                              className="flex h-6 w-6 items-center justify-center text-muted-foreground transition-colors hover:bg-white/[0.07] hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                              aria-label={t('serverSettings.emojiDeleteBtn')}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>

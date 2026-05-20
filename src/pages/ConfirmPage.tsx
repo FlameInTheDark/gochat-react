@@ -107,7 +107,6 @@ export default function ConfirmPage() {
               value={discriminator}
               onChange={(e) => setDiscriminator(e.target.value)}
               pattern="[a-z0-9\-_.]+"
-              title={t('auth.confirmUsernameHint')}
               required
             />
           </div>

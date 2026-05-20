@@ -296,10 +296,10 @@ function MobileFriendRow({ user, onOpenDm, onUnfriend }: { user: DtoUser; onOpen
         )}
       </div>
       <div className="flex gap-1 shrink-0">
-        <Button size="icon" variant="ghost" className="w-8 h-8" onClick={onOpenDm} title={t('friends.message')}>
+        <Button size="icon" variant="ghost" className="w-8 h-8" onClick={onOpenDm} aria-label={t('friends.message')}>
           <MessageCircle className="w-4 h-4" />
         </Button>
-        <Button size="icon" variant="ghost" className="w-8 h-8 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={onUnfriend} title={t('friends.removeFriend')}>
+        <Button size="icon" variant="ghost" className="w-8 h-8 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={onUnfriend} aria-label={t('friends.removeFriend')}>
           <UserMinus className="w-4 h-4" />
         </Button>
       </div>
@@ -380,10 +380,10 @@ function MobilePendingRequests() {
                   )}
                 </div>
                 <div className="flex gap-1 shrink-0">
-                  <Button size="icon" variant="ghost" className="w-8 h-8 text-green-500 hover:text-green-400 hover:bg-green-500/10" onClick={() => void accept(user)} title={t('friends.accept')}>
+                  <Button size="icon" variant="ghost" className="w-8 h-8 text-green-500 hover:text-green-400 hover:bg-green-500/10" onClick={() => void accept(user)} aria-label={t('friends.accept')}>
                     <Check className="w-4 h-4" />
                   </Button>
-                  <Button size="icon" variant="ghost" className="w-8 h-8 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => void decline(user)} title={t('friends.decline')}>
+                  <Button size="icon" variant="ghost" className="w-8 h-8 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => void decline(user)} aria-label={t('friends.decline')}>
                     <X className="w-4 h-4" />
                   </Button>
                 </div>

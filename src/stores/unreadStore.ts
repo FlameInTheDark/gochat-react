@@ -10,6 +10,7 @@ interface UnreadState {
   markUnread: (channelId: string, guildId: string | null) => void
   markRead: (channelId: string) => void
   removeChannel: (channelId: string) => void
+  pruneGuildChannels: (guildId: string, channelIds: Set<string>) => void
   isChannelUnread: (channelId: string) => boolean
   isGuildUnread: (guildId: string) => boolean
 }
@@ -43,6 +44,23 @@ export const useUnreadStore = create<UnreadState>((set, get) => ({
     const next = new Map(get().channels)
     next.delete(channelId)
     set({ channels: next })
+  },
+
+  pruneGuildChannels: (guildId, channelIds) => {
+    const current = get().channels
+    let changed = false
+    const next = new Map(current)
+
+    for (const [channelId, entry] of current) {
+      if (entry.guildId === guildId && !channelIds.has(channelId)) {
+        next.delete(channelId)
+        changed = true
+      }
+    }
+
+    if (changed) {
+      set({ channels: next })
+    }
   },
 
   isChannelUnread: (channelId) => get().channels.has(channelId),

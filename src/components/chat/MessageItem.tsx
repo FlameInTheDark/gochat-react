@@ -1143,12 +1143,14 @@ export default function MessageItem({
                       {authorName}
                     </button>,
                   )}
-                  <span
-                    className="text-xs text-muted-foreground tabular-nums"
-                    title={fullTimestamp}
-                  >
-                    {timestamp}
-                  </span>
+                  <Tooltip delayDuration={400}>
+                    <TooltipTrigger asChild>
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {timestamp}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">{fullTimestamp}</TooltipContent>
+                  </Tooltip>
                   {isEdited && (
                     <span className="text-xs text-muted-foreground">{t('messageItem.edited')}</span>
                   )}
@@ -1201,12 +1203,14 @@ export default function MessageItem({
                         </button>,
                       )}
                       <span>{informationalContent}</span>
-                      <span
-                        className="text-xs text-muted-foreground tabular-nums"
-                        title={fullTimestamp}
-                      >
-                        {timestamp}
-                      </span>
+                      <Tooltip delayDuration={400}>
+                        <TooltipTrigger asChild>
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            {timestamp}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">{fullTimestamp}</TooltipContent>
+                      </Tooltip>
                       {isEdited && (
                         <span className="text-xs text-muted-foreground">{t('messageItem.edited')}</span>
                       )}

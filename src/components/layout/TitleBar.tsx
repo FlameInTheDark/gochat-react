@@ -26,7 +26,7 @@ export default function TitleBar() {
           <button
             onClick={() => window.electronAPI?.installUpdate()}
             className="mr-2 flex items-center gap-1.5 rounded bg-green-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-green-500"
-            title="Update ready — click to restart and install"
+            aria-label="Update ready. Restart to install."
           >
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <line x1="6" y1="1" x2="6" y2="8" />

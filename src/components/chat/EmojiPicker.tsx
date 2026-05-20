@@ -500,7 +500,7 @@ export default function EmojiPicker({ onSelect, customEmojiGroups, isMobile = fa
       <button
         key={item.slug}
         type="button"
-        title={item.name}
+        aria-label={item.name}
         onClick={() => {
           setSearch('')
           scrollToCategory(item.slug)
@@ -633,7 +633,7 @@ const EmojiButton = memo(function EmojiButton({ entry, onSelect, onHover }: Emoj
   return (
     <button
       type="button"
-      title={formatName(entry.name ?? entry.emoji)}
+      aria-label={formatName(entry.name ?? entry.emoji)}
       onPointerEnter={() => onHover(entry)}
       onClick={() => onSelect(entry)}
       className="emoji-button grid h-9 w-9 place-items-center rounded-md text-2xl transition-colors hover:bg-muted"
@@ -659,7 +659,7 @@ const CustomEmojiButton = memo(function CustomEmojiButton({
   return (
     <button
       type="button"
-      title={`:${emoji.name}:`}
+      aria-label={`:${emoji.name}:`}
       onPointerEnter={() => onHover(emoji)}
       onClick={() => onSelect(emoji)}
       className="emoji-button grid h-9 w-9 place-items-center rounded-md transition-colors hover:bg-muted"

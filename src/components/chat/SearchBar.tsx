@@ -285,7 +285,7 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
       {showClear ? (
         <button
           onMouseDown={(e) => { e.preventDefault(); clearAll() }}
-          title={t('search.closeSearch')}
+          aria-label={t('search.closeSearch')}
           className="shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
         >
           <X className="w-3 h-3" />

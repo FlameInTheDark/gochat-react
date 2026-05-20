@@ -240,7 +240,7 @@ function PendingRequests() {
                 variant="ghost"
                 className="w-8 h-8 text-green-500 hover:text-green-400 hover:bg-green-500/10"
                 onClick={() => void accept(user)}
-                title={t('friends.accept')}
+                aria-label={t('friends.accept')}
               >
                 <Check className="w-4 h-4" />
               </Button>
@@ -249,7 +249,7 @@ function PendingRequests() {
                 variant="ghost"
                 className="w-8 h-8 text-destructive hover:text-destructive hover:bg-destructive/10"
                 onClick={() => void decline(user)}
-                title={t('friends.decline')}
+                aria-label={t('friends.decline')}
               >
                 <X className="w-4 h-4" />
               </Button>
@@ -337,7 +337,7 @@ function FriendRow({
           variant="ghost"
           className="w-8 h-8"
           onClick={onOpenDm}
-          title={t('friends.message')}
+          aria-label={t('friends.message')}
         >
           <MessageSquare className="w-4 h-4" />
         </Button>
@@ -346,7 +346,7 @@ function FriendRow({
           variant="ghost"
           className="w-8 h-8 text-destructive hover:text-destructive hover:bg-destructive/10"
           onClick={onUnfriend}
-          title={t('friends.removeFriend')}
+          aria-label={t('friends.removeFriend')}
         >
           <UserMinus className="w-4 h-4" />
         </Button>

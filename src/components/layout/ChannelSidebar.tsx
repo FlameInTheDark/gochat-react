@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'motion/react'
@@ -33,6 +33,7 @@ import { Slider } from '@/components/ui/slider'
 import { Textarea } from '@/components/ui/textarea'
 import { useUiStore } from '@/stores/uiStore'
 import { useUnreadStore } from '@/stores/unreadStore'
+import { useReadStateStore } from '@/stores/readStateStore'
 import { useMentionStore } from '@/stores/mentionStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useVoiceStore } from '@/stores/voiceStore'
@@ -152,6 +153,41 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
     acc[parentId].push(thread)
     return acc
   }, {})
+
+  useEffect(() => {
+    if (!serverId || channels.length === 0) return
+
+    const allowedUnreadChannelIds = new Set<string>()
+    for (const channel of visibleRegular) {
+      if (channel.id != null) {
+        allowedUnreadChannelIds.add(String(channel.id))
+      }
+    }
+    for (const thread of joinedThreads) {
+      if (thread.id == null || thread.parent_id == null) continue
+      if (allowedUnreadChannelIds.has(String(thread.parent_id))) {
+        allowedUnreadChannelIds.add(String(thread.id))
+      }
+    }
+
+    const unreadStore = useUnreadStore.getState()
+    unreadStore.pruneGuildChannels(serverId, allowedUnreadChannelIds)
+
+    const readStateStore = useReadStateStore.getState()
+    for (const channelId of allowedUnreadChannelIds) {
+      const entry = useUnreadStore.getState().channels.get(channelId)
+      if (entry?.guildId === serverId && !readStateStore.isUnread(channelId)) {
+        useUnreadStore.getState().markRead(channelId)
+      }
+    }
+    for (const thread of joinedThreads) {
+      if (thread.id == null || thread.parent_id == null) continue
+      const threadId = String(thread.id)
+      if (allowedUnreadChannelIds.has(threadId) && readStateStore.isUnread(threadId)) {
+        unreadStore.markUnread(threadId, serverId)
+      }
+    }
+  }, [serverId, channels, visibleRegular, joinedThreads])
 
 
   const isDeletingCategory = deletingChannel?.type === ChannelType.ChannelTypeGuildCategory
@@ -1053,25 +1089,17 @@ function ThreadNavItems({
     <div className="ml-7 mt-0.5 space-y-0.5">
       {threads.map((thread) => {
         const threadId = String(thread.id)
-        const isActive = threadId === activeChannelId
         const canManageThisThread = canManageThreads ||
           (currentUserId != null && String(thread.creator_id) === currentUserId)
         return (
           <ContextMenu key={threadId}>
             <ContextMenuTrigger asChild>
-              <button
-                type="button"
+              <ThreadNavButton
+                threadId={threadId}
+                name={thread.name}
+                isActive={threadId === activeChannelId}
                 onClick={() => navigate(`/app/${serverId}/${threadId}`)}
-                className={cn(
-                  'group/thread flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
-                  isActive
-                    ? 'bg-white/[0.07] text-foreground font-medium'
-                    : 'text-muted-foreground hover:bg-white/[0.045] hover:text-foreground',
-                )}
-              >
-                <CornerDownRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
-                <span className="min-w-0 flex-1 truncate">{thread.name ?? threadId}</span>
-              </button>
+              />
             </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuItem
@@ -1126,6 +1154,46 @@ function ThreadNavItems({
         )
       })}
     </div>
+  )
+}
+
+function ThreadNavButton({
+  threadId,
+  name,
+  isActive,
+  onClick,
+}: {
+  threadId: string
+  name?: string
+  isActive: boolean
+  onClick: () => void
+}) {
+  const isUnread = useUnreadStore((s) => s.channels.has(threadId))
+  const mentionCount = useMentionStore((s) => s.getChannelMentionCount(threadId))
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'group/thread flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
+        isActive
+          ? 'bg-white/[0.07] text-foreground font-medium'
+          : isUnread
+            ? 'text-foreground hover:bg-white/[0.045]'
+            : 'text-muted-foreground hover:bg-white/[0.045] hover:text-foreground',
+      )}
+    >
+      <CornerDownRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
+      <span className={cn('min-w-0 flex-1 truncate', isUnread && 'font-medium')}>{name ?? threadId}</span>
+      {mentionCount > 0 ? (
+        <span className="ml-auto flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-destructive-foreground">
+          {mentionCount > 99 ? '99+' : mentionCount}
+        </span>
+      ) : isUnread ? (
+        <span className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-white" />
+      ) : null}
+    </button>
   )
 }
 

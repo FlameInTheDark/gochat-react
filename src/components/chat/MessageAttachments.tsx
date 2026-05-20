@@ -715,7 +715,7 @@ function AttachmentVideo({
           controlsVisible || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none',
         )}
         onClick={(e) => e.stopPropagation()}
-        title={`Download ${meta.name}`}
+        aria-label={`Download ${meta.name}`}
       >
         <Download className="h-5 w-5" />
       </a>
@@ -827,7 +827,6 @@ function AttachmentVideo({
             <button
               onClick={toggleFullscreen}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-white transition-colors hover:text-white/70"
-              title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
               aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
             >
               {isFullscreen ? <Minimize className="h-5 w-5" /> : <Maximize className="h-5 w-5" />}

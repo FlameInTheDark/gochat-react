@@ -79,7 +79,7 @@ function GuildDiscoveryCard({
             <span
               key={tag}
               className="max-w-full truncate rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground"
-              title={tag}
+              aria-label={tag}
             >
               {tag}
             </span>

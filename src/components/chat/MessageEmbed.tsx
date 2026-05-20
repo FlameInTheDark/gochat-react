@@ -247,7 +247,7 @@ export default function MessageEmbed({ embed }: Props) {
                 <iframe
                   className="h-full w-full"
                   src={`${videoUrl}?autoplay=1`}
-                  title={embed.title ?? 'Video'}
+                  aria-label={embed.title ?? 'Video'}
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
                 />

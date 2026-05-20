@@ -437,7 +437,7 @@ function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
             {FOLDER_COLORS.map((c) => (
               <button
                 key={c.value}
-                title={c.label}
+                aria-label={c.label}
                 onClick={() => setColor(c.value)}
                 className={cn(
                   'w-6 h-6 rounded-full border-2 transition-all',
@@ -1595,7 +1595,7 @@ export default function ServerSidebar() {
           </div>
 
           <div className="mt-3 min-h-0 w-16 flex-1 overflow-visible rounded-xl border border-white/[0.08] bg-white/[0.035]">
-            <div className="app-scrollbar -ml-0.5 flex h-full min-h-0 w-[calc(100%+0.125rem)] flex-col items-center gap-3 overflow-y-auto overflow-x-hidden overscroll-contain py-2 pl-2.5 pr-2">
+            <div className="scrollbar-none -ml-0.5 flex h-full min-h-0 w-[calc(100%+0.125rem)] flex-col items-center gap-3 overflow-y-auto overflow-x-hidden overscroll-contain py-2 pl-2.5 pr-2">
               <div className="relative flex w-full flex-col items-center gap-3">
                 <TopLevelDropZone
                   id={TOP_LEVEL_DROP_TOP}

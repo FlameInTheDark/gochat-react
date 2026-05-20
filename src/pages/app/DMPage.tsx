@@ -327,7 +327,7 @@ export default function DMPage() {
           <button
             onClick={() => navigate('/app/@me')}
             className="w-8 h-8 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors shrink-0 -ml-1"
-            title="Back to DMs"
+            aria-label="Back to DMs"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
@@ -349,7 +349,7 @@ export default function DMPage() {
             {!isGroupDm && (
               <button
                 onClick={() => void handleStartOrJoinCall()}
-                title={activeCall ? 'Join call' : 'Start call'}
+                aria-label={activeCall ? 'Join call' : 'Start call'}
                 className="w-9 h-9 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors"
               >
                 <Phone className="w-4 h-4" />
@@ -365,7 +365,7 @@ export default function DMPage() {
                   clearSearch()
                 }
               }}
-              title="Search"
+              aria-label="Search"
               className={cn(
                 'w-9 h-9 flex items-center justify-center rounded transition-colors',
                 mobileSearchOpen || hasSearched
@@ -383,7 +383,7 @@ export default function DMPage() {
             {!isGroupDm && (
               <button
                 onClick={() => void handleStartOrJoinCall()}
-                title={activeCall ? 'Join call' : 'Start call'}
+                aria-label={activeCall ? 'Join call' : 'Start call'}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
               >
                 <Phone className="h-4 w-4" />
@@ -448,7 +448,7 @@ export default function DMPage() {
               <button
                 type="button"
                 onClick={() => setIsCallChatHidden((hidden) => !hidden)}
-                title={isCallChatHidden ? 'Show chat' : 'Hide chat'}
+                aria-label={isCallChatHidden ? 'Show chat' : 'Hide chat'}
                 className="absolute right-3 top-3 z-30 flex h-8 w-8 items-center justify-center rounded-full bg-background/80 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent hover:text-foreground"
               >
                 {isCallChatHidden ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}

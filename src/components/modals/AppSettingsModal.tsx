@@ -51,6 +51,17 @@ function hexToNum(hex: string): number {
 
 const DEFAULT_BANNER_COLOR = '#5865f2'
 const DEFAULT_PANEL_COLOR = '#2b2d31'
+const PROFILE_COLOR_PRESETS: { label: string; value: string }[] = [
+  { label: 'Red', value: '#f04747' },
+  { label: 'Orange', value: '#faa61a' },
+  { label: 'Yellow', value: '#ffd83d' },
+  { label: 'Green', value: '#43b581' },
+  { label: 'Teal', value: '#1abc9c' },
+  { label: 'Blue', value: '#7289da' },
+  { label: 'Indigo', value: '#5865f2' },
+  { label: 'Purple', value: '#b3a3e5' },
+  { label: 'Pink', value: '#e91e8c' },
+]
 
 function Toggle({ value, onToggle }: { value: boolean; onToggle: () => void }) {
   return (
@@ -74,6 +85,93 @@ function Toggle({ value, onToggle }: { value: boolean; onToggle: () => void }) {
 
 function hasDevice(devices: MediaDeviceInfo[], deviceId: string): boolean {
   return devices.some((device) => device.deviceId === deviceId)
+}
+
+function ColorPaletteField({
+  label,
+  value,
+  defaultColor,
+  customLabel,
+  defaultLabel,
+  resetLabel,
+  onChange,
+  onReset,
+}: {
+  label: string
+  value: string | null
+  defaultColor: string
+  customLabel: string
+  defaultLabel: string
+  resetLabel: string
+  onChange: (value: string) => void
+  onReset: () => void
+}) {
+  const colorInputRef = useRef<HTMLInputElement>(null)
+  const normalizedValue = value?.toLowerCase() ?? null
+  const isCustomColor = normalizedValue !== null && !PROFILE_COLOR_PRESETS.some((preset) => preset.value === normalizedValue)
+
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          aria-label={`${customLabel}: ${label}`}
+          onClick={() => colorInputRef.current?.click()}
+          className={cn(
+            'relative h-7 w-7 rounded-md border-2 border-dashed transition-colors',
+            isCustomColor
+              ? 'border-foreground ring-2 ring-foreground/25 ring-offset-2 ring-offset-background'
+              : 'border-muted-foreground/55 hover:border-foreground/80',
+          )}
+          style={{ backgroundColor: value ?? defaultColor }}
+        >
+          <input
+            ref={colorInputRef}
+            type="color"
+            value={value ?? defaultColor}
+            aria-label={`${customLabel}: ${label}`}
+            onChange={(e) => onChange(e.target.value)}
+            className="sr-only"
+          />
+        </button>
+        {PROFILE_COLOR_PRESETS.map((preset) => {
+          const selected = normalizedValue === preset.value
+          return (
+            <button
+              key={preset.value}
+              type="button"
+              aria-label={`${label}: ${preset.label}`}
+              onClick={() => onChange(preset.value)}
+              className={cn(
+                'h-7 w-7 rounded-md border-2 transition-colors',
+                selected
+                  ? 'border-foreground ring-2 ring-foreground/25 ring-offset-2 ring-offset-background'
+                  : 'border-transparent opacity-80 hover:opacity-100',
+              )}
+              style={{ backgroundColor: preset.value }}
+            />
+          )
+        })}
+      </div>
+      <div className="flex h-5 items-center gap-3">
+        {value !== null ? (
+          <>
+            <span className="text-xs font-mono text-muted-foreground">{value.toUpperCase()}</span>
+            <button
+              type="button"
+              onClick={onReset}
+              className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {resetLabel}
+            </button>
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground italic">{defaultLabel}</span>
+        )}
+      </div>
+    </div>
+  )
 }
 
 export default function AppSettingsModal() {
@@ -673,7 +771,7 @@ export default function AppSettingsModal() {
                     <div
                       className="relative shrink-0 group cursor-pointer"
                       onClick={() => !uploadingAvatar && avatarInputRef.current?.click()}
-                      title={t('settings.changeAvatar')}
+                      aria-label={t('settings.changeAvatar')}
                     >
                       <Avatar className="w-16 h-16 text-2xl">
                         <AvatarImage src={localAvatarUrl ?? user?.avatar?.url} alt={user?.name ?? ''} className="object-cover" />
@@ -782,55 +880,27 @@ export default function AppSettingsModal() {
                           />
                         </div>
 
-                        <div className="space-y-2">
-                          <Label>{t('settings.bannerColor')}</Label>
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="color"
-                              value={bannerColor ?? DEFAULT_BANNER_COLOR}
-                              onChange={(e) => setBannerColor(e.target.value)}
-                              className="w-10 h-9 rounded cursor-pointer border border-input bg-background p-0.5"
-                            />
-                            {bannerColor !== null ? (
-                              <>
-                                <span className="text-sm font-mono text-muted-foreground">{bannerColor.toUpperCase()}</span>
-                                <button
-                                  onClick={() => setBannerColor(null)}
-                                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                                >
-                                  {t('settings.resetToDefaults')}
-                                </button>
-                              </>
-                            ) : (
-                              <span className="text-xs text-muted-foreground italic">Default</span>
-                            )}
-                          </div>
-                        </div>
+                        <ColorPaletteField
+                          label={t('settings.bannerColor')}
+                          value={bannerColor}
+                          defaultColor={DEFAULT_BANNER_COLOR}
+                          customLabel="Custom color"
+                          defaultLabel={t('settings.denoiserDefault')}
+                          resetLabel={t('settings.resetToDefaults')}
+                          onChange={setBannerColor}
+                          onReset={() => setBannerColor(null)}
+                        />
 
-                        <div className="space-y-2">
-                          <Label>{t('settings.panelColor')}</Label>
-                          <div className="flex items-center gap-3">
-                            <input
-                              type="color"
-                              value={panelColor ?? DEFAULT_PANEL_COLOR}
-                              onChange={(e) => setPanelColor(e.target.value)}
-                              className="w-10 h-9 rounded cursor-pointer border border-input bg-background p-0.5"
-                            />
-                            {panelColor !== null ? (
-                              <>
-                                <span className="text-sm font-mono text-muted-foreground">{panelColor.toUpperCase()}</span>
-                                <button
-                                  onClick={() => setPanelColor(null)}
-                                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-                                >
-                                  {t('settings.resetToDefaults')}
-                                </button>
-                              </>
-                            ) : (
-                              <span className="text-xs text-muted-foreground italic">Default</span>
-                            )}
-                          </div>
-                        </div>
+                        <ColorPaletteField
+                          label={t('settings.panelColor')}
+                          value={panelColor}
+                          defaultColor={DEFAULT_PANEL_COLOR}
+                          customLabel="Custom color"
+                          defaultLabel={t('settings.denoiserDefault')}
+                          resetLabel={t('settings.resetToDefaults')}
+                          onChange={setPanelColor}
+                          onReset={() => setPanelColor(null)}
+                        />
 
                         <Button
                           onClick={() => void handleSaveProfile()}
@@ -1378,7 +1448,6 @@ export default function AppSettingsModal() {
                       size="sm"
                       className="shrink-0 gap-2"
                       disabled
-                      title={t('settings.deleteAccount')}
                     >
                       <Trash2 className="w-4 h-4" />
                       {t('settings.delete')}

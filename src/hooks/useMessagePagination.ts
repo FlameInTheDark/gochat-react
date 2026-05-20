@@ -126,6 +126,13 @@ function getNewestMessage(messages: DtoMessage[]): DtoMessage | null {
   return messages[messages.length - 1] ?? null
 }
 
+export function resolveAckMessageId(
+  newestLoadedMessageId: string | number | undefined,
+  knownLatestMessageId: string | number | undefined,
+): string | undefined {
+  return maxSnowflake(newestLoadedMessageId, knownLatestMessageId)
+}
+
 function getBoundaryPosition(message: DtoMessage | null | undefined): number | undefined {
   return typeof message?.position === 'number' ? message.position : undefined
 }
@@ -1708,11 +1715,12 @@ export function useMessagePagination(
     )
     const newestLoadedMessage = getNewestMessage(materializedMessages)
 
-    // When the channel is empty (all messages deleted), fall back to the channel's
-    // known latest message ID so the unread indicator is cleared.
-    const nextReadMessageId = newestLoadedMessage?.id != null
+    // The server's latest pointer can temporarily refer to a deleted message.
+    // At the bottom, ACK the newest known ID so stale unread markers can clear.
+    const newestLoadedMessageId = newestLoadedMessage?.id != null
       ? String(newestLoadedMessage.id)
-      : knownLatestMessageIdRef.current
+      : undefined
+    const nextReadMessageId = resolveAckMessageId(newestLoadedMessageId, knownLatestMessageIdRef.current)
     if (!nextReadMessageId) return
     const currentReadMessageId = useReadStateStore.getState().readStates[cid]
     if (compareSnowflakes(nextReadMessageId, currentReadMessageId) <= 0) return

@@ -33,6 +33,12 @@ interface ReadStateStore {
 // Debounce map: only the most-recent ACK per channel fires after 800 ms idle.
 const pendingAcks = new Map<string, ReturnType<typeof setTimeout>>()
 
+function normalizePositiveMessageId(id: string | number | null | undefined): string | undefined {
+  if (id == null) return undefined
+  const value = String(id)
+  return compareSnowflakes(value, '0') > 0 ? value : undefined
+}
+
 function hasUnreadMessages(lastReadId: string | undefined, lastMessageId: string | undefined): boolean {
   if (!lastMessageId) return false
   if (!lastReadId) return true
@@ -55,29 +61,44 @@ export const useReadStateStore = create<ReadStateStore>((set, get) => ({
     const glm = res.guilds_last_messages ?? {}
     for (const channelMap of Object.values(glm)) {
       for (const [chId, msgId] of Object.entries(channelMap)) {
-        lastMessages[chId] = String(msgId)
+        const messageId = normalizePositiveMessageId(msgId)
+        if (messageId) lastMessages[chId] = messageId
       }
     }
     for (const [threadId, msgId] of Object.entries(res.threads_last_messages ?? {})) {
-      lastMessages[threadId] = String(msgId)
+      const messageId = normalizePositiveMessageId(msgId)
+      if (messageId) lastMessages[threadId] = messageId
     }
 
     set({ readStates, lastMessages })
+
+    const threadGuilds = new Map<string, string>()
+    for (const [guildId, parentMap] of Object.entries(res.joined_threads ?? {})) {
+      for (const threadIds of Object.values(parentMap)) {
+        for (const threadId of threadIds ?? []) {
+          threadGuilds.set(String(threadId), guildId)
+        }
+      }
+    }
 
     // Seed the visual unread store from the diff
     const unreadChannels = new Map<string, { guildId: string | null }>()
     for (const [guildId, channelMap] of Object.entries(glm)) {
       for (const [channelId, lastMsgId] of Object.entries(channelMap)) {
+        const messageId = normalizePositiveMessageId(lastMsgId)
+        if (!messageId) continue
         const lastRead = readStates[channelId]
-        if (hasUnreadMessages(lastRead, String(lastMsgId))) {
+        if (hasUnreadMessages(lastRead, messageId)) {
           unreadChannels.set(channelId, { guildId })
         }
       }
     }
     for (const [threadId, lastMsgId] of Object.entries(res.threads_last_messages ?? {})) {
+      const messageId = normalizePositiveMessageId(lastMsgId)
+      if (!messageId) continue
       const lastRead = readStates[threadId]
-      if (hasUnreadMessages(lastRead, String(lastMsgId))) {
-        unreadChannels.set(threadId, { guildId: null })
+      if (hasUnreadMessages(lastRead, messageId)) {
+        unreadChannels.set(threadId, { guildId: threadGuilds.get(threadId) ?? null })
       }
     }
     useUnreadStore.getState().replaceChannels(unreadChannels)
@@ -147,6 +168,10 @@ export const useReadStateStore = create<ReadStateStore>((set, get) => ({
     const currentReadState = get().readStates[channelId]
     const nextMessageId = maxSnowflake(currentReadState, messageId) ?? String(messageId)
     if (compareSnowflakes(nextMessageId, currentReadState) <= 0) {
+      useUnreadStore.getState().markRead(channelId)
+      if (currentReadState) {
+        useMentionStore.getState().clearMentionsUpTo(channelId, currentReadState)
+      }
       return
     }
 

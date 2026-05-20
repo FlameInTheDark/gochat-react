@@ -440,7 +440,7 @@ export default function MicTest({
                   'gap-1.5 text-xs font-normal',
                   bypassGate ? 'text-green-400 hover:text-green-300' : 'text-muted-foreground',
                 )}
-                title={bypassGate ? 'Click to apply threshold' : 'Click to hear yourself without threshold'}
+                aria-label={bypassGate ? 'Click to apply threshold' : 'Click to hear yourself without threshold'}
               >
                 {bypassGate
                   ? <Volume2 className="w-3.5 h-3.5" />
