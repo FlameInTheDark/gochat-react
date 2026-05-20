@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import ServerSidebar from './ServerSidebar'
 import MobileServerList from './mobile/MobileServerList'
 import { useBackgroundStore } from '@/stores/backgroundStore'
 import { useClientMode } from '@/hooks/useClientMode'
@@ -40,16 +39,12 @@ export default function AppShell({ children }: Props) {
     )
   }
 
-  // Desktop layout — unchanged
   return (
-    <div className="flex h-dvh w-screen overflow-hidden bg-background">
-      <ServerSidebar />
-      <div
-        className="flex flex-1 min-w-0 bg-cover bg-center bg-no-repeat"
-        style={backgroundDataUrl ? { backgroundImage: `url(${backgroundDataUrl})` } : undefined}
-      >
-        {children}
-      </div>
+    <div
+      className="flex h-dvh w-screen overflow-hidden bg-background bg-cover bg-center bg-no-repeat"
+      style={backgroundDataUrl ? { backgroundImage: `url(${backgroundDataUrl})` } : undefined}
+    >
+      {children}
     </div>
   )
 }

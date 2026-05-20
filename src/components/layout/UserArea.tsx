@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Circle, CircleDot, MinusCircle, Moon, Pencil, Settings, X } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Ban, Check, Circle, Moon, Pencil, Settings } from 'lucide-react'
 import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
@@ -9,21 +9,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  DropdownMenuLabel,
-} from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useAuthStore } from '@/stores/authStore'
 import { usePresenceStore, STATUS_META, type UserStatus } from '@/stores/presenceStore'
 import { sendPresenceStatus } from '@/services/wsService'
 import { useUiStore } from '@/stores/uiStore'
-import { userApi } from '@/api/client'
 import type { ModelUserSettingsData } from '@/client'
 import { saveSettings } from '@/lib/settingsApi'
 import { queryClient } from '@/lib/queryClient'
@@ -33,14 +25,34 @@ import { useTranslation } from 'react-i18next'
 
 const MAX_STATUS_LEN = 128
 
-const STATUS_ICONS: Record<UserStatus, React.ReactNode> = {
-  online: <Circle className="w-3.5 h-3.5 fill-green-500 text-green-500" />,
-  idle: <Moon className="w-3.5 h-3.5 text-yellow-500" />,
-  dnd: <MinusCircle className="w-3.5 h-3.5 text-red-500" />,
-  offline: <CircleDot className="w-3.5 h-3.5 text-gray-500" />,
+const STATUS_ICONS: Record<UserStatus, ReactNode> = {
+  online: <span className="h-3.5 w-3.5 rounded-full bg-emerald-400" />,
+  idle: <Moon className="h-4 w-4 text-amber-400" />,
+  dnd: <Ban className="h-4 w-4 text-red-500" />,
+  offline: <Circle className="h-4 w-4 text-zinc-500" />,
 }
 
-export default function UserArea() {
+interface UserAreaProps {
+  className?: string
+}
+
+function MenuRow({
+  children,
+  onClick,
+}: {
+  children: ReactNode
+  onClick?: () => void
+}) {
+  return (
+    <button type="button" onClick={onClick} className="block w-full px-2 py-0.5 text-left">
+      <div className="flex h-8 items-center gap-3 rounded-md px-2 text-zinc-200 transition-colors hover:bg-white/[0.09]">
+        {children}
+      </div>
+    </button>
+  )
+}
+
+export default function UserArea({ className }: UserAreaProps) {
   const user = useAuthStore((s) => s.user)
   const ownStatus = usePresenceStore((s) => s.ownStatus)
   const setOwnStatus = usePresenceStore((s) => s.setOwnStatus)
@@ -50,16 +62,41 @@ export default function UserArea() {
   const { t } = useTranslation()
 
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!menuOpen) return undefined
+
+    function handlePointerDown(event: PointerEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMenuOpen(false)
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [menuOpen])
 
   function handleStatusChange(status: UserStatus) {
     setOwnStatus(status)
     sendPresenceStatus(status)
+    setMenuOpen(false)
   }
 
   function openDialog() {
     setDraft(customStatusText)
+    setMenuOpen(false)
     setDialogOpen(true)
   }
 
@@ -84,90 +121,90 @@ export default function UserArea() {
   }
 
   const initials = (user?.name ?? '?').charAt(0).toUpperCase()
+  const statusLabel = STATUS_META[ownStatus].label
+  const presenceLine = customStatusText
+    ? `${statusLabel} · ${customStatusText}`
+    : user?.discriminator
+      ? `${statusLabel} · #${user.discriminator}`
+      : statusLabel
 
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button className="flex items-center gap-2 w-full px-1 py-1.5 rounded hover:bg-accent transition-colors focus:outline-none">
+      <div
+        ref={menuRef}
+        className={cn('relative flex h-[60px] rounded-xl border border-white/[0.08] bg-white/[0.035] p-1.5', className)}
+      >
+        {menuOpen && (
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-60 overflow-hidden rounded-xl border border-white/[0.1] bg-[#15161b] py-2 text-sm text-zinc-200 ring-1 ring-black/20">
+            <MenuRow onClick={openDialog}>
+              <Pencil className="h-4 w-4 text-zinc-400" />
+              <span>{t('userArea.setCustomStatus')}</span>
+            </MenuRow>
+
+            <div className="my-2 h-px bg-white/[0.08]" />
+
+            <div className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+              {t('userArea.setStatus')}
+            </div>
+
+            {(Object.keys(STATUS_META) as UserStatus[]).map((status) => (
+              <MenuRow key={status} onClick={() => handleStatusChange(status)}>
+                {STATUS_ICONS[status]}
+                <span className="flex-1">{STATUS_META[status].label}</span>
+                {ownStatus === status && <Check className="h-4 w-4 text-zinc-400" />}
+              </MenuRow>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-1 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((value) => !value)}
+            className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1 text-left transition-colors hover:bg-white/[0.055] focus:outline-none"
+          >
             <div className="relative shrink-0">
-              <Avatar className="w-8 h-8">
+              <Avatar className="h-8 w-8">
                 <AvatarImage src={user?.avatar?.url} alt={user?.name ?? ''} className="object-cover" />
                 <AvatarFallback className="text-xs">{initials}</AvatarFallback>
               </Avatar>
               <StatusDot
                 status={ownStatus}
-                className="absolute -bottom-0.5 -right-0.5 w-3 h-3"
+                className="absolute -bottom-0.5 -right-0.5 h-3 w-3 border-[#0b0c11]"
               />
             </div>
 
-            <div className="flex-1 min-w-0 text-left">
-              <p className="text-xs font-semibold truncate leading-tight">{user?.name ?? '…'}</p>
-              {customStatusText ? (
-                <p className="text-[10px] text-muted-foreground truncate leading-tight italic">
-                  {customStatusText}
-                </p>
-              ) : user?.discriminator ? (
-                <p className="text-[10px] text-muted-foreground truncate leading-tight">
-                  #{user.discriminator}
-                </p>
-              ) : null}
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold leading-tight text-foreground">{user?.name ?? '...'}</p>
+              <p
+                className={cn(
+                  'truncate text-xs leading-tight',
+                  ownStatus === 'online' ? 'text-emerald-400'
+                    : ownStatus === 'idle' ? 'text-amber-300'
+                      : ownStatus === 'dnd' ? 'text-red-400'
+                        : 'text-muted-foreground',
+                )}
+              >
+                {presenceLine}
+              </p>
             </div>
           </button>
-        </DropdownMenuTrigger>
 
-        <DropdownMenuContent side="top" align="start" className="w-56">
-          <DropdownMenuLabel className="text-xs font-normal opacity-60">
-            {t('userArea.signedInAs', { name: user?.name })}
-          </DropdownMenuLabel>
-          <DropdownMenuSeparator />
-
-          <DropdownMenuItem onClick={openDialog} className="gap-2">
-            <Pencil className="w-4 h-4 shrink-0" />
-            <span className={cn('flex-1 truncate', !customStatusText && 'text-muted-foreground')}>
-              {customStatusText || t('userArea.setCustomStatus')}
-            </span>
-            {customStatusText && (
-              <span
-                role="button"
-                aria-label={t('userArea.clearCustomStatus')}
-                className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  void saveCustomStatus('')
-                }}
+          <Tooltip delayDuration={400}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={openAppSettings}
+                aria-label={t('userArea.settings')}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
               >
-                <X className="w-3.5 h-3.5" />
-              </span>
-            )}
-          </DropdownMenuItem>
-
-          <DropdownMenuSeparator />
-
-          <DropdownMenuLabel className="text-xs font-semibold uppercase tracking-wide text-muted-foreground pb-0.5">
-            {t('userArea.setStatus')}
-          </DropdownMenuLabel>
-          {(Object.keys(STATUS_META) as UserStatus[]).map((status) => (
-            <DropdownMenuItem
-              key={status}
-              onClick={() => handleStatusChange(status)}
-              className="gap-2"
-            >
-              {STATUS_ICONS[status]}
-              <span>{STATUS_META[status].label}</span>
-              {ownStatus === status && (
-                <span className="ml-auto text-muted-foreground text-xs">✓</span>
-              )}
-            </DropdownMenuItem>
-          ))}
-
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={openAppSettings} className="gap-2">
-            <Settings className="w-4 h-4" />
-            {t('userArea.settings')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+                <Settings className="h-4 w-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{t('userArea.settings')}</TooltipContent>
+          </Tooltip>
+        </div>
+      </div>
 
       <Dialog open={dialogOpen} onOpenChange={(open) => !open && setDialogOpen(false)}>
         <DialogContent className="sm:max-w-sm">

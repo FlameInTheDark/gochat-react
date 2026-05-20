@@ -4,6 +4,7 @@ import * as React from "react"
 import { Avatar as AvatarPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { imageRetryUrl, resolveAssetUrl } from "@/lib/assetUrl"
 
 function Avatar({
   className,
@@ -27,12 +28,39 @@ function Avatar({
 
 function AvatarImage({
   className,
+  src,
+  onLoadingStatusChange,
   ...props
 }: React.ComponentProps<typeof AvatarPrimitive.Image>) {
+  const resolvedSrc = React.useMemo(() => resolveAssetUrl(src), [src])
+  const [attempt, setAttempt] = React.useState(0)
+  const retryTimerRef = React.useRef<number | null>(null)
+
+  React.useEffect(() => {
+    setAttempt(0)
+  }, [resolvedSrc])
+
+  React.useEffect(() => () => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current)
+    }
+  }, [])
+
+  const currentSrc = React.useMemo(() => imageRetryUrl(resolvedSrc, attempt), [resolvedSrc, attempt])
+
   return (
     <AvatarPrimitive.Image
       data-slot="avatar-image"
+      src={currentSrc}
       className={cn("aspect-square size-full", className)}
+      onLoadingStatusChange={(status) => {
+        onLoadingStatusChange?.(status)
+        if (status !== 'error' || attempt >= 2 || typeof window === 'undefined') return
+
+        retryTimerRef.current = window.setTimeout(() => {
+          setAttempt((current) => Math.min(current + 1, 2))
+        }, 250 * (attempt + 1))
+      }}
       {...props}
     />
   )

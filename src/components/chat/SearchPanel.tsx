@@ -60,7 +60,7 @@ function ResultCard({
 
       {/* Full message rendering */}
       <div className="px-1 pb-2 cursor-pointer" onClick={onJump}>
-        <MessageItem message={msg} resolver={resolver} attachmentMaxWidth={220} />
+        <MessageItem message={msg} resolver={resolver} attachmentMaxWidth={220} showQuickActions={false} />
       </div>
     </div>
   )

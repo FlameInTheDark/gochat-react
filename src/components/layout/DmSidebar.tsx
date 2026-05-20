@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Users, MessageSquare, X, XCircle, ChevronLeft, UserPlus, UserMinus, Check, MessageCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -79,7 +78,7 @@ export default function DmSidebar() {
   ]
 
   return (
-    <div className={cn('flex flex-col bg-sidebar border-r border-sidebar-border', isMobile ? 'w-full flex-1 min-h-0' : 'w-60 shrink-0')}>
+    <div className={cn('flex flex-col bg-sidebar', isMobile ? 'w-full flex-1 min-h-0 border-r border-sidebar-border' : 'min-w-0 flex-1')}>
       {/* Mobile: back to server list */}
       {isMobile && (
         <button
@@ -111,7 +110,7 @@ export default function DmSidebar() {
         </div>
       ) : (
         /* Desktop header */
-        <div className="h-12 flex items-center px-3 font-semibold border-b border-sidebar-border shrink-0">
+        <div className="mx-2 mt-3 mb-2 flex h-12 items-center rounded-xl border border-white/[0.08] bg-white/[0.035] px-3 text-sm font-semibold shrink-0">
           <span className="text-sm">{t('dm.title')}</span>
         </div>
       )}
@@ -120,17 +119,17 @@ export default function DmSidebar() {
 
       {/* Messages tab (desktop always, mobile when tab === 'messages') */}
       {(!isMobile || mobileTab === 'messages') && (
-        <ScrollArea className="flex-1">
-          <div className="p-2">
+        <ScrollArea className="app-scrollbar flex-1">
+          <div className="space-y-1 px-2 pt-2 pb-4">
             {/* Friends link — desktop only (mobile has tabs) */}
             {!isMobile && (
               <button
                 onClick={() => navigate('/app/@me')}
                 className={cn(
-                  'w-full flex items-center gap-3 px-2 py-2 rounded text-sm transition-colors mb-1',
+                  'w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors mb-1',
                   !activeChannelId
-                    ? 'bg-accent text-foreground'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                    ? 'bg-white/[0.08] text-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-white/[0.045]',
                 )}
               >
                 <Users className="w-4 h-4 shrink-0" />
@@ -140,7 +139,7 @@ export default function DmSidebar() {
 
             {/* DM section header */}
             {dmChannels.length > 0 && (
-              <p className="px-2 pt-3 pb-1 text-xs font-semibold uppercase text-muted-foreground tracking-wider">
+            <p className="px-1 pt-4 pb-2 text-[11px] font-semibold uppercase text-muted-foreground tracking-wide">
                 {t('dm.directMessages')}
               </p>
             )}
@@ -179,11 +178,12 @@ export default function DmSidebar() {
       {/* Add friend tab — mobile only */}
       {isMobile && mobileTab === 'add' && <MobileAddFriend />}
 
-      <VoicePanel />
-      <Separator />
-      <div className="p-2 shrink-0">
-        <UserArea />
-      </div>
+      {isMobile && (
+        <div className="relative z-20 shrink-0 space-y-2 px-2 pb-2 pt-1">
+          <VoicePanel />
+          <UserArea />
+        </div>
+      )}
     </div>
   )
 }
@@ -504,10 +504,10 @@ function DmItem({
         <button
           onClick={onNavigate}
           className={cn(
-            'w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors group text-left',
+            'w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors group text-left',
             isActive
-              ? 'bg-accent text-foreground'
-              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              ? 'bg-white/[0.08] text-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-white/[0.045]',
           )}
         >
           <div className="relative shrink-0">

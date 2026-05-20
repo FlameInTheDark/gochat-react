@@ -28,9 +28,9 @@ export default function MePage() {
   }, [])
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex flex-col flex-1 min-h-0 bg-[radial-gradient(circle_at_50%_0%,rgba(99,102,241,.10),transparent_34%),#090a0f]">
       {/* Header */}
-      <div className="h-12 flex items-center gap-4 px-4 border-b border-border shrink-0">
+      <div className="h-12 flex items-center gap-4 px-4 border-b border-white/[0.08] bg-[#090a0f] shrink-0">
         <span className="font-semibold text-sm">{t('friends.title')}</span>
         <Separator orientation="vertical" className="h-5" />
         <nav className="flex gap-1">

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback, type PointerEvent as ReactPointerEvent } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Users, ChevronLeft, Search, X, Phone, Maximize2, Minimize2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { activateChannel, deactivateChannel } from '@/services/wsService'
@@ -14,7 +14,7 @@ import { createJumpRequest, type JumpBehavior, type JumpRequest } from '@/lib/me
 import { userApi, searchApi } from '@/api/client'
 import { SearchMessageSearchRequestHasEnum } from '@/client'
 import { ChannelType } from '@/types'
-import type { DtoMember, DtoMessage } from '@/types'
+import type { DtoMember, DtoMessage, DtoUser } from '@/types'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { useClientMode } from '@/hooks/useClientMode'
@@ -31,12 +31,21 @@ interface DMPageLocationState {
   jumpToMessagePosition?: number
 }
 
+const RAW_ID_PATTERN = /^\d{10,}$/
+
+function presentableDmName(name: string | null | undefined) {
+  const trimmed = name?.trim()
+  if (!trimmed || RAW_ID_PATTERN.test(trimmed)) return null
+  return trimmed
+}
+
 export default function DMPage() {
   // NOTE: the route param is named :userId but by the time we land here the
   // navigation target is the DM *channel* ID returned by the friends API.
   const { userId: channelId } = useParams<{ userId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
+  const queryClient = useQueryClient()
   const locationState = location.state as DMPageLocationState | null
   const jumpIdFromState = locationState?.jumpToMessageId
   const jumpBehaviorFromState = locationState?.jumpBehavior ?? 'direct-scroll'
@@ -83,6 +92,16 @@ export default function DMPage() {
     ? String(dmChannel.participant_id)
     : null
 
+  const cachedParticipantUser = useMemo(() => {
+    if (!participantId) return null
+    const cachedUser = queryClient.getQueryData<DtoUser>(['user', participantId])
+    if (cachedUser) return cachedUser
+
+    return queryClient
+      .getQueryData<DtoUser[]>(['friends'])
+      ?.find((user) => String(user.id) === participantId) ?? null
+  }, [participantId, queryClient])
+
   const { data: participantUser } = useQuery({
     queryKey: ['user', participantId],
     queryFn: async () => {
@@ -91,6 +110,7 @@ export default function DMPage() {
       return res.data ?? null
     },
     enabled: !!participantId,
+    initialData: cachedParticipantUser ?? undefined,
     staleTime: 5 * 60 * 1000,
   })
 
@@ -111,9 +131,12 @@ export default function DMPage() {
 
   const displayName = useMemo(() => {
     if (isGroupDm) return dmChannel?.name ?? 'Group'
-    const name = participantUser?.name ?? dmChannel?.name ?? channelId
+    const name = participantUser?.name
+      ?? cachedParticipantUser?.name
+      ?? presentableDmName(dmChannel?.name)
+      ?? 'Direct Message'
     return `@${name}`
-  }, [isGroupDm, dmChannel?.name, participantUser?.name, channelId])
+  }, [isGroupDm, dmChannel?.name, participantUser?.name, cachedParticipantUser?.name])
 
   useEffect(() => {
     document.title = `${displayName} — GoChat`
@@ -297,9 +320,9 @@ export default function DMPage() {
   if (!channelId) return null
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
+    <div className="flex flex-col flex-1 min-h-0 bg-[radial-gradient(circle_at_50%_0%,rgba(99,102,241,.10),transparent_34%),#090a0f]">
       {/* DM Header */}
-      <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
+      <div className="h-12 border-b border-white/[0.08] flex items-center px-4 gap-2 shrink-0 bg-[#090a0f]">
         {isMobile && (
           <button
             onClick={() => navigate('/app/@me')}
@@ -368,7 +391,7 @@ export default function DMPage() {
             )}
             <SearchBar
               ref={searchBarRef}
-              className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
+              className="w-60 focus-within:w-80 transition-[width] duration-200 h-8 rounded-xl border border-white/[0.09] bg-black/20 px-3"
               members={dmMembers}
               allowedFilters={['from', 'has']}
               onSearch={(p) => void doSearch(p, 0)}
@@ -381,10 +404,10 @@ export default function DMPage() {
 
       {/* Mobile search bar row */}
       {isMobile && mobileSearchOpen && (
-        <div className="border-b border-sidebar-border bg-background px-3 py-2 shrink-0">
+        <div className="border-b border-white/[0.08] bg-[#090a0f] px-3 py-2 shrink-0">
           <SearchBar
             ref={searchBarRef}
-            className="w-full h-8 rounded-md border border-input bg-muted/30 px-2"
+            className="w-full h-8 rounded-xl border border-white/[0.09] bg-black/20 px-3"
             members={dmMembers}
             allowedFilters={['from', 'has']}
             onSearch={(p) => void doSearch(p, 0)}
@@ -466,7 +489,7 @@ export default function DMPage() {
         {/* Search results panel — full-screen overlay on mobile, side panel on desktop */}
         {hasSearched && (
           <div className={cn(
-            'flex min-h-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar shrink-0',
+            'flex min-h-0 flex-col overflow-hidden border-l border-white/[0.08] bg-sidebar shrink-0',
             isMobile ? 'absolute inset-0 z-40' : 'w-80',
           )}>
             {isMobile && (

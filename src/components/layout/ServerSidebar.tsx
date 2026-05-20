@@ -39,7 +39,7 @@ import { useTranslation } from 'react-i18next'
 import { userApi, guildApi, rolesApi } from '@/api/client'
 import { useAuthStore } from '@/stores/authStore'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { SeparatorSmall } from '@/components/ui/separator'
+import { ResilientImage } from '@/components/ui/resilient-image'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   ContextMenu,
@@ -72,7 +72,6 @@ import type { DtoRole, DtoMember } from '@/client'
 import { createPermissionChecker } from '@/lib/permissionChecker'
 import { useNotificationSettings } from '@/hooks/useNotificationSettings'
 import { NotificationsSubmenu } from './NotificationsSubmenu'
-import type { DMCallSummary } from '@/services/dmCallApi'
 import Logo from "@/assets/logo.svg?react";
 
 const TOP_LEVEL_DROP_TOP = 'sidebar-top-level-drop-top'
@@ -253,24 +252,25 @@ function computeFolderTokens(color: number): React.CSSProperties {
   } as React.CSSProperties
 }
 
-// ── Left-edge unread pill (shared by guild icons and folder buttons) ──────────
-// Pill is centred on the left edge of its parent: left-0 -translate-x-1/2.
-// Parent elements that use this should span the full 72px rail, so the pill
-// always sits on the same rail edge for DMs, top-level guilds, and folder guilds.
+// ── Panel-edge unread pill (shared by guild icons and folder buttons) ────────
+// Rail item slots sit inside 0.5rem panel padding, so the pill is offset back
+// to the panel edge while remaining fully inside the panel.
 function UnreadPill({
   isActive,
   isUnread,
   groupClass = 'group/guild',
+  edgeClassName = '-left-2',
 }: {
   isActive: boolean
   isUnread: boolean
   groupClass?: string
+  edgeClassName?: string
 }) {
   return (
     <span
       className={cn(
         'pointer-events-none absolute top-1/2 z-10 -translate-x-1/2 -translate-y-1/2',
-        'left-0',
+        edgeClassName,
         'w-1 rounded-full bg-white shadow-[0_0_0_2px_var(--color-sidebar)]',
         'transition-all duration-150',
         isActive
@@ -284,12 +284,10 @@ function UnreadPill({
 }
 
 function DMCallRailIcon({
-  call,
   peer,
   isActive,
   onNavigate,
 }: {
-  call: DMCallSummary
   peer?: DtoUser | null
   isActive: boolean
   onNavigate: () => void
@@ -299,24 +297,29 @@ function DMCallRailIcon({
 
   return (
     <div className="relative flex w-full items-center justify-center group/dm-call">
-      <UnreadPill isActive={isActive} isUnread={!isActive} groupClass="group/dm-call" />
+      <UnreadPill
+        isActive={isActive}
+        isUnread={!isActive}
+        groupClass="group/dm-call"
+        edgeClassName="-left-[9px]"
+      />
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             onClick={onNavigate}
             aria-label={label}
             className={cn(
-              'relative h-12 w-12 shrink-0 transition-all active:scale-95',
+              'relative h-11 w-11 shrink-0 transition-all active:scale-95',
               'hover:brightness-110',
             )}
           >
             <span
               className={cn(
-                'block h-12 w-12 overflow-hidden squircle bg-muted transition-all',
-                isActive && 'bg-indigo-500',
+                'block h-11 w-11 overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] transition-all',
+                isActive && 'border-white/15 bg-white/10',
               )}
             >
-              <Avatar className="h-12 w-12 rounded-none squircle">
+              <Avatar className="h-11 w-11 rounded-none">
                 <AvatarImage src={peer?.avatar?.url} alt={peer?.name ?? ''} className="object-cover" />
                 <AvatarFallback className="rounded-none bg-muted text-sm font-bold text-muted-foreground">
                   {fallback}
@@ -344,7 +347,7 @@ function MiniGuildIcon({ guild }: { guild: DtoGuild }) {
       )}
     >
       {guild.icon?.url ? (
-        <img src={guild.icon.url} alt="" className="w-full h-full object-cover" />
+        <ResilientImage src={guild.icon.url} alt="" className="w-full h-full object-cover" />
       ) : (
         <span>{(guild.name ?? '?').charAt(0).toUpperCase()}</span>
       )}
@@ -356,8 +359,8 @@ function MiniGuildIcon({ guild }: { guild: DtoGuild }) {
 function GuildDragPreview({ guild }: { guild?: DtoGuild }) {
   if (!guild) return null
   return (
-    <div className="w-12 h-12 squircle overflow-hidden opacity-90 shadow-xl">
-      <Avatar className="w-12 h-12 squircle rounded-none">
+    <div className="h-11 w-11 overflow-hidden rounded-xl opacity-90 shadow-xl">
+      <Avatar className="h-11 w-11 rounded-none">
         <AvatarImage src={guild.icon?.url} alt={guild.name ?? ''} className="object-cover" />
         <AvatarFallback className="rounded-none">{(guild.name ?? '?').charAt(0).toUpperCase()}</AvatarFallback>
       </Avatar>
@@ -370,7 +373,7 @@ function FolderDragPreview({ folder, guilds }: { folder?: GuildFolder; guilds: D
   const tokens = computeFolderTokens(folder.color)
   return (
     <div
-      className="w-12 h-12 squircle flex items-center justify-center opacity-90 shadow-2xl"
+      className="flex h-11 w-11 items-center justify-center rounded-xl opacity-90 shadow-2xl"
       style={{ ...tokens, backgroundColor: 'var(--fc-collapsed-bg)' }}
     >
       <div className="grid grid-cols-2 gap-[3px]">
@@ -541,27 +544,30 @@ function SortableGuildIconImpl({
         <Tooltip>
           <ContextMenuTrigger asChild>
             <TooltipTrigger asChild>
-              <div className="relative w-12 h-12 shrink-0">
+              <div className="relative h-11 w-11 shrink-0">
                 {isMergeTarget && <MergeDot />}
                 <button
                   {...attributes}
                   {...listeners}
                   onClick={onNavigate}
                   className={cn(
-                    'w-12 h-12 transition-all squircle overflow-hidden',
+                    'h-11 w-11 overflow-hidden rounded-xl border transition-all active:scale-95',
+                    isActive
+                      ? 'border-white/15 bg-white/10 text-white'
+                      : 'border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:bg-white/[0.07] hover:text-foreground',
                     isDragging && 'bg-muted/60 ring-1 ring-emerald-400/60',
                     isMergeTarget && 'brightness-110',
                   )}
                 >
                   {guild.icon?.url ? (
-                    <img
+                    <ResilientImage
                       src={guild.icon.url}
                       alt={guild.name ?? ''}
                       className={cn('w-full h-full object-cover', isDragging && 'opacity-0')}
                     />
                   ) : (
                     <span className={cn(
-                      'w-full h-full flex items-center justify-center font-bold text-muted-foreground bg-muted',
+                      'w-full h-full flex items-center justify-center font-bold',
                       isDragging && 'opacity-0',
                     )}>
                       {(guild.name ?? '?').charAt(0).toUpperCase()}
@@ -699,34 +705,40 @@ function SortableGuildInPanelImpl({
     <div
       ref={setNodeRef}
       style={dndStyle}
-      className="relative -mx-4 flex w-[72px] items-center justify-center group/guild"
+      className="relative flex w-10 items-center justify-center group/guild"
     >
       {dropBefore && <DropBar position="before" />}
       {dropAfter && <DropBar position="after" />}
-      <UnreadPill isActive={isActive} isUnread={isUnread} groupClass="group/guild" />
+      <UnreadPill
+        isActive={isActive}
+        isUnread={isUnread}
+        groupClass="group/guild"
+        edgeClassName="-left-3"
+      />
       <ContextMenu>
         <Tooltip>
           <ContextMenuTrigger asChild>
             <TooltipTrigger asChild>
-              <div className="relative w-10 h-10 shrink-0">
+              <div className="relative h-10 w-10 shrink-0">
                 <button
                   {...attributes}
                   {...listeners}
                   onClick={onNavigate}
                   className={cn(
-                    'w-10 h-10 transition-all squircle overflow-hidden',
+                    'h-10 w-10 overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.03] transition-all hover:bg-white/[0.07]',
+                    isActive && 'border-white/15 bg-white/10 text-white',
                     isDragging && 'bg-muted/60 ring-1 ring-emerald-400/60',
                   )}
                 >
                   {guild.icon?.url ? (
-                    <img
+                    <ResilientImage
                       src={guild.icon.url}
                       alt={guild.name ?? ''}
                       className={cn('w-full h-full object-cover', isDragging && 'opacity-0')}
                     />
                   ) : (
                     <span className={cn(
-                      'w-full h-full flex items-center justify-center font-bold text-muted-foreground bg-muted text-sm',
+                      'w-full h-full flex items-center justify-center font-bold text-muted-foreground text-sm',
                       isDragging && 'opacity-0',
                     )}>
                       {(guild.name ?? '?').charAt(0).toUpperCase()}
@@ -884,8 +896,9 @@ function SortableFolderItem({
                   {...listeners}
                   onClick={() => toggleCollapse(folder.id)}
                   className={cn(
-                    'relative w-12 h-12 squircle flex items-center justify-center',
+                    'relative flex h-11 w-11 items-center justify-center rounded-xl border border-white/[0.08]',
                     'transition-all shrink-0 hover:brightness-110 active:scale-95',
+                    isActiveInFolder && 'border-white/15',
                     isDragging && 'opacity-50 ring-1 ring-emerald-400/60',
                     isDragTarget && 'brightness-110',
                   )}
@@ -926,13 +939,18 @@ function SortableFolderItem({
       {/* Folder header button — draggable even when expanded */}
       {/* Single background card: folder icon + guild icons */}
       <div
-        className="flex flex-col items-center gap-2 rounded-2xl p-2"
+        className="flex w-14 flex-col items-center gap-2 rounded-xl border border-white/[0.08] p-2"
         style={{ backgroundColor: 'var(--fc-expanded-bg)' }}
       >
         {/* Folder header — drag handle + collapse toggle */}
-        <div className="relative -mx-4 flex w-[72px] items-center justify-center">
+        <div className="relative flex w-10 items-center justify-center">
           {isDragTarget && <MergeDot />}
-          <UnreadPill isActive={false} isUnread={isUnread} groupClass="group/folder" />
+          <UnreadPill
+            isActive={false}
+            isUnread={isUnread}
+            groupClass="group/folder"
+            edgeClassName="-left-3"
+          />
           <ContextMenu>
             <Tooltip>
               <ContextMenuTrigger asChild>
@@ -943,7 +961,7 @@ function SortableFolderItem({
                     onClick={() => toggleCollapse(folder.id)}
                     aria-label={`Collapse ${folder.name || 'folder'}`}
                     className={cn(
-                      'w-10 h-10 squircle flex items-center justify-center',
+                      'w-10 h-10 rounded-xl flex items-center justify-center border border-white/[0.08] bg-white/[0.035]',
                       'transition-all shrink-0 hover:brightness-110 active:scale-95',
                       isDragging && 'opacity-50 ring-1 ring-emerald-400/60',
                       isDragTarget && 'brightness-110',
@@ -1536,155 +1554,161 @@ export default function ServerSidebar() {
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
       >
-        <div className="flex flex-col w-[72px] bg-sidebar border-r border-sidebar-border items-center py-3 gap-3 shrink-0 overflow-y-auto overflow-x-hidden scrollbar-none">
-          {sortedActiveDMCalls.map((call, index) => {
-            const isCallActive = location.pathname === `/app/@me/${call.channelId}`
-            return (
-              <DMCallRailIcon
-                key={call.channelId}
-                call={call}
-                peer={(dmCallPeerQueries[index]?.data as DtoUser | null | undefined) ?? null}
-                isActive={isCallActive}
-                onNavigate={() => navigate(`/app/@me/${call.channelId}`)}
+        <div className="flex h-full w-[88px] shrink-0 flex-col items-center bg-sidebar px-2 pb-2 pt-2">
+          <div className="flex min-h-16 w-16 shrink-0 flex-col items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.035] p-2">
+            {sortedActiveDMCalls.map((call, index) => {
+              const isCallActive = location.pathname === `/app/@me/${call.channelId}`
+              return (
+                <DMCallRailIcon
+                  key={call.channelId}
+                  peer={(dmCallPeerQueries[index]?.data as DtoUser | null | undefined) ?? null}
+                  isActive={isCallActive}
+                  onNavigate={() => navigate(`/app/@me/${call.channelId}`)}
+                />
+              )
+            })}
+
+            {/* DMs button */}
+            <div className="relative flex w-full items-center justify-center group/dm">
+              <UnreadPill
+                isActive={dmActive}
+                isUnread={false}
+                groupClass="group/dm"
+                edgeClassName="-left-[9px]"
               />
-            )
-          })}
-
-          {/* DMs button */}
-          <div className="relative flex w-full items-center justify-center group/dm">
-            <UnreadPill isActive={dmActive} isUnread={false} groupClass="group/dm" />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => navigate('/app/@me')}
-                  className={`w-12 h-12 squircle transition-all flex items-center justify-center font-bold text-lg shrink-0 ${
-                    dmActive
-                      ? 'bg-indigo-500 text-white'
-                      : 'bg-muted text-primary-foreground hover:text-white hover:bg-indigo-500'
-                  }`}
-                >
-                  <Logo className="h-9 w-9" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Direct Messages</TooltipContent>
-            </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => navigate('/app/@me')}
+                    className={`flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-xl border text-lg font-bold transition-all active:scale-95 ${
+                      dmActive
+                        ? 'border-white/15 bg-white/10 text-white'
+                        : 'border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:bg-white/[0.07] hover:text-foreground'
+                    }`}
+                  >
+                    <Logo className="h-7 w-7" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Direct Messages</TooltipContent>
+              </Tooltip>
+            </div>
           </div>
 
-          <SeparatorSmall className="w-8 shrink-0" />
+          <div className="mt-3 min-h-0 w-16 flex-1 overflow-visible rounded-xl border border-white/[0.08] bg-white/[0.035]">
+            <div className="app-scrollbar -ml-0.5 flex h-full min-h-0 w-[calc(100%+0.125rem)] flex-col items-center gap-3 overflow-y-auto overflow-x-hidden overscroll-contain py-2 pl-2.5 pr-2">
+              <div className="relative flex w-full flex-col items-center gap-3">
+                <TopLevelDropZone
+                  id={TOP_LEVEL_DROP_TOP}
+                  active={dropIndicator?.itemId === TOP_LEVEL_DROP_TOP}
+                  placement="top"
+                />
 
-          <div className="relative flex w-full flex-col items-center gap-3">
-            <TopLevelDropZone
-              id={TOP_LEVEL_DROP_TOP}
-              active={dropIndicator?.itemId === TOP_LEVEL_DROP_TOP}
-              placement="top"
-            />
+                {/* Sortable guild + folder items */}
+                <SortableContext items={displayItems} strategy={verticalListSortingStrategy}>
+                  {displayItems.map((itemId) => {
+                    // ── Ungrouped guild ──────────────────────────────────────────────
+                    if (itemId.startsWith('guild:')) {
+                      const guildId = itemId.slice(6)
+                      const guild = guildById.get(guildId)
+                      if (!guild) return null
+                      return (
+                        <SortableGuildIcon
+                          key={itemId}
+                          itemId={itemId}
+                          guild={guild}
+                          isActive={guildId === serverId}
+                          isMergeTarget={overMergeId === itemId}
+                          dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
+                          dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
+                          onNavigate={() => { if (guildId !== serverId) navigate(`/app/${guildId}`) }}
+                          onOpenSettings={() => openServerSettings(guildId)}
+                          onLeave={() => setLeavingGuild(guild)}
+                          onNewFolder={() => openCreateFolder(guildId)}
+                          onAddToFolder={(fid) => addGuildToFolder(fid, guildId)}
+                          folders={folders}
+                          canManageServer={canManageServerMap.get(guildId) ?? false}
+                          isOwner={isOwnerMap.get(guildId) ?? false}
+                        />
+                      )
+                    }
 
-            {/* Sortable guild + folder items */}
-            <SortableContext items={displayItems} strategy={verticalListSortingStrategy}>
-              {displayItems.map((itemId) => {
-                // ── Ungrouped guild ──────────────────────────────────────────────
-                if (itemId.startsWith('guild:')) {
-                  const guildId = itemId.slice(6)
-                  const guild = guildById.get(guildId)
-                  if (!guild) return null
-                  return (
-                    <SortableGuildIcon
-                      key={itemId}
-                      itemId={itemId}
-                      guild={guild}
-                      isActive={guildId === serverId}
-                      isMergeTarget={overMergeId === itemId}
-                      dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
-                      dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
-                      onNavigate={() => { if (guildId !== serverId) navigate(`/app/${guildId}`) }}
-                      onOpenSettings={() => openServerSettings(guildId)}
-                      onLeave={() => setLeavingGuild(guild)}
-                      onNewFolder={() => openCreateFolder(guildId)}
-                      onAddToFolder={(fid) => addGuildToFolder(fid, guildId)}
-                      folders={folders}
-                      canManageServer={canManageServerMap.get(guildId) ?? false}
-                      isOwner={isOwnerMap.get(guildId) ?? false}
-                    />
-                  )
-                }
+                    // ── Folder (collapsed or expanded with inline panel) ──────────────
+                    if (itemId.startsWith('folder:')) {
+                      const folderId = itemId.slice(7)
+                      const folder = folders.find((f) => f.id === folderId)
+                      if (!folder) return null
+                      const guildsInFolder = folder.guildIds
+                        .map((id) => guildById.get(id))
+                        .filter((g): g is DtoGuild => !!g)
+                      return (
+                        <SortableFolderItem
+                          key={itemId}
+                          itemId={itemId}
+                          folder={folder}
+                          guildsInFolder={guildsInFolder}
+                          activeServerId={serverId}
+                          isDragTarget={overMergeId === itemId}
+                          dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
+                          dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
+                          dropIndicator={dropIndicator}
+                          onEditFolder={() => openEditFolder(folder)}
+                          onDissolveFolder={() => deleteFolder(folder.id)}
+                          onNavigateGuild={(gid) => { if (gid !== serverId) navigate(`/app/${gid}`) }}
+                          onGuildSettings={(gid) => openServerSettings(gid)}
+                          onLeaveGuild={(g) => setLeavingGuild(g)}
+                          onRemoveGuildFromFolder={(gid) => removeGuildFromFolder(gid)}
+                          canManageServerMap={canManageServerMap}
+                          isOwnerMap={isOwnerMap}
+                        />
+                      )
+                    }
 
-                // ── Folder (collapsed or expanded with inline panel) ──────────────
-                if (itemId.startsWith('folder:')) {
-                  const folderId = itemId.slice(7)
-                  const folder = folders.find((f) => f.id === folderId)
-                  if (!folder) return null
-                  const guildsInFolder = folder.guildIds
-                    .map((id) => guildById.get(id))
-                    .filter((g): g is DtoGuild => !!g)
-                  return (
-                    <SortableFolderItem
-                      key={itemId}
-                      itemId={itemId}
-                      folder={folder}
-                      guildsInFolder={guildsInFolder}
-                      activeServerId={serverId}
-                      isDragTarget={overMergeId === itemId}
-                      dropBefore={dropIndicator?.itemId === itemId && dropIndicator.edge === 'before'}
-                      dropAfter={dropIndicator?.itemId === itemId && dropIndicator.edge === 'after'}
-                      dropIndicator={dropIndicator}
-                      onEditFolder={() => openEditFolder(folder)}
-                      onDissolveFolder={() => deleteFolder(folder.id)}
-                      onNavigateGuild={(gid) => { if (gid !== serverId) navigate(`/app/${gid}`) }}
-                      onGuildSettings={(gid) => openServerSettings(gid)}
-                      onLeaveGuild={(g) => setLeavingGuild(g)}
-                      onRemoveGuildFromFolder={(gid) => removeGuildFromFolder(gid)}
-                      canManageServerMap={canManageServerMap}
-                      isOwnerMap={isOwnerMap}
-                    />
-                  )
-                }
+                    return null
+                  })}
+                </SortableContext>
 
-                return null
-              })}
-            </SortableContext>
+                <TopLevelDropZone
+                  id={TOP_LEVEL_DROP_BOTTOM}
+                  active={dropIndicator?.itemId === TOP_LEVEL_DROP_BOTTOM}
+                  placement="bottom"
+                />
+              </div>
 
-            <TopLevelDropZone
-              id={TOP_LEVEL_DROP_BOTTOM}
-              active={dropIndicator?.itemId === TOP_LEVEL_DROP_BOTTOM}
-              placement="bottom"
-            />
+              <div className="h-px w-8 shrink-0 rounded-full bg-white/[0.12]" />
+
+              {/* Add server button */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={openCreateServer}
+                    className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-muted-foreground transition-all hover:bg-white/[0.07] hover:text-foreground active:scale-95"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">Create a Server</TooltipContent>
+              </Tooltip>
+
+              <div className="relative flex w-full items-center justify-center group/discovery">
+                <UnreadPill isActive={discoveryActive} isUnread={false} groupClass="group/discovery" />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => navigate('/app/discovery')}
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-all active:scale-95 ${
+                        discoveryActive
+                          ? 'border-white/15 bg-white/10 text-white'
+                          : 'border-white/[0.08] bg-white/[0.03] text-muted-foreground hover:bg-white/[0.07] hover:text-foreground'
+                      }`}
+                    >
+                      <Compass className="w-5 h-5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">{t('serverSidebar.discoverServers')}</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
           </div>
-
-          <SeparatorSmall className="w-8 shrink-0" />
-
-          {/* Add server button */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={openCreateServer}
-                className="w-12 h-12 squircle transition-all bg-muted flex items-center justify-center text-muted-foreground hover:text-white hover:bg-indigo-500 shrink-0"
-              >
-                <Plus className="w-5 h-5" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Create a Server</TooltipContent>
-          </Tooltip>
-
-          <div className="relative flex w-full items-center justify-center group/discovery">
-            <UnreadPill isActive={discoveryActive} isUnread={false} groupClass="group/discovery" />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => navigate('/app/discovery')}
-                  className={`w-12 h-12 squircle transition-all flex items-center justify-center shrink-0 ${
-                    discoveryActive
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted text-muted-foreground hover:text-white hover:bg-sky-600'
-                  }`}
-                >
-                  <Compass className="w-5 h-5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">{t('serverSidebar.discoverServers')}</TooltipContent>
-            </Tooltip>
-          </div>
-
-          <div className="mt-auto" />
         </div>
 
         {/* Floating drag preview */}

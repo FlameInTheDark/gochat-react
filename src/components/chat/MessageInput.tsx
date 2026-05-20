@@ -424,7 +424,7 @@ const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput
   ) : undefined
 
   return (
-    <div className="px-4 pt-2 shrink-0" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}>
+    <div className="shrink-0 px-2 pt-2" style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom, 0px))' }}>
       {/* Hidden file input driven by the paperclip button */}
       <input
         ref={fileInputRef}

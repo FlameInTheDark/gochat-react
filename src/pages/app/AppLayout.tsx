@@ -30,6 +30,7 @@ import { useAuthProblemStore } from '@/stores/authProblemStore'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import { compareSnowflakes } from '@/lib/snowflake'
 import { voiceSettingsFromDevices } from '@/lib/voiceSettings'
+import { mergeUserPreservingAssets } from '@/lib/entityMerge'
 import { hasDMCallParticipants, normalizeDMCall, type RawDMCallSummary } from '@/services/dmCallApi'
 import { useDMCallStore } from '@/stores/dmCallStore'
 
@@ -50,8 +51,7 @@ function AuthenticatedApp() {
       const updated = (e as CustomEvent<DtoUser>).detail
       if (updated) {
         const current = useAuthStore.getState().user
-        // Merge so sparse WS updates don't clear fields like avatar
-        useAuthStore.getState().setUser(current ? { ...current, ...updated } : updated)
+        useAuthStore.getState().setUser(mergeUserPreservingAssets(current, updated))
       }
     }
     window.addEventListener('ws:user_update', handler)

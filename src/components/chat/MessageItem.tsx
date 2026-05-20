@@ -124,6 +124,7 @@ export interface MessageItemProps {
   hideContent?: boolean
   allowEdit?: boolean
   allowDelete?: boolean
+  showQuickActions?: boolean
   threadListAction?: {
     label: string
     onClick: () => void
@@ -227,6 +228,7 @@ export default function MessageItem({
   hideContent = false,
   allowEdit = true,
   allowDelete = true,
+  showQuickActions = true,
   threadListAction,
   onOpenReference,
 }: MessageItemProps) {
@@ -957,17 +959,17 @@ export default function MessageItem({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div ref={messageContainerRef} className={cn(
-            'relative flex flex-col rounded px-2 group',
+            'relative flex flex-col rounded-xl px-2 group',
             isGrouped ? 'py-0.5' : 'py-1',
             deliveryState === 'sending' && 'opacity-70',
             deliveryState === 'failed' && 'bg-red-500/8 hover:bg-red-500/12',
-            deliveryState == null && 'hover:bg-accent/40',
+            deliveryState == null && 'hover:bg-white/[0.025]',
             isMentioned && 'bg-yellow-500/10 hover:bg-yellow-500/15 border-l-2 border-yellow-500/60 pl-[6px]',
           )}>
             {/* Hover action buttons — reply + add reaction */}
-            {!isPendingMessage && hasRealMessageId && (
+            {showQuickActions && !isPendingMessage && hasRealMessageId && (
               <div className={cn(
-                'absolute -top-3 right-2 z-10 flex items-center gap-0.5 rounded border border-border bg-background shadow-sm',
+                'absolute -top-3 right-2 z-10 flex items-center gap-0.5 overflow-hidden rounded-xl border border-white/[0.1] bg-[#0f1015] shadow-sm',
                 reactionPickerOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
               )}>
                 {quickReactionEmojis.map((emoji) => (
@@ -977,7 +979,7 @@ export default function MessageItem({
                         type="button"
                         onClick={() => handleQuickReaction(emoji)}
                         aria-label={`${t('messageItem.quickReact')} ${emoji}`}
-                        className="flex h-7 w-7 items-center justify-center rounded text-base transition-colors hover:bg-muted"
+                        className="flex h-7 w-7 items-center justify-center text-base transition-colors hover:bg-white/[0.07]"
                       >
                         {emoji}
                       </button>
@@ -998,7 +1000,7 @@ export default function MessageItem({
                       type="button"
                       onClick={handleOpenReactionPicker}
                       aria-label={t('messageItem.addReaction')}
-                      className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                      className="flex h-7 w-7 items-center justify-center text-muted-foreground transition-colors hover:bg-white/[0.07] hover:text-foreground"
                     >
                       <Smile className="h-4 w-4" />
                     </button>
@@ -1012,7 +1014,7 @@ export default function MessageItem({
                         type="button"
                         onClick={replyAction.onClick}
                         aria-label={replyAction.label}
-                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                        className="flex h-7 w-7 items-center justify-center text-muted-foreground transition-colors hover:bg-white/[0.07] hover:text-foreground"
                       >
                         <ReplyIcon className="h-4 w-4" />
                       </button>
@@ -1027,7 +1029,7 @@ export default function MessageItem({
                         type="button"
                         onClick={startEdit}
                         aria-label={t('messageItem.editMessage')}
-                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                        className="flex h-7 w-7 items-center justify-center text-muted-foreground transition-colors hover:bg-white/[0.07] hover:text-foreground"
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
@@ -1042,7 +1044,7 @@ export default function MessageItem({
                         <button
                           type="button"
                           aria-label={t('messageItem.moreActions')}
-                          className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                          className="flex h-7 w-7 items-center justify-center text-muted-foreground transition-colors hover:bg-white/[0.07] hover:text-foreground"
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </button>

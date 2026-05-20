@@ -80,7 +80,7 @@ function parseMentionPill(
       key={key}
       onClick={onClick}
       data-message-interactive={onClick ? 'true' : undefined}
-      className={`rounded px-0.5 font-medium transition-colors ${PILL_CLASS[type]} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
+      className={`rounded-sm px-0.5 font-medium transition-colors ${PILL_CLASS[type]} ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
     >
       {label}
     </span>
@@ -188,7 +188,7 @@ function parseInline(
       )
     } else if (full === '@everyone' || full === '@here') {
       nodes.push(
-        <span key={k} className="bg-primary/20 text-primary rounded px-0.5 font-medium">
+        <span key={k} className="rounded-sm bg-primary/20 px-0.5 font-medium text-primary">
           {full}
         </span>,
       )

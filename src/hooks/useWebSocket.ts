@@ -13,6 +13,7 @@ import { useDMCallStore } from '@/stores/dmCallStore'
 import { hasDMCallParticipants, normalizeDMCall, type RawDMCallSummary } from '@/services/dmCallApi'
 import i18n from '@/i18n'
 import type { ModelUserSettingsData, UserUserSettingsResponse } from '@/client'
+import { mergeGuildListPreservingAssets, mergeGuildPreservingAssets, mergeUserPreservingAssets } from '@/lib/entityMerge'
 
 const VALID_STATUSES = new Set<string>(['online', 'idle', 'dnd', 'offline'])
 
@@ -176,10 +177,13 @@ export function useWebSocket() {
       const detail = (e as CustomEvent<GatewayReadyDetail | undefined>).detail
       if (!detail) return
       if (detail.user) {
-        useAuthStore.getState().setUser(detail.user)
+        const current = useAuthStore.getState().user
+        useAuthStore.getState().setUser(mergeUserPreservingAssets(current, detail.user))
       }
       if (detail.guilds) {
-        queryClient.setQueryData(['guilds'], detail.guilds)
+        queryClient.setQueryData<DtoGuild[]>(['guilds'], (old) =>
+          mergeGuildListPreservingAssets(old, detail.guilds ?? []),
+        )
         subscribeGuilds(detail.guilds.map((g) => String(g.id)))
       }
       if (detail.read_states || detail.guilds_last_messages || detail.threads_last_messages) {
@@ -367,11 +371,7 @@ export function useWebSocket() {
         return
       }
       const guildId = String(updated.id)
-      const merge = (g: DtoGuild): DtoGuild => ({
-        ...g,
-        ...updated,
-        system_channel_id: 'system_channel_id' in updated ? updated.system_channel_id : undefined,
-      })
+      const merge = (g: DtoGuild): DtoGuild => mergeGuildPreservingAssets(g, updated)
       queryClient.setQueryData<DtoGuild[]>(['guilds'], (old) =>
         old?.map((g) => String(g.id) === guildId ? merge(g) : g) ?? old,
       )

@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -100,7 +100,7 @@ function getMentionQuery(
 
   const triggerText = match[1] // e.g. "@foo", "#bar", ":smile"
   const posInText = textBefore.length - triggerText.length
-  // Must be at start of text or preceded by whitespace
+  // Must be at start of text or preceded by whitespace.
   if (posInText > 0 && !/\s/.test(textBefore[posInText - 1]!)) return null
 
   return {
@@ -363,6 +363,19 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     selection.removeAllRanges()
     selection.addRange(range)
   }, [disabled])
+
+  function handleComposerMouseDown(e: MouseEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement
+    if (
+      disabled ||
+      target.closest('[contenteditable="true"], button, a, input, textarea, select, [role="button"]')
+    ) {
+      return
+    }
+
+    e.preventDefault()
+    focusEditor()
+  }
 
   const insertMentionAtEnd = useCallback((userId: string, name: string) => {
     const el = editorRef.current
@@ -650,7 +663,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
         setActiveIdx((i) => Math.max(i - 1, 0))
         return
       }
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
         e.preventDefault()
         const item = suggestions[activeIdx]
         if (item) selectSuggestion(item)
@@ -704,17 +717,9 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     // Shift+Enter → insert <br>
     if (e.key === 'Enter' && e.shiftKey) {
       e.preventDefault()
-      const sel = window.getSelection()
-      if (sel?.rangeCount) {
-        const range = sel.getRangeAt(0)
-        range.deleteContents()
-        const br = document.createElement('br')
-        range.insertNode(br)
-        range.setStartAfter(br)
-        range.collapse(true)
-        sel.removeAllRanges()
-        sel.addRange(range)
-      }
+      document.execCommand('insertLineBreak')
+      setSuggestions([])
+      editorRef.current?.classList.remove('is-empty')
       return
     }
   }
@@ -842,7 +847,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     >
       {/* Suggestions popup — sits above the input */}
       {!disabled && suggestions.length > 0 && (
-        <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border border-border bg-popover shadow-lg overflow-hidden">
+        <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-white/[0.1] bg-popover shadow-lg">
           <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border">
             {suggestions[0]?.type === 'slash'
               ? t('chat.commands', 'Commands')
@@ -920,9 +925,10 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
       {/* ── Input box ──────────────────────────────────────────────────────── */}
       <div
         className={cn(
-          'rounded-md border border-input shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50',
+          'cursor-text rounded-xl border border-white/[0.1] bg-white/[0.035] shadow-none transition-[color,box-shadow] focus-within:border-white/[0.16] focus-within:ring-[3px] focus-within:ring-white/[0.04]',
           isDragging && 'border-primary ring-[3px] ring-primary/50',
         )}
+        onMouseDown={handleComposerMouseDown}
       >
         {topBar}
 
@@ -941,7 +947,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
         )}
 
         {/* Text editor row */}
-        <div className="flex items-end gap-1 px-3 py-2">
+        <div className="flex items-end gap-2 px-4 py-3">
           {/* Paperclip button */}
           {onAttachClick && (
             <button
@@ -949,7 +955,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
               onClick={onAttachClick}
               aria-label="Attach file"
               disabled={disabled}
-              className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+              className="mb-0.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
             >
               <Paperclip className="h-5 w-5" />
             </button>
@@ -977,8 +983,8 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
             disabled={disabled}
             onClick={() => gifOpen ? setGifOpen(false) : openPicker('gif')}
             className={cn(
-              'mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors',
-              gifOpen ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+              'mb-0.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-xl transition-colors',
+              gifOpen ? 'bg-white/[0.06] text-foreground' : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground',
             )}
           >
             <ImagePlay className="h-5 w-5" />
@@ -1003,8 +1009,8 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
             disabled={disabled}
             onClick={() => emojiOpen ? setEmojiOpen(false) : openPicker('emoji')}
             className={cn(
-              'mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded transition-colors',
-              emojiOpen ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+              'mb-0.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-xl transition-colors',
+              emojiOpen ? 'bg-white/[0.06] text-foreground' : 'text-muted-foreground hover:bg-white/[0.06] hover:text-foreground',
             )}
           >
             <Smile className="h-5 w-5" />
@@ -1034,7 +1040,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
               onClick={handleSend}
               disabled={disabled}
               aria-label={t('chat.send')}
-              className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded text-primary transition-colors hover:text-primary/80 disabled:opacity-40"
+              className="mb-0.5 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-white/[0.08] text-foreground transition-colors hover:bg-white/[0.12] disabled:cursor-not-allowed disabled:opacity-40"
             >
               <SendHorizontal className="h-5 w-5" />
             </button>

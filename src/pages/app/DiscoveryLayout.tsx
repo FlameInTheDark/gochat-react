@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router-dom'
 import DiscoverySidebar from '@/components/layout/DiscoverySidebar'
+import DesktopNavShell from '@/components/layout/DesktopNavShell'
 import { useClientMode } from '@/hooks/useClientMode'
 
 export default function DiscoveryLayout() {
@@ -10,9 +11,8 @@ export default function DiscoveryLayout() {
   }
 
   return (
-    <>
-      <DiscoverySidebar />
+    <DesktopNavShell sidebar={<DiscoverySidebar />}>
       <Outlet />
-    </>
+    </DesktopNavShell>
   )
 }

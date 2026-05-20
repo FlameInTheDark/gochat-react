@@ -734,21 +734,72 @@ export default function VoiceCallStage({
       <div className="flex shrink-0 items-center justify-center gap-2 border-t border-sidebar-border bg-background px-4 py-3">
         {isConnected ? (
           <>
-            <button onClick={toggleMute} title={voice.localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')} className={cn('flex h-10 w-10 items-center justify-center rounded-full transition-colors', voice.localMuted ? 'bg-destructive/20 text-destructive hover:bg-destructive/30' : voice.localSpeaking ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground')}>
-              {voice.localMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-            </button>
-            <button onClick={toggleDeafen} title={voice.localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')} className={cn('flex h-10 w-10 items-center justify-center rounded-full transition-colors', voice.localDeafened ? 'bg-destructive/20 text-destructive hover:bg-destructive/30' : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground')}>
-              {voice.localDeafened ? <HeadphoneOff className="h-5 w-5" /> : <Headphones className="h-5 w-5" />}
-            </button>
-            <button onClick={toggleCamera} title={voice.localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')} className={cn('flex h-10 w-10 items-center justify-center rounded-full transition-colors', voice.localCameraEnabled ? 'bg-primary/20 text-primary hover:bg-primary/30' : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground')}>
-              {voice.localCameraEnabled ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
-            </button>
-            <button onClick={() => { void handleToggleStream() }} disabled={streamButtonDisabled} title={isStreamingHere ? t('streams.stop') : t('streams.start')} className={cn('flex h-10 w-10 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50', isStreamingHere ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground')}>
-              {isStartingStream ? <Loader2 className="h-5 w-5 animate-spin" /> : <Monitor className="h-5 w-5" />}
-            </button>
-            <button onClick={handleLeave} title={t('voicePanel.disconnect')} className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive">
-              <PhoneOff className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
+              <button
+                onClick={toggleMute}
+                title={voice.localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
+                className={cn(
+                  'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                  voice.localMuted
+                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                    : voice.localSpeaking
+                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                      : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                {voice.localMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </button>
+              <button
+                onClick={toggleDeafen}
+                title={voice.localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
+                className={cn(
+                  'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                  voice.localDeafened
+                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                    : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                {voice.localDeafened ? <HeadphoneOff className="h-5 w-5" /> : <Headphones className="h-5 w-5" />}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
+              <button
+                onClick={toggleCamera}
+                title={voice.localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
+                className={cn(
+                  'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                  voice.localCameraEnabled
+                    ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                    : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                {voice.localCameraEnabled ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
+              </button>
+              <button
+                onClick={() => { void handleToggleStream() }}
+                disabled={streamButtonDisabled}
+                title={isStreamingHere ? t('streams.stop') : t('streams.start')}
+                className={cn(
+                  'flex h-10 w-10 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                  isStreamingHere
+                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                    : 'bg-muted text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                {isStartingStream ? <Loader2 className="h-5 w-5 animate-spin" /> : <Monitor className="h-5 w-5" />}
+              </button>
+            </div>
+
+            <div className="flex items-center rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
+              <button
+                onClick={handleLeave}
+                title={t('voicePanel.disconnect')}
+                className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+              >
+                <PhoneOff className="h-5 w-5" />
+              </button>
+            </div>
           </>
         ) : (
           <button onClick={() => { void onJoin?.() }} className="rounded-md bg-green-600 px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-green-500">

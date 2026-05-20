@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { guildApi } from '@/api/client'
 import type { DtoChannel } from '@/types'
 import ChannelSidebar from '@/components/layout/ChannelSidebar'
+import DesktopNavShell from '@/components/layout/DesktopNavShell'
 import { subscribeGuilds, addPresenceSubscription } from '@/services/wsService'
 import { useClientMode } from '@/hooks/useClientMode'
 import { useFolderStore } from '@/stores/folderStore'
@@ -109,9 +110,8 @@ export default function ServerLayout() {
 
   // Desktop: both side by side
   return (
-    <>
-      <ChannelSidebar channels={resolvedChannels} serverId={serverId!} />
+    <DesktopNavShell sidebar={<ChannelSidebar channels={resolvedChannels} serverId={serverId!} />}>
       <Outlet context={{ channels: resolvedChannels } satisfies ServerOutletContext} />
-    </>
+    </DesktopNavShell>
   )
 }

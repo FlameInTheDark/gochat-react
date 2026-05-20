@@ -111,7 +111,7 @@ const RIGHT_PANEL_WIDTH_KEYS: RightPanelWidthKey[] = [
 ]
 const DEFAULT_RIGHT_PANEL_WIDTHS: Record<RightPanelWidthKey, number> = {
   search: 320,
-  members: 240,
+  members: 300,
   threads: 352,
   thread: 416,
   threadCreate: 352,
@@ -1608,8 +1608,8 @@ export default function ChannelPage() {
     const streamButtonDisabled = isStartingStream || (!isStreamingHere && voiceConnectionState !== 'connected')
 
     return (
-      <div className="flex flex-col flex-1 min-h-0">
-        <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
+      <div className="flex flex-col flex-1 min-h-0 bg-[radial-gradient(circle_at_50%_0%,rgba(99,102,241,.10),transparent_34%),#090a0f]">
+        <div className="h-12 border-b border-white/[0.08] flex items-center px-4 gap-2 shrink-0 bg-[#090a0f]">
           {isMobile && (
             <button
               onClick={() => navigate(`/app/${serverId}`)}
@@ -1754,64 +1754,72 @@ export default function ChannelPage() {
         <div className="shrink-0 border-t border-sidebar-border bg-background px-4 py-3 flex items-center justify-center gap-2">
           {isConnected ? (
             <>
-              <button
-                onClick={voiceToggleMute}
-                title={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
-                className={cn(
-                  'flex items-center justify-center w-10 h-10 rounded-full transition-colors',
-                  localMuted
-                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
-                    : localSpeaking
-                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+              <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
+                <button
+                  onClick={voiceToggleMute}
+                  title={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
+                  className={cn(
+                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                    localMuted
+                      ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                      : localSpeaking
+                        ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                        : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {localMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                </button>
+                <button
+                  onClick={voiceToggleDeafen}
+                  title={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
+                  className={cn(
+                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                    localDeafened
+                      ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
                       : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {localMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-              </button>
-              <button
-                onClick={voiceToggleDeafen}
-                title={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
-                className={cn(
-                  'flex items-center justify-center w-10 h-10 rounded-full transition-colors',
-                  localDeafened
-                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
-                    : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {localDeafened ? <HeadphoneOff className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
-              </button>
-              <button
-                onClick={voiceToggleCamera}
-                title={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
-                className={cn(
-                  'flex items-center justify-center w-10 h-10 rounded-full transition-colors',
-                  localCameraEnabled
-                    ? 'bg-primary/20 text-primary hover:bg-primary/30'
-                    : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {localCameraEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
-              </button>
-              <button
-                onClick={() => { void handleToggleChannelStream() }}
-                disabled={streamButtonDisabled}
-                title={isStreamingHere ? t('streams.stop') : t('streams.start')}
-                className={cn(
-                  'flex items-center justify-center w-10 h-10 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                  isStreamingHere
-                    ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
-                    : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {isStartingStream ? <Loader2 className="w-5 h-5 animate-spin" /> : <Monitor className="w-5 h-5" />}
-              </button>
-              <button
-                onClick={leaveVoice}
-                title={t('voicePanel.disconnect')}
-                className="flex items-center justify-center w-10 h-10 rounded-full bg-muted hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
-              >
-                <PhoneOff className="w-5 h-5" />
-              </button>
+                  )}
+                >
+                  {localDeafened ? <HeadphoneOff className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
+                <button
+                  onClick={voiceToggleCamera}
+                  title={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
+                  className={cn(
+                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors',
+                    localCameraEnabled
+                      ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                      : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {localCameraEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+                </button>
+                <button
+                  onClick={() => { void handleToggleChannelStream() }}
+                  disabled={streamButtonDisabled}
+                  title={isStreamingHere ? t('streams.stop') : t('streams.start')}
+                  className={cn(
+                    'flex h-10 w-10 items-center justify-center rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                    isStreamingHere
+                      ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                      : 'bg-muted hover:bg-accent text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {isStartingStream ? <Loader2 className="w-5 h-5 animate-spin" /> : <Monitor className="w-5 h-5" />}
+                </button>
+              </div>
+
+              <div className="flex items-center rounded-xl border border-white/[0.08] bg-white/[0.035] p-1">
+                <button
+                  onClick={leaveVoice}
+                  title={t('voicePanel.disconnect')}
+                  className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+                >
+                  <PhoneOff className="w-5 h-5" />
+                </button>
+              </div>
             </>
           ) : (
             <button
@@ -1835,8 +1843,8 @@ export default function ChannelPage() {
   // Text channel view
   return (
     <>
-      <div className="flex flex-col flex-1 min-h-0">
-        <div className="h-12 border-b border-sidebar-border flex items-center px-4 gap-2 shrink-0 bg-background">
+      <div className="flex flex-col flex-1 min-h-0 bg-[radial-gradient(circle_at_50%_0%,rgba(99,102,241,.10),transparent_34%),#090a0f]">
+        <div className="h-12 border-b border-white/[0.08] flex items-center px-4 gap-2 shrink-0 bg-[#090a0f]">
           {isMobile && (
             <button
               onClick={() => navigate(`/app/${serverId}`)}
@@ -2028,7 +2036,7 @@ export default function ChannelPage() {
               </Tooltip>
               <SearchBar
                 ref={searchBarRef}
-                className="w-60 focus-within:w-80 transition-[width] duration-200 h-7 rounded-md border border-input bg-muted/30 px-2"
+                className="w-60 focus-within:w-80 transition-[width] duration-200 h-8 rounded-xl border border-white/[0.09] bg-black/20 px-3"
                 members={members}
                 channels={channels}
                 onSearch={(params) => void doSearch(params, 0)}
@@ -2041,10 +2049,10 @@ export default function ChannelPage() {
 
         {/* Mobile search bar — shown below header when search icon is active */}
         {isMobile && mobileSearchOpen && (
-          <div className="border-b border-sidebar-border bg-background px-3 py-2 shrink-0">
+          <div className="border-b border-white/[0.08] bg-[#090a0f] px-3 py-2 shrink-0">
             <SearchBar
               ref={searchBarRef}
-              className="w-full h-8 rounded-md border border-input bg-muted/30 px-2"
+              className="w-full h-8 rounded-xl border border-white/[0.09] bg-black/20 px-3"
               members={members}
               channels={channels}
               onSearch={(params) => void doSearch(params, 0)}
@@ -2115,14 +2123,14 @@ export default function ChannelPage() {
                 exit={{ opacity: 0, x: 32 }}
                 transition={{ type: 'spring', damping: 26, stiffness: 320 }}
                 className={cn(
-                  'flex min-h-0 flex-col overflow-hidden border-l border-sidebar-border bg-sidebar shrink-0',
+                  'flex min-h-0 flex-col overflow-hidden border-l border-white/[0.08] bg-sidebar shrink-0',
                   isMobile
                     ? 'absolute inset-0 z-40'
                     : hasSearched
                       ? 'w-80'
                       : isThreadSidePanelVisible
                         ? ''
-                        : 'w-60',
+                        : 'w-[300px]',
                 )}
                 style={!isMobile && isThreadSidePanelVisible ? { width: `${activeRightPanelWidth}px` } : undefined}
               >

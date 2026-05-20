@@ -2,27 +2,27 @@
 @import "tw-animate-css";
 
 @theme {
-  --color-background: oklch(0.141 0.005 285.823);
-  --color-foreground: oklch(0.985 0 0);
-  --color-card: oklch(0.21 0.006 285.885);
-  --color-card-foreground: oklch(0.985 0 0);
-  --color-popover: oklch(0.21 0.006 285.885);
-  --color-popover-foreground: oklch(0.985 0 0);
-  --color-primary: oklch(0.985 0 0);
-  --color-primary-foreground: oklch(0.21 0.006 285.885);
-  --color-secondary: oklch(0.274 0.006 286.033);
-  --color-secondary-foreground: oklch(0.985 0 0);
-  --color-muted: oklch(0.274 0.006 286.033);
-  --color-muted-foreground: oklch(0.705 0.015 286.067);
-  --color-accent: oklch(0.274 0.006 286.033);
-  --color-accent-foreground: oklch(0.985 0 0);
+  --color-background: #090a0f;
+  --color-foreground: #f4f4f5;
+  --color-card: #0f1015;
+  --color-card-foreground: #f4f4f5;
+  --color-popover: #15161b;
+  --color-popover-foreground: #f4f4f5;
+  --color-primary: #f4f4f5;
+  --color-primary-foreground: #0b0c11;
+  --color-secondary: #18191f;
+  --color-secondary-foreground: #f4f4f5;
+  --color-muted: #1a1b22;
+  --color-muted-foreground: #a1a1aa;
+  --color-accent: #ffffff14;
+  --color-accent-foreground: #ffffff;
   --color-destructive: oklch(0.704 0.191 22.216);
-  --color-border: oklch(1 0 0 / 10%);
-  --color-input: oklch(1 0 0 / 15%);
-  --color-ring: oklch(0.552 0.016 285.938);
-  --color-sidebar: oklch(0.21 0.006 285.885);
-  --color-sidebar-foreground: oklch(0.985 0 0);
-  --color-sidebar-border: oklch(1 0 0 / 10%);
+  --color-border: #ffffff14;
+  --color-input: #ffffff1a;
+  --color-ring: #d4d4d866;
+  --color-sidebar: #0b0c11;
+  --color-sidebar-foreground: #f4f4f5;
+  --color-sidebar-border: #ffffff14;
   --radius: 0.625rem;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -188,5 +188,32 @@ body {
     /* IE and Edge */
     scrollbar-width: none;
     /* Firefox */
+  }
+
+  .app-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(113, 113, 122, 0.35) transparent;
+  }
+
+  .app-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(161, 161, 170, 0.38), rgba(82, 82, 91, 0.28));
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+
+  .app-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(212, 212, 216, 0.5), rgba(113, 113, 122, 0.38));
+    border: 3px solid transparent;
+    background-clip: padding-box;
   }
 }

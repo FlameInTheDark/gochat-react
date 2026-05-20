@@ -1,7 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
-import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Activity, Video, VideoOff, ShieldCheck, ShieldOff, ShieldAlert, Copy, Check, Monitor, Volume2, VolumeX } from 'lucide-react'
-import { motion, AnimatePresence } from 'motion/react'
+import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Radio, Video, VideoOff, ShieldCheck, ShieldOff, ShieldAlert, Copy, Check, Monitor, Volume2, VolumeX } from 'lucide-react'
 import { useVoiceStore } from '@/stores/voiceStore'
 import { useStreamStore } from '@/stores/streamStore'
 import type { VoiceConnectionState } from '@/stores/voiceStore'
@@ -19,6 +18,10 @@ import StartStreamDialog from './StartStreamDialog'
 interface VoiceRegion {
   id?: string
   name?: string
+}
+
+interface VoicePanelProps {
+  className?: string
 }
 
 function parseSfuHost(sfuUrl: string | null): string {
@@ -53,7 +56,7 @@ function getConnectionStatus(state: VoiceConnectionState, t: (key: string) => st
   }
 }
 
-export default function VoicePanel() {
+export default function VoicePanel({ className }: VoicePanelProps) {
   const { t } = useTranslation()
   const channelId = useVoiceStore((s) => s.channelId)
   const guildId = useVoiceStore((s) => s.guildId)
@@ -122,6 +125,8 @@ export default function VoicePanel() {
   const [privacyCodeCopied, setPrivacyCodeCopied] = useState(false)
   const [streamDialogOpen, setStreamDialogOpen] = useState(false)
   const [isStartingStream, setIsStartingStream] = useState(false)
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false)
+  const detailsRef = useRef<HTMLDivElement | null>(null)
 
   // Update display ping when store ping changes, but keep previous value if it drops to 0
   useEffect(() => {
@@ -129,6 +134,27 @@ export default function VoicePanel() {
       setDisplayPing(storePing)
     }
   }, [storePing])
+
+  useEffect(() => {
+    if (!isDetailsOpen) return undefined
+
+    function handlePointerDown(event: PointerEvent) {
+      if (detailsRef.current && !detailsRef.current.contains(event.target as Node)) {
+        setIsDetailsOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setIsDetailsOpen(false)
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isDetailsOpen])
 
   const privacyCodeChunks = davePrivacyCode ? (davePrivacyCode.match(/.{1,5}/g) ?? []) : []
 
@@ -143,9 +169,26 @@ export default function VoicePanel() {
   const status = getConnectionStatus(connectionState, t)
   const isTransient = connectionState === 'connecting' || connectionState === 'routing' || connectionState === 'dtls'
   const pingValue = connectionState === 'connected' && displayPing > 0 ? displayPing : null
+  const pingLabel = pingValue !== null ? t('voicePanel.ping', { ping: pingValue }) : '--'
+  const streamAudioToggleLabel = streamAudioEnabled ? t('streams.turnSoundOff') : t('streams.turnSoundOn')
+  const disconnectLabel = t('voicePanel.disconnect')
+  const cameraLabel = localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')
+  const streamToggleLabel = isStreamingHere ? t('streams.stop') : t('streams.start')
+  const muteLabel = localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')
+  const deafenLabel = localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')
 
   const navigate = useNavigate()
   const isDMCall = guildId === '@me'
+  const connectionSubtitle = isDMCall
+    ? (channelName ?? 'Direct call')
+    : guildName
+      ? `${channelName ?? channelId} / ${guildName}`
+      : (channelName ?? channelId)
+  const dtlsLabel = connectionState === 'connected'
+    ? t('voicePanel.dtlsEnabled')
+    : connectionState === 'dtls'
+      ? t('voicePanel.dtlsHandshake')
+      : t('voicePanel.dtlsDisabled')
 
   function handleChannelClick() {
     if (guildId && channelId) {
@@ -207,19 +250,104 @@ export default function VoicePanel() {
     }
   }
 
+  if (!channelId) return null
+
   return (
-    <AnimatePresence>
-      {channelId && (
-        <motion.div
-          initial={{ height: 0, opacity: 0 }}
-          animate={{ height: 'auto', opacity: 1 }}
-          exit={{ height: 0, opacity: 0 }}
-          transition={{ type: 'spring', stiffness: 320, damping: 28 }}
-          style={{ overflow: 'hidden' }}
-        >
-          <div className="px-2 py-2 bg-sidebar-accent border-t border-sidebar-border shrink-0">
+        <div style={{ overflow: 'visible' }}>
+          <div
+            ref={detailsRef}
+            className={cn('relative shrink-0 rounded-xl border border-white/[0.08] bg-white/[0.045] p-3', className)}
+          >
+            {isDetailsOpen && (
+              <div className="absolute bottom-full left-0 z-50 mb-2 w-full select-text rounded-xl border border-white/[0.1] bg-[#15161b] p-3 text-xs text-zinc-400 ring-1 ring-black/20">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-4">
+                    <span>{t('voicePanel.region')}</span>
+                    <span className="font-semibold text-zinc-100">{regionLabel}</span>
+                  </div>
+                  {sfuHost && (
+                    <div className="flex items-center justify-between gap-4">
+                      <span>{t('voicePanel.host')}</span>
+                      <span className="font-mono font-semibold text-zinc-100">{sfuHost}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-4">
+                    <span>{t('voicePanel.dtlsLabel')}</span>
+                    <span
+                      className={cn(
+                        'font-semibold',
+                        connectionState === 'connected'
+                          ? 'text-emerald-400'
+                          : connectionState === 'dtls'
+                            ? 'text-amber-300'
+                            : 'text-zinc-500',
+                      )}
+                    >
+                      {dtlsLabel}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span>{t('voicePanel.encryption')}</span>
+                    <span className={cn('flex items-center gap-1 font-semibold', encryptionInfo.color)}>
+                      <encryptionInfo.Icon className="h-3.5 w-3.5" />
+                      {encryptionInfo.label}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span>Ping</span>
+                    <span
+                      className={cn(
+                        'font-mono font-semibold',
+                        pingValue === null
+                          ? 'text-zinc-500'
+                          : pingValue < 160
+                            ? 'text-emerald-300'
+                            : pingValue < 300
+                              ? 'text-amber-300'
+                              : 'text-red-300',
+                      )}
+                    >
+                      {pingValue !== null ? t('voicePanel.ping', { ping: pingValue }) : '--'}
+                    </span>
+                  </div>
+                </div>
+
+                {encryptionInfo.detail && (
+                  <div className="mt-3 border-t border-white/[0.08] pt-2 font-mono text-[11px] text-zinc-500">
+                    {encryptionInfo.detail}
+                  </div>
+                )}
+
+                {davePrivacyCode && (
+                  <div className="mt-3 border-t border-white/[0.08] pt-2">
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <p className="text-[10px] text-zinc-500">{t('voicePanel.privacyCode')}</p>
+                      <button
+                        onClick={handleCopyPrivacyCode}
+                        className="text-zinc-500 transition-colors hover:text-zinc-100"
+                      >
+                        {privacyCodeCopied
+                          ? <Check className="h-3 w-3 text-emerald-400" />
+                          : <Copy className="h-3 w-3" />}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {privacyCodeChunks.map((chunk, index) => (
+                        <span
+                          key={index}
+                          className="rounded bg-emerald-400/10 px-1.5 py-0.5 text-center font-mono text-[11px] font-medium tabular-nums text-emerald-400"
+                        >
+                          {chunk}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {isStreamingHere && publishing && (
-              <div className="mb-2 rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1.5">
+              <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/10 px-2.5 py-2">
                 <div className="flex min-w-0 items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-1.5">
                     <Monitor className="h-3.5 w-3.5 shrink-0 text-red-400" />
@@ -245,206 +373,147 @@ export default function VoicePanel() {
                     </div>
                   )}
                   {streamHasAudio && (
-                    <button
-                      type="button"
-                      onClick={handleToggleStreamAudio}
-                      title={streamAudioEnabled ? t('streams.turnSoundOff') : t('streams.turnSoundOn')}
-                      aria-label={streamAudioEnabled ? t('streams.turnSoundOff') : t('streams.turnSoundOn')}
-                      className={cn(
-                        'inline-flex shrink-0 items-center gap-1 rounded bg-background/60 px-1.5 py-0.5 text-[9px] font-medium transition-colors hover:bg-background',
-                        streamAudioEnabled ? 'text-muted-foreground hover:text-foreground' : 'text-red-300',
-                      )}
-                    >
-                      {streamAudioEnabled ? <Volume2 className="h-3 w-3" /> : <VolumeX className="h-3 w-3" />}
-                      {streamAudioEnabled ? t('streams.soundOn') : t('streams.soundOff')}
-                    </button>
+                    <Tooltip delayDuration={400}>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={handleToggleStreamAudio}
+                          aria-label={streamAudioToggleLabel}
+                          className={cn(
+                            'inline-flex shrink-0 items-center gap-1 rounded bg-background/60 px-1.5 py-0.5 text-[9px] font-medium transition-colors hover:bg-background',
+                            streamAudioEnabled ? 'text-muted-foreground hover:text-foreground' : 'text-red-300',
+                          )}
+                        >
+                          {streamAudioEnabled ? <Volume2 className="h-3 w-3" /> : <VolumeX className="h-3 w-3" />}
+                          {streamAudioEnabled ? t('streams.soundOn') : t('streams.soundOff')}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">{streamAudioToggleLabel}</TooltipContent>
+                    </Tooltip>
                   )}
                 </div>
               </div>
             )}
 
-            {/* Status line */}
-            <div className="flex items-center gap-2 mb-1.5 px-1">
-              <span
-                className={cn(
-                  'w-2 h-2 rounded-full shrink-0',
-                  status.dotColor,
-                  isTransient && 'animate-pulse',
-                )}
-              />
-              <div className="flex-1 min-w-0">
-                <p className={cn('text-xs font-medium leading-tight', status.color)}>{status.text}</p>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={handleChannelClick}
-                    className="min-w-0 text-[10px] text-muted-foreground truncate leading-tight hover:text-foreground hover:underline transition-colors text-left block"
-                  >
-                    {isDMCall ? (channelName ?? 'Direct call') : guildName ? `${guildName} / ${channelName ?? channelId}` : (channelName ?? channelId)}
-                  </button>
-                </div>
-              </div>
-              {/* Ping indicator with tooltip */}
-              <Tooltip>
+            <div className="flex items-start gap-3">
+              <Tooltip delayDuration={400}>
                 <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 shrink-0 cursor-default">
-                    <div
-                      className={cn(
-                        'flex items-center gap-1 text-[10px]',
-                        pingValue === null
-                          ? 'text-muted-foreground'
-                          : pingValue < 160
-                            ? 'text-green-500'
-                            : pingValue < 300
-                              ? 'text-orange-500'
-                              : 'text-red-500',
-                      )}
-                    >
-                      <Activity className="w-3 h-3" />
-                      <span>{pingValue !== null ? t('voicePanel.ping', { ping: pingValue }) : '--'}</span>
-                    </div>
-                    <encryptionInfo.Icon className={cn('w-3 h-3', encryptionInfo.color)} />
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-400/10">
+                    <Radio className={cn('h-4 w-4', isTransient && 'animate-pulse')} />
                   </div>
                 </TooltipTrigger>
-                <TooltipContent side="top" className="p-0">
-                  <div className="px-3 py-2.5 space-y-1.5 min-w-[180px]">
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-[11px] text-muted-foreground">{t('voicePanel.region')}</span>
-                      <span className="text-[11px] font-medium">{regionLabel}</span>
-                    </div>
-                    {sfuHost && (
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-[11px] text-muted-foreground">{t('voicePanel.host')}</span>
-                        <span className="text-[11px] font-medium font-mono">{sfuHost}</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-[11px] text-muted-foreground">{t('voicePanel.dtlsLabel')}</span>
-                      <span className={cn(
-                        'text-[11px] font-medium',
-                        connectionState === 'connected' ? 'text-green-400'
-                          : connectionState === 'dtls' ? 'text-yellow-500'
-                          : 'text-muted-foreground',
-                      )}>
-                        {connectionState === 'connected' ? t('voicePanel.dtlsEnabled')
-                          : connectionState === 'dtls' ? t('voicePanel.dtlsHandshake')
-                          : t('voicePanel.dtlsDisabled')}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-[11px] text-muted-foreground">{t('voicePanel.encryption')}</span>
-                      <span className={cn('text-[11px] font-medium flex items-center gap-1', encryptionInfo.color)}>
-                        <encryptionInfo.Icon className="w-3 h-3" />
-                        {encryptionInfo.label}
-                      </span>
-                    </div>
-                    {encryptionInfo.detail && (
-                      <div className="flex items-center justify-end">
-                        <span className="text-[10px] text-muted-foreground font-mono">{encryptionInfo.detail}</span>
-                      </div>
-                    )}
-                    {davePrivacyCode && (
-                      <div className="pt-1 border-t border-border/50 mt-0.5">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <p className="text-[10px] text-muted-foreground">{t('voicePanel.privacyCode')}</p>
-                          <button
-                            onClick={handleCopyPrivacyCode}
-                            className="text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            {privacyCodeCopied
-                              ? <Check className="w-3 h-3 text-green-400" />
-                              : <Copy className="w-3 h-3" />}
-                          </button>
-                        </div>
-                        <div className="grid grid-cols-3 gap-1">
-                          {privacyCodeChunks.map((chunk, i) => (
-                            <span
-                              key={i}
-                              className="text-[11px] font-mono font-medium text-green-400 bg-green-400/10 rounded px-1.5 py-0.5 tabular-nums text-center"
-                            >
-                              {chunk}
-                            </span>
-                          ))}
-                        </div>
-                        <p className="text-[9px] text-muted-foreground mt-1.5 text-center">{t('voicePanel.privacyCodeHint')}</p>
-                      </div>
-                    )}
-                  </div>
+                <TooltipContent side="top" className="font-semibold text-emerald-300">
+                  {pingLabel}
                 </TooltipContent>
+              </Tooltip>
+
+              <div className="min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => setIsDetailsOpen((value) => !value)}
+                  className="block max-w-full text-left"
+                >
+                  <div className={cn('truncate text-sm font-semibold hover:text-emerald-200', status.color)}>
+                    {status.text}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleChannelClick}
+                  className="mt-0.5 block max-w-full truncate text-left text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+                >
+                  {connectionSubtitle}
+                </button>
+              </div>
+
+              <Tooltip delayDuration={400}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={leaveVoice}
+                    aria-label={disconnectLabel}
+                    className="rounded-xl p-2 text-zinc-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                  >
+                    <PhoneOff className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{disconnectLabel}</TooltipContent>
               </Tooltip>
             </div>
 
-            {/* Controls */}
-            <div className="flex gap-1">
-              <button
-                onClick={toggleMute}
-                title={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
-                aria-label={localMuted ? t('voicePanel.unmute') : t('voicePanel.mute')}
-                className={cn(
-                  'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
-                  localMuted
-                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
-                    : localSpeaking
-                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                      : 'hover:bg-accent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {localMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-              </button>
+            <div className="mt-3 grid grid-cols-4 gap-2">
+              <Tooltip delayDuration={400}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={toggleCamera}
+                    aria-label={cameraLabel}
+                    className={cn(
+                      'grid h-9 place-items-center rounded-xl text-sm transition-colors',
+                      localCameraEnabled
+                        ? 'bg-primary/20 text-primary hover:bg-primary/30'
+                        : 'bg-white/[0.055] text-zinc-300 hover:bg-white/[0.09] hover:text-zinc-100',
+                    )}
+                  >
+                    {localCameraEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{cameraLabel}</TooltipContent>
+              </Tooltip>
 
-              <button
-                onClick={toggleDeafen}
-                title={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
-                aria-label={localDeafened ? t('voicePanel.undeafen') : t('voicePanel.deafen')}
-                className={cn(
-                  'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
-                  localDeafened
-                    ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
-                    : 'hover:bg-accent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {localDeafened ? (
-                  <HeadphoneOff className="w-4 h-4" />
-                ) : (
-                  <Headphones className="w-4 h-4" />
-                )}
-              </button>
+              <Tooltip delayDuration={400}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => { void handleToggleStream() }}
+                    aria-label={streamToggleLabel}
+                    className={cn(
+                      'grid h-9 place-items-center rounded-xl text-sm transition-colors',
+                      isStreamingHere
+                        ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                        : 'bg-white/[0.055] text-zinc-300 hover:bg-white/[0.09] hover:text-zinc-100',
+                    )}
+                  >
+                    <Monitor className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{streamToggleLabel}</TooltipContent>
+              </Tooltip>
 
-              <button
-                onClick={toggleCamera}
-                title={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
-                aria-label={localCameraEnabled ? t('voicePanel.cameraOff') : t('voicePanel.cameraOn')}
-                className={cn(
-                  'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
-                  localCameraEnabled
-                    ? 'bg-primary/20 text-primary hover:bg-primary/30'
-                    : 'hover:bg-accent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {localCameraEnabled ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
-              </button>
+              <Tooltip delayDuration={400}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={toggleMute}
+                    aria-label={muteLabel}
+                    className={cn(
+                      'grid h-9 place-items-center rounded-xl text-sm transition-colors',
+                      localMuted
+                        ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                        : localSpeaking
+                          ? 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                          : 'bg-white/[0.055] text-zinc-300 hover:bg-white/[0.09] hover:text-zinc-100',
+                    )}
+                  >
+                    {localMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{muteLabel}</TooltipContent>
+              </Tooltip>
 
-              <button
-                onClick={() => { void handleToggleStream() }}
-                title={isStreamingHere ? t('streams.stop') : t('streams.start')}
-                aria-label={isStreamingHere ? t('streams.stop') : t('streams.start')}
-                className={cn(
-                  'flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors',
-                  isStreamingHere
-                    ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
-                    : 'hover:bg-accent text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <Monitor className="w-4 h-4" />
-              </button>
-
-              <button
-                onClick={leaveVoice}
-                title={t('voicePanel.disconnect')}
-                aria-label={t('voicePanel.disconnect')}
-                className="flex-1 flex items-center justify-center p-1.5 rounded text-sm transition-colors hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
-              >
-                <PhoneOff className="w-4 h-4" />
-              </button>
+              <Tooltip delayDuration={400}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={toggleDeafen}
+                    aria-label={deafenLabel}
+                    className={cn(
+                      'grid h-9 place-items-center rounded-xl text-sm transition-colors',
+                      localDeafened
+                        ? 'bg-destructive/20 text-destructive hover:bg-destructive/30'
+                        : 'bg-white/[0.055] text-zinc-300 hover:bg-white/[0.09] hover:text-zinc-100',
+                    )}
+                  >
+                    {localDeafened ? <HeadphoneOff className="h-4 w-4" /> : <Headphones className="h-4 w-4" />}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">{deafenLabel}</TooltipContent>
+              </Tooltip>
             </div>
           </div>
           <StartStreamDialog
@@ -453,8 +522,6 @@ export default function VoicePanel() {
             onOpenChange={setStreamDialogOpen}
             onStart={handleStartStream}
           />
-        </motion.div>
-      )}
-    </AnimatePresence>
+        </div>
   )
 }

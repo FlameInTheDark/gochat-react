@@ -1,5 +1,6 @@
 import { Outlet, useLocation } from 'react-router-dom'
 import DmSidebar from '@/components/layout/DmSidebar'
+import DesktopNavShell from '@/components/layout/DesktopNavShell'
 import { useClientMode } from '@/hooks/useClientMode'
 
 export default function MeLayout() {
@@ -19,9 +20,8 @@ export default function MeLayout() {
   }
 
   return (
-    <>
-      <DmSidebar />
+    <DesktopNavShell sidebar={<DmSidebar />}>
       <Outlet />
-    </>
+    </DesktopNavShell>
   )
 }

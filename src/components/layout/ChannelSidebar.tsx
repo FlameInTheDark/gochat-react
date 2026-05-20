@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from 'motion/react'
 import { Archive, ChevronDown, ChevronLeft, Hash, LogOut, Pencil, Volume2, MicOff, HeadphoneOff, Trash2, UserPlus, FolderPlus, Plus, GripVertical, Copy, Settings, User, MessageSquare, Eye, MoreVertical, CornerDownRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -564,7 +563,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
 
   return (
     <>
-      <div className={cn('flex flex-col bg-sidebar border-r border-sidebar-border', isMobile ? 'w-full flex-1 min-h-0' : 'w-60 shrink-0')}>
+      <div className={cn('flex flex-col bg-sidebar', isMobile ? 'w-full flex-1 min-h-0 border-r border-sidebar-border' : 'min-w-0 flex-1')}>
         {/* Mobile: back button to server list */}
         {isMobile && (
           <button
@@ -580,9 +579,9 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
           <DropdownMenu>
             <ContextMenuTrigger asChild>
               <DropdownMenuTrigger asChild>
-                <div className="h-12 flex items-center px-4 font-semibold border-b border-sidebar-border shrink-0 cursor-pointer select-none hover:bg-accent/30 transition-colors group">
+                <div className="mx-2 mt-3 mb-2 flex h-12 items-center rounded-xl border border-white/[0.08] bg-white/[0.035] px-3 text-sm font-semibold shrink-0 cursor-pointer select-none transition-colors hover:bg-white/[0.055] group">
                   <span className="flex-1 truncate">{serverName}</span>
-                  <ChevronDown className="w-4 h-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+                  <ChevronDown className="w-4 h-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180 group-data-[state=open]:text-foreground" />
                 </div>
               </DropdownMenuTrigger>
             </ContextMenuTrigger>
@@ -675,11 +674,11 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
         {/* Channel list */}
         <ContextMenu>
           <ContextMenuTrigger
-            className="flex-1 overflow-hidden flex flex-col"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
             onDrop={(e) => e.preventDefault()}
           >
-            <ScrollArea className="flex-1">
-              <div className="p-2 space-y-0.5">
+            <ScrollArea className="app-scrollbar flex-1">
+              <div className="space-y-1 px-2 pt-2 pb-4">
                 {/* Pre-group children by category for reliable group animation */}
                 {sorted([...visibleRegular, ...categories]).map((item) => {
                   // Uncategorized regular channel — render directly
@@ -761,7 +760,7 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
                             onDragEnd={onDragEnd}
                             onClick={() => !isCatEditing && toggleCategory(catId)}
                             className={cn(
-                              'relative w-full flex items-center gap-1 px-1 pt-4 pb-0.5 text-xs font-semibold uppercase text-muted-foreground hover:text-foreground tracking-wider group/cat cursor-pointer select-none',
+                              'relative w-full flex items-center gap-1 px-1 pt-4 pb-1.5 text-[11px] font-semibold uppercase text-muted-foreground hover:text-foreground tracking-wide group/cat cursor-pointer select-none',
                               draggingId === catId && 'opacity-40',
                             )}
                           >
@@ -934,13 +933,12 @@ export default function ChannelSidebar({ channels, serverId }: Props) {
           </ContextMenuContent>
         </ContextMenu>
 
-        {/* Voice status panel (visible when connected to voice) */}
-        <VoicePanel />
-
-        <Separator />
-        <div className="px-2 py-2">
-          <UserArea />
-        </div>
+        {isMobile && (
+          <div className="relative z-20 shrink-0 space-y-2 px-2 pb-2 pt-1">
+            <VoicePanel />
+            <UserArea />
+          </div>
+        )}
       </div>
 
       {/* Delete channel / category confirmation dialog */}
@@ -1065,10 +1063,10 @@ function ThreadNavItems({
                 type="button"
                 onClick={() => navigate(`/app/${serverId}/${threadId}`)}
                 className={cn(
-                  'group/thread flex h-6 w-full items-center gap-1.5 rounded px-1.5 text-left text-xs transition-colors',
+                  'group/thread flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm',
                   isActive
-                    ? 'bg-accent text-foreground font-medium'
-                    : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                    ? 'bg-white/[0.07] text-foreground font-medium'
+                    : 'text-muted-foreground hover:bg-white/[0.045] hover:text-foreground',
                 )}
               >
                 <CornerDownRight className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -1250,13 +1248,13 @@ function ChannelItem({
             role="button"
             tabIndex={0}
             className={cn(
-              'relative w-full flex items-center gap-2 px-2 rounded text-sm transition-colors text-left cursor-pointer select-none group/item',
-              isMobile ? 'py-2' : 'py-1',
+              'relative w-full flex items-center gap-2.5 rounded-md px-3 text-sm transition-colors text-left cursor-pointer select-none group/item',
+              isMobile ? 'py-2.5' : 'py-1.5',
               isActive
-                ? 'bg-accent text-foreground'
+                ? 'bg-white/[0.08] text-foreground'
                 : isUnread
-                  ? 'text-foreground font-medium hover:bg-accent/50'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                  ? 'text-foreground font-medium hover:bg-white/[0.055]'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-white/[0.045]',
               isDragging && 'opacity-40',
             )}
           >
@@ -1271,7 +1269,7 @@ function ChannelItem({
             <span className="cursor-grab active:cursor-grabbing shrink-0">
               <GripVertical className="w-3.5 h-3.5 opacity-0 group-hover/item:opacity-40 -ml-1" />
             </span>
-            <Icon className={cn('w-4 h-4 shrink-0', hasVoiceUsers ? 'text-green-500 opacity-100' : 'opacity-70')} />
+            <Icon className={cn('w-4 h-4 shrink-0', hasVoiceUsers ? 'text-emerald-400 opacity-100' : 'text-muted-foreground opacity-80 group-hover/item:text-foreground')} />
             {isEditing ? (
               <input
                 autoFocus
@@ -1284,7 +1282,7 @@ function ChannelItem({
                 onBlur={onEditSave}
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
-                className="flex-1 min-w-0 bg-background border border-primary rounded-sm px-1 outline-none text-sm cursor-text"
+                className="flex-1 min-w-0 bg-background border border-primary rounded-md px-2 py-1 outline-none text-sm cursor-text"
               />
             ) : (
               <>
@@ -1479,11 +1477,11 @@ function VoiceChannelUserItem({
       <ContextMenuTrigger asChild>
         <div
           onContextMenu={handleContextMenu}
-          className="flex items-center gap-2 px-2 py-1 rounded text-sm text-muted-foreground hover:text-foreground hover:bg-accent/30 cursor-pointer"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-white/[0.035] cursor-pointer"
         >
           {/* Avatar wrapper — ring is outside overflow-hidden */}
           <div className={cn(
-            'relative shrink-0 rounded-full transition-colors',
+            'relative shrink-0 rounded-full',
             isSpeaking && 'ring-2 ring-green-500 ring-offset-1 ring-offset-sidebar',
           )}>
             <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center overflow-hidden">
@@ -1494,7 +1492,7 @@ function VoiceChannelUserItem({
               )}
             </div>
           </div>
-          <span className="truncate text-xs flex-1">
+          <span className="truncate text-sm flex-1">
             {user.username}
           </span>
           {activeStream && (
