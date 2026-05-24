@@ -69,7 +69,7 @@ function FilterChip({ filter, onRemove }: { filter: AppliedFilter; onRemove: () 
       {filter.label}
       <button
         onClick={(e) => { e.stopPropagation(); onRemove() }}
-        className="ml-0.5 rounded hover:text-destructive transition-colors"
+        className="ml-0.5 rounded transition-colors hover:text-destructive cursor-pointer"
         aria-label="Remove filter"
       >
         <X className="w-3 h-3" />
@@ -235,6 +235,12 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
     setHighlightIdx(0)
   }
 
+  function focusInputFromBar(e: React.MouseEvent<HTMLDivElement>) {
+    const target = e.target
+    if (target instanceof HTMLElement && target.closest('button')) return
+    inputRef.current?.focus()
+  }
+
   const filterDescriptions: Record<FilterType, string> = {
     from: t('search.filterByAuthor'),
     has: t('search.filterByAttachment'),
@@ -244,7 +250,10 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
   const showClear = hasResults || hasValue || inputValue !== '' || chips.length > 0
 
   return (
-    <div className={cn('relative flex items-center', className)}>
+    <div
+      className={cn('relative flex items-center cursor-text', className)}
+      onMouseDown={focusInputFromBar}
+    >
       {/* Chips + input */}
       <div className="relative flex-1 min-w-0">
         {showLeftFade && (
@@ -252,8 +261,7 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
         )}
         <div
           ref={scrollContainerRef}
-          className="flex items-center gap-1 overflow-x-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none] pl-1.5 pr-1"
-          onClick={() => inputRef.current?.focus()}
+          className="flex h-full min-h-0 items-center gap-1 overflow-x-auto pl-1.5 pr-1 cursor-text [&::-webkit-scrollbar]:hidden [scrollbar-width:none]"
           onScroll={() => setShowLeftFade((scrollContainerRef.current?.scrollLeft ?? 0) > 0)}
         >
         {chips.map((chip, i) => (
@@ -276,7 +284,7 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
           }}
           onBlur={() => setTimeout(() => setInputFocused(false), 150)}
           placeholder={chips.length === 0 ? t('search.searchMessages') : ''}
-          className="flex-1 min-w-[60px] bg-transparent outline-none text-xs placeholder:text-muted-foreground"
+          className="h-full flex-1 min-w-[60px] bg-transparent outline-none text-xs cursor-text placeholder:text-muted-foreground"
         />
         </div>
       </div>
@@ -286,7 +294,7 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
         <button
           onMouseDown={(e) => { e.preventDefault(); clearAll() }}
           aria-label={t('search.closeSearch')}
-          className="shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+          className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
         >
           <X className="w-3 h-3" />
         </button>
