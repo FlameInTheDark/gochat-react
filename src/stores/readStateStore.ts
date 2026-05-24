@@ -50,6 +50,15 @@ export const useReadStateStore = create<ReadStateStore>((set, get) => ({
   lastMessages: {},
 
   setFromSettings: (res) => {
+    const threadGuilds = new Map<string, string>()
+    for (const [guildId, parentMap] of Object.entries(res.joined_threads ?? {})) {
+      for (const threadIds of Object.values(parentMap)) {
+        for (const threadId of threadIds ?? []) {
+          threadGuilds.set(String(threadId), guildId)
+        }
+      }
+    }
+
     // Normalise read_states (values are already strings via JSONBig storeAsString)
     const readStates: Record<string, string> = {}
     for (const [k, v] of Object.entries(res.read_states ?? {})) {
@@ -66,20 +75,12 @@ export const useReadStateStore = create<ReadStateStore>((set, get) => ({
       }
     }
     for (const [threadId, msgId] of Object.entries(res.threads_last_messages ?? {})) {
+      if (!threadGuilds.has(threadId)) continue
       const messageId = normalizePositiveMessageId(msgId)
       if (messageId) lastMessages[threadId] = messageId
     }
 
     set({ readStates, lastMessages })
-
-    const threadGuilds = new Map<string, string>()
-    for (const [guildId, parentMap] of Object.entries(res.joined_threads ?? {})) {
-      for (const threadIds of Object.values(parentMap)) {
-        for (const threadId of threadIds ?? []) {
-          threadGuilds.set(String(threadId), guildId)
-        }
-      }
-    }
 
     // Seed the visual unread store from the diff
     const unreadChannels = new Map<string, { guildId: string | null }>()
@@ -94,11 +95,13 @@ export const useReadStateStore = create<ReadStateStore>((set, get) => ({
       }
     }
     for (const [threadId, lastMsgId] of Object.entries(res.threads_last_messages ?? {})) {
+      const guildId = threadGuilds.get(threadId)
+      if (!guildId) continue
       const messageId = normalizePositiveMessageId(lastMsgId)
       if (!messageId) continue
       const lastRead = readStates[threadId]
       if (hasUnreadMessages(lastRead, messageId)) {
-        unreadChannels.set(threadId, { guildId: threadGuilds.get(threadId) ?? null })
+        unreadChannels.set(threadId, { guildId })
       }
     }
     useUnreadStore.getState().replaceChannels(unreadChannels)

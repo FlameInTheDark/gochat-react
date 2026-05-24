@@ -47,4 +47,26 @@ describe('readStateStore', () => {
     expect(useReadStateStore.getState().lastMessages).toEqual({})
     expect(useUnreadStore.getState().channels.size).toBe(0)
   })
+
+  it('ignores thread last-message entries for threads not joined in settings', () => {
+    useReadStateStore.getState().setFromSettings({
+      read_states: {
+        '10': 100,
+        '11': 100,
+      },
+      threads_last_messages: {
+        '10': 200,
+        '11': 200,
+      },
+      joined_threads: {
+        '1': {
+          '5': [10],
+        },
+      },
+    } as unknown as UserUserSettingsResponse)
+
+    expect(useReadStateStore.getState().lastMessages).toEqual({ '10': '200' })
+    expect(useUnreadStore.getState().channels.has('10')).toBe(true)
+    expect(useUnreadStore.getState().channels.has('11')).toBe(false)
+  })
 })

@@ -72,7 +72,7 @@ import { getTopRoleColor } from '@/lib/memberColors'
 import { createJumpRequest, type JumpBehavior, type JumpRequest } from '@/lib/messageJump'
 import { isAutoThreadFollowup, isThreadChannel, sortThreadsByActivity } from '@/lib/threads'
 import { buildMessagePreviewText } from '@/lib/messagePreview'
-import { addThreadMember, removeThreadMember } from '@/lib/threadMembership'
+import { addThreadMember, isThreadMember, removeThreadMember } from '@/lib/threadMembership'
 import { useClientMode } from '@/hooks/useClientMode'
 import { useGuildPermissions } from '@/hooks/useGuildPermissions'
 import { useNotificationSettings } from '@/hooks/useNotificationSettings'
@@ -576,7 +576,12 @@ export default function ChannelPage() {
     const unreadStore = useUnreadStore.getState()
     const mentionStore = useMentionStore.getState()
 
-    threadById.forEach((_, threadId) => {
+    const currentUserId = currentUser?.id != null ? String(currentUser.id) : null
+    threadById.forEach((thread, threadId) => {
+      if (!currentUserId || !isThreadMember(thread, currentUserId)) {
+        unreadStore.removeChannel(threadId)
+        return
+      }
       if (readStateStore.isUnread(threadId)) {
         unreadStore.markUnread(threadId, serverId)
       }
@@ -584,7 +589,7 @@ export default function ChannelPage() {
         mentionStore.associateGuild(threadId, serverId)
       }
     })
-  }, [serverId, threadById])
+  }, [currentUser?.id, serverId, threadById])
 
   const renderedThreadTargets = useMemo(() => {
     const ordered: DtoChannel[] = []
