@@ -238,6 +238,9 @@ const SearchBar = forwardRef<SearchBarHandle, SearchBarProps>(function SearchBar
   function focusInputFromBar(e: React.MouseEvent<HTMLDivElement>) {
     const target = e.target
     if (target instanceof HTMLElement && target.closest('button')) return
+    if (target === inputRef.current) return
+
+    e.preventDefault()
     inputRef.current?.focus()
   }
 
