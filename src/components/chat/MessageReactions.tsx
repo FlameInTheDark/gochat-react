@@ -229,7 +229,6 @@ export default function MessageReactions({ reactions, channelId, messageId, onAd
     }
   }
 
-  const selectedReaction = visible.find((r) => getReactionName(r) === selectedName)
   const selectedData = usersCache.get(selectedName)
 
   return (
@@ -249,7 +248,7 @@ export default function MessageReactions({ reactions, channelId, messageId, onAd
               onClick={() => void handleToggle(reaction)}
               disabled={pending.has(name)}
               className={cn(
-                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-sm transition-colors select-none',
+                'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-sm transition-colors select-none',
                 'hover:border-primary/50 hover:bg-primary/10',
                 isMe
                   ? 'border-primary/40 bg-primary/15 text-foreground'
@@ -304,7 +303,7 @@ export default function MessageReactions({ reactions, channelId, messageId, onAd
               <button
                 type="button"
                 onClick={(e) => onAddReaction((e.currentTarget as HTMLButtonElement).getBoundingClientRect())}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-muted/40 text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-muted/40 text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground"
               >
                 <SmilePlus className="h-4 w-4" />
               </button>
