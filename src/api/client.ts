@@ -12,6 +12,7 @@ import {
   VoiceApi,
   WebhookApi,
   type DtoChannel,
+  type DtoBannerUpload,
   type MessageCreateThreadRequest,
 } from '@/client'
 import JSONBig from 'json-bigint'
@@ -124,4 +125,48 @@ export async function createChannelThread(channelId: string | number, request: M
     request,
   )
   return response.data
+}
+
+export async function createProfileBannerUpload(file: File): Promise<DtoBannerUpload> {
+  const response = await axiosInstance.post<DtoBannerUpload>(
+    `${getApiBaseUrl()}/user/me/banner`,
+    {
+      content_type: file.type || 'application/octet-stream',
+      file_size: file.size,
+    },
+  )
+  return response.data
+}
+
+export interface ProfileBannerUploadCrop {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export async function uploadProfileBanner(userId: string | number, bannerId: string | number, file: Blob, crop?: ProfileBannerUploadCrop): Promise<void> {
+  await axiosInstance.post(
+    `${getApiBaseUrl()}/upload/profile-covers/${userId}/${bannerId}`,
+    file,
+    {
+      headers: { 'Content-Type': 'application/octet-stream' },
+      params: crop
+        ? {
+            crop_x: Math.round(crop.x),
+            crop_y: Math.round(crop.y),
+            crop_width: Math.round(crop.width),
+            crop_height: Math.round(crop.height),
+          }
+        : undefined,
+    },
+  )
+}
+
+export async function saveUserPersonalNote(userId: string | number, note: string): Promise<void> {
+  await axiosInstance.put(`${getApiBaseUrl()}/user/me/notes/${userId}`, { note })
+}
+
+export async function deleteUserPersonalNote(userId: string | number): Promise<void> {
+  await axiosInstance.delete(`${getApiBaseUrl()}/user/me/notes/${userId}`)
 }

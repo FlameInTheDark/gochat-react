@@ -9,6 +9,9 @@ export function mergeUserPreservingAssets(current: DtoUser | null | undefined, i
       ? { ...incoming.avatar, url: current.avatar.url }
       : current.avatar
   }
+  if (current.banner?.url && incoming.banner === undefined) {
+    next.banner = current.banner
+  }
   return next
 }
 

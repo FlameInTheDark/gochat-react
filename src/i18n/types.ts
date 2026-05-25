@@ -187,6 +187,14 @@ export interface Translation {
         changeAvatar: string
         avatarUpdated: string
         avatarFailed: string
+        profileBanner: string
+        changeBanner: string
+        bannerUpdated: string
+        bannerFailed: string
+        bannerTooSmall: string
+        bannerTooLarge: string
+        bannerRequirements: string
+        uploading: string
         bio: string
         bioPlaceholder: string
         bannerColor: string
@@ -651,6 +659,9 @@ export interface Translation {
         sendMessage: string
         addFriend: string
         bio: string
+        privateNote: string
+        notePlaceholder: string
+        noteFailed: string
     }
     common: {
         save: string

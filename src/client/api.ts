@@ -716,6 +716,74 @@ export interface DtoAvatarUpload {
     'user_id'?: number;
 }
 /**
+ *
+ * @export
+ * @interface DtoBannerData
+ */
+export interface DtoBannerData {
+    /**
+     *
+     * @type {string}
+     * @memberof DtoBannerData
+     */
+    'content_type'?: string;
+    /**
+     *
+     * @type {boolean}
+     * @memberof DtoBannerData
+     */
+    'exists'?: boolean;
+    /**
+     *
+     * @type {number}
+     * @memberof DtoBannerData
+     */
+    'height'?: number;
+    /**
+     *
+     * @type {number}
+     * @memberof DtoBannerData
+     */
+    'id'?: number;
+    /**
+     *
+     * @type {number}
+     * @memberof DtoBannerData
+     */
+    'size'?: number;
+    /**
+     *
+     * @type {string}
+     * @memberof DtoBannerData
+     */
+    'url'?: string;
+    /**
+     *
+     * @type {number}
+     * @memberof DtoBannerData
+     */
+    'width'?: number;
+}
+/**
+ *
+ * @export
+ * @interface DtoBannerUpload
+ */
+export interface DtoBannerUpload {
+    /**
+     *
+     * @type {number}
+     * @memberof DtoBannerUpload
+     */
+    'id'?: number;
+    /**
+     *
+     * @type {number}
+     * @memberof DtoBannerUpload
+     */
+    'user_id'?: number;
+}
+/**
  * 
  * @export
  * @interface DtoChannel
@@ -1537,6 +1605,11 @@ export interface DtoUser {
      */
     'banner_color'?: number;
     /**
+     *
+     * @type {DtoBannerData}
+     * @memberof DtoUser
+     */
+    'banner'?: DtoBannerData;    /**
      * 
      * @type {string}
      * @memberof DtoUser
@@ -1565,7 +1638,12 @@ export interface DtoUser {
      * @type {number}
      * @memberof DtoUser
      */
-    'panel_color'?: number;
+    /**
+     *
+     * @type {string}
+     * @memberof DtoUser
+     */
+    'personal_note'?: string;    'panel_color'?: number;
 }
 /**
  * 
@@ -3490,6 +3568,11 @@ export interface UserModifyUserRequest {
      */
     'banner_color'?: number;
     /**
+     *
+     * @type {DtoBannerData}
+     * @memberof DtoUser
+     */
+    'banner'?: DtoBannerData;    /**
      * Public user bio.
      * @type {string}
      * @memberof UserModifyUserRequest
@@ -3506,7 +3589,12 @@ export interface UserModifyUserRequest {
      * @type {number}
      * @memberof UserModifyUserRequest
      */
-    'panel_color'?: number;
+    /**
+     *
+     * @type {string}
+     * @memberof DtoUser
+     */
+    'personal_note'?: string;    'panel_color'?: number;
 }
 /**
  * 

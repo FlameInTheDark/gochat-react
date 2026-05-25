@@ -15,18 +15,20 @@ import { useAppearanceStore, DEFAULT_CHAT_SPACING, DEFAULT_FONT_SCALE } from '@/
 import { applyVoiceSettings } from '@/services/voiceService'
 import { buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression, type DenoiserNode } from '@/services/denoiserService'
 import { useNavigate } from 'react-router-dom'
-import { userApi, uploadApi, axiosInstance, voiceApi } from '@/api/client'
+import { userApi, uploadApi, axiosInstance, voiceApi, createProfileBannerUpload, uploadProfileBanner } from '@/api/client'
 import { saveSettings } from '@/lib/settingsApi'
 import type { ModelUserSettingsData, DtoUser } from '@/client'
+import type { ProfileBannerUploadCrop } from '@/api/client'
 import { cn } from '@/lib/utils'
 import ImageCropDialog from '@/components/modals/ImageCropDialog'
+import BannerCropDialog, { type BannerCropArea } from '@/components/modals/BannerCropDialog'
 import MicTest from '@/components/voice/MicTest'
 import OutputTest from '@/components/voice/OutputTest'
 import VadSlider from '@/components/voice/VadSlider'
 import { useTranslation } from 'react-i18next'
 import i18n, { SUPPORTED_LANGUAGES } from '@/i18n'
 import { useClientMode } from '@/hooks/useClientMode'
-import ProfileCardBody, { userColor } from '@/components/layout/ProfileCardBody'
+import ProfileCardBody, { isDark, panelTextColors, userColor } from '@/components/layout/ProfileCardBody'
 import { getApiBaseUrl } from '@/lib/connectionConfig'
 import SecuritySection from '@/components/settings/SecuritySection'
 import { devicesFromVoiceSettings, voiceSettingsFromDevices } from '@/lib/voiceSettings'
@@ -40,6 +42,18 @@ type UserSettingsWithVoice = ModelUserSettingsData & {
   }
 }
 
+type BannerEditDraft = {
+  file: File
+  url: string
+  width: number
+  height: number
+}
+
+type LocalBannerCrop = ProfileBannerUploadCrop & {
+  sourceWidth: number
+  sourceHeight: number
+}
+
 function numToHex(n: number | undefined | null, fallback: string): string {
   if (n == null) return fallback
   return '#' + (n & 0xffffff).toString(16).padStart(6, '0')
@@ -51,6 +65,10 @@ function hexToNum(hex: string): number {
 
 const DEFAULT_BANNER_COLOR = '#5865f2'
 const DEFAULT_PANEL_COLOR = '#2b2d31'
+const PROFILE_BANNER_MIN_WIDTH = 680
+const PROFILE_BANNER_MIN_HEIGHT = 240
+const PROFILE_BANNER_MAX_SIZE = 10 * 1024 * 1024
+const PROFILE_DISPLAY_NAME_MAX_LENGTH = 20
 const PROFILE_COLOR_PRESETS: { label: string; value: string }[] = [
   { label: 'Red', value: '#f04747' },
   { label: 'Orange', value: '#faa61a' },
@@ -85,6 +103,22 @@ function Toggle({ value, onToggle }: { value: boolean; onToggle: () => void }) {
 
 function hasDevice(devices: MediaDeviceInfo[], deviceId: string): boolean {
   return devices.some((device) => device.deviceId === deviceId)
+}
+
+function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      resolve({ width: img.naturalWidth, height: img.naturalHeight })
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error('Unable to read image dimensions'))
+    }
+    img.src = url
+  })
 }
 
 function ColorPaletteField({
@@ -188,13 +222,20 @@ export default function AppSettingsModal() {
 
   // Avatar upload
   const avatarInputRef = useRef<HTMLInputElement>(null)
+  const bannerInputRef = useRef<HTMLInputElement>(null)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [uploadingBanner, setUploadingBanner] = useState(false)
   const [cropDialogOpen, setCropDialogOpen] = useState(false)
   const [cropImageDataUrl, setCropImageDataUrl] = useState('')
   const [localAvatarUrl, setLocalAvatarUrl] = useState<string | null>(null)
+  const [localBannerUrl, setLocalBannerUrl] = useState<string | null>(null)
+  const [localBannerCrop, setLocalBannerCrop] = useState<LocalBannerCrop | null>(null)
+  const [bannerEditorOpen, setBannerEditorOpen] = useState(false)
+  const [bannerDraft, setBannerDraft] = useState<BannerEditDraft | null>(null)
 
   // My Account
   const [name, setName] = useState('')
+  const [editingPreviewName, setEditingPreviewName] = useState(false)
   const [savingAccount, setSavingAccount] = useState(false)
 
   // Profile customization — null means "no custom colour" (matches natural panel defaults)
@@ -251,6 +292,13 @@ export default function AppSettingsModal() {
     staleTime: 60_000,
   })
 
+  const { data: settingsUser } = useQuery({
+    queryKey: ['settings-user-me'],
+    queryFn: () => axiosInstance.get<DtoUser>(`${getApiBaseUrl()}/user/me`).then((r) => r.data),
+    enabled: open,
+    staleTime: 60_000,
+  })
+
   const { data: voiceRegions = [] } = useQuery({
     queryKey: ['voice-regions'],
     queryFn: () => voiceApi.voiceRegionsGet().then((r) => r.data?.regions ?? []),
@@ -270,6 +318,13 @@ export default function AppSettingsModal() {
       setSection('account')
     }
   }, [open, user?.name, user?.bio, user?.banner_color, user?.panel_color])
+
+  useEffect(() => {
+    if (open || !bannerDraft) return
+    URL.revokeObjectURL(bannerDraft.url)
+    setBannerDraft(null)
+    setBannerEditorOpen(false)
+  }, [open, bannerDraft])
 
   const { setFontScale: setAppearenceFontScale, setChatSpacing: setAppearanceChatSpacing } = useAppearanceStore()
 
@@ -467,13 +522,57 @@ export default function AppSettingsModal() {
   if (!open) return null
 
   const initials = (user?.name ?? '?').charAt(0).toUpperCase()
+  const profileDiscriminator = settingsUser?.discriminator || user?.discriminator || ''
   const nameChanged = name.trim() !== '' && name.trim() !== user?.name
   const savedBannerColor = user?.banner_color ? numToHex(user.banner_color, DEFAULT_BANNER_COLOR) : null
   const savedPanelColor = user?.panel_color ? numToHex(user.panel_color, DEFAULT_PANEL_COLOR) : null
   const profileDirty =
+    nameChanged ||
     bio !== (user?.bio ?? '') ||
     bannerColor !== savedBannerColor ||
     panelColor !== savedPanelColor
+  const profilePreviewUserId = String(user?.id ?? 'default')
+  const profilePreviewName = name.trim() || user?.name || initials
+  const profilePreviewAvatarUrl = localAvatarUrl ?? user?.avatar?.url
+  const profilePreviewBannerUrl = localBannerUrl ?? user?.banner?.url
+  const profilePreviewBannerCrop = localBannerUrl ? localBannerCrop ?? undefined : undefined
+  const previewText = panelTextColors(panelColor)
+  const previewBioStyle = panelColor
+    ? {
+        color: previewText.textColor,
+        borderColor: previewText.dividerColor,
+        backgroundColor: isDark(panelColor) ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+      }
+    : undefined
+  const previewNameEditor = editingPreviewName ? (
+    <input
+      autoFocus
+      value={name}
+      onChange={(e) => setName(e.target.value)}
+      onBlur={() => setEditingPreviewName(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') setEditingPreviewName(false)
+        if (e.key === 'Escape') {
+          setName(user?.name ?? '')
+          setEditingPreviewName(false)
+        }
+      }}
+      maxLength={PROFILE_DISPLAY_NAME_MAX_LENGTH}
+      aria-label={t('settings.username')}
+      className="w-full rounded-md border border-input bg-background/70 px-2 py-1 text-base font-bold leading-snug outline-none focus:ring-1 focus:ring-ring"
+      style={previewBioStyle}
+    />
+  ) : (
+    <button
+      type="button"
+      onClick={() => setEditingPreviewName(true)}
+      className="block max-w-full truncate text-left text-base font-bold leading-snug outline-none hover:underline focus-visible:underline"
+      style={{ color: previewText.textColor }}
+      aria-label={t('settings.username')}
+    >
+      {profilePreviewName}
+    </button>
+  )
 
   const NAV: { key: Section; label: string; danger?: boolean; separator?: boolean }[] = [
     { key: 'account', label: t('settings.myAccount') },
@@ -551,6 +650,7 @@ export default function AppSettingsModal() {
     setSavingProfile(true)
     try {
       const patch = {
+        ...(nameChanged ? { name: name.trim() } : {}),
         bio: bio.trim() || undefined,
         // 0 signals "clear custom colour" to the backend (Go zero value = not set)
         banner_color: bannerColor !== null ? hexToNum(bannerColor) : 0,
@@ -559,10 +659,12 @@ export default function AppSettingsModal() {
       await userApi.userMePatch({ request: patch })
       if (user) setUser({
         ...user,
+        ...(nameChanged ? { name: name.trim() } : {}),
         bio: bio.trim() || undefined,
         banner_color: bannerColor !== null ? hexToNum(bannerColor) : undefined,
         panel_color: panelColor !== null ? hexToNum(panelColor) : undefined,
       })
+      setEditingPreviewName(false)
       toast.success(t('settings.profileUpdated'))
     } catch {
       toast.error(t('settings.profileFailed'))
@@ -667,6 +769,83 @@ export default function AppSettingsModal() {
     setVideoInputDevice('')
     setPreferredVoiceRegion('auto')
     setVoiceDirty(true)
+  }
+
+  async function handleBannerFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      toast.error(t('settings.bannerFailed'))
+      return
+    }
+    if (file.size > PROFILE_BANNER_MAX_SIZE) {
+      toast.error(t('settings.bannerTooLarge'))
+      return
+    }
+
+    try {
+      const { width, height } = await getImageDimensions(file)
+      if (width < PROFILE_BANNER_MIN_WIDTH || height < PROFILE_BANNER_MIN_HEIGHT) {
+        toast.error(t('settings.bannerTooSmall'))
+        return
+      }
+      if (bannerDraft) {
+        URL.revokeObjectURL(bannerDraft.url)
+      }
+      setBannerDraft({
+        file,
+        url: URL.createObjectURL(file),
+        width,
+        height,
+      })
+      setBannerEditorOpen(true)
+    } catch {
+      toast.error(t('settings.bannerFailed'))
+    }
+  }
+
+  function handleBannerEditorCancel() {
+    if (bannerDraft) {
+      URL.revokeObjectURL(bannerDraft.url)
+    }
+    setBannerDraft(null)
+    setBannerEditorOpen(false)
+  }
+
+  async function handleBannerCropApplied(crop: BannerCropArea) {
+    if (!bannerDraft) return
+
+    const draft = bannerDraft
+    const optimisticCrop = {
+      ...crop,
+      sourceWidth: draft.width,
+      sourceHeight: draft.height,
+    }
+    setBannerEditorOpen(false)
+    setLocalBannerUrl(draft.url)
+    setLocalBannerCrop(optimisticCrop)
+    setUploadingBanner(true)
+
+    try {
+      const baseUrl = getApiBaseUrl()
+      const placeholder = await createProfileBannerUpload(draft.file)
+      const bannerId = String(placeholder.id)
+      const userId = String(placeholder.user_id)
+      await uploadProfileBanner(userId, bannerId, draft.file, crop)
+      const meRes = await axiosInstance.get<DtoUser>(`${baseUrl}/user/me`)
+      setUser(meRes.data)
+      toast.success(t('settings.bannerUpdated'))
+    } catch {
+      toast.error(t('settings.bannerFailed'))
+    } finally {
+      setUploadingBanner(false)
+      URL.revokeObjectURL(draft.url)
+      setBannerDraft(null)
+      setLocalBannerUrl(null)
+      setLocalBannerCrop(null)
+    }
   }
 
   async function handleSaveLanguage(code: string) {
@@ -801,8 +980,8 @@ export default function AppSettingsModal() {
                     />
                     <div>
                       <p className="font-semibold text-lg">{user?.name}</p>
-                      {user?.discriminator && (
-                        <p className="text-sm text-muted-foreground">#{user.discriminator}</p>
+                      {profileDiscriminator && (
+                        <p className="text-sm text-muted-foreground">@{profileDiscriminator}</p>
                       )}
                     </div>
                   </div>
@@ -818,6 +997,7 @@ export default function AppSettingsModal() {
                         onChange={(e) => setName(e.target.value)}
                         onKeyDown={(e) => { if (e.key === 'Enter') void handleSaveAccount() }}
                         placeholder={t('settings.username')}
+                        maxLength={PROFILE_DISPLAY_NAME_MAX_LENGTH}
                         className="flex-1"
                       />
                       <Button onClick={() => void handleSaveAccount()} disabled={savingAccount || !nameChanged}>
@@ -826,11 +1006,11 @@ export default function AppSettingsModal() {
                     </div>
                   </div>
 
-                  {user?.discriminator && (
+                  {profileDiscriminator && (
                     <div className="space-y-2">
                       <Label>{t('settings.discriminator')}</Label>
                       <p className="text-sm text-muted-foreground bg-muted px-3 py-2 rounded-md">
-                        #{user.discriminator}
+                        @{profileDiscriminator}
                       </p>
                     </div>
                   )}
@@ -864,43 +1044,31 @@ export default function AppSettingsModal() {
                       {t('settings.profileCustomization')}
                     </h3>
 
-                    <div className="flex gap-6">
-                      {/* Left: form fields */}
-                      <div className="flex-1 space-y-4 min-w-0">
-                        <div className="space-y-2">
-                          <Label htmlFor="settings-bio">{t('settings.bio')}</Label>
-                          <textarea
-                            id="settings-bio"
-                            value={bio}
-                            onChange={(e) => setBio(e.target.value)}
-                            placeholder={t('settings.bioPlaceholder')}
-                            rows={3}
-                            maxLength={190}
-                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start">
+                      <div className="min-w-0 flex-1 space-y-4">
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <ColorPaletteField
+                            label={t('settings.bannerColor')}
+                            value={bannerColor}
+                            defaultColor={DEFAULT_BANNER_COLOR}
+                            customLabel="Custom color"
+                            defaultLabel={t('settings.denoiserDefault')}
+                            resetLabel={t('settings.resetToDefaults')}
+                            onChange={setBannerColor}
+                            onReset={() => setBannerColor(null)}
+                          />
+
+                          <ColorPaletteField
+                            label={t('settings.panelColor')}
+                            value={panelColor}
+                            defaultColor={DEFAULT_PANEL_COLOR}
+                            customLabel="Custom color"
+                            defaultLabel={t('settings.denoiserDefault')}
+                            resetLabel={t('settings.resetToDefaults')}
+                            onChange={setPanelColor}
+                            onReset={() => setPanelColor(null)}
                           />
                         </div>
-
-                        <ColorPaletteField
-                          label={t('settings.bannerColor')}
-                          value={bannerColor}
-                          defaultColor={DEFAULT_BANNER_COLOR}
-                          customLabel="Custom color"
-                          defaultLabel={t('settings.denoiserDefault')}
-                          resetLabel={t('settings.resetToDefaults')}
-                          onChange={setBannerColor}
-                          onReset={() => setBannerColor(null)}
-                        />
-
-                        <ColorPaletteField
-                          label={t('settings.panelColor')}
-                          value={panelColor}
-                          defaultColor={DEFAULT_PANEL_COLOR}
-                          customLabel="Custom color"
-                          defaultLabel={t('settings.denoiserDefault')}
-                          resetLabel={t('settings.resetToDefaults')}
-                          onChange={setPanelColor}
-                          onReset={() => setPanelColor(null)}
-                        />
 
                         <Button
                           onClick={() => void handleSaveProfile()}
@@ -910,25 +1078,49 @@ export default function AppSettingsModal() {
                         </Button>
                       </div>
 
-                      {/* Right: live profile panel preview */}
-                      <div className="space-y-2 shrink-0">
-                        <Label>{t('settings.profilePreview')}</Label>
-                        <div
-                          className={cn('w-52 rounded-lg overflow-hidden shadow-lg border border-border', !panelColor && 'bg-popover')}
-                          style={panelColor ? { backgroundColor: panelColor } : undefined}
-                        >
-                          <ProfileCardBody
-                            userId={String(user?.id ?? '')}
-                            displayName={user?.name ?? initials}
-                            discriminator={user?.discriminator}
-                            avatarUrl={user?.avatar?.url}
-                            bio={bio}
-                            panelColor={panelColor}
-                            bannerColor={bannerColor}
-                            accent={userColor(String(user?.id ?? 'default'))}
-                          />
-                        </div>
+                      <div
+                        className={cn('w-[300px] shrink-0 rounded-lg overflow-hidden shadow-lg border border-border', !panelColor && 'bg-popover')}
+                        style={panelColor ? { backgroundColor: panelColor } : undefined}
+                      >
+                        <ProfileCardBody
+                          userId={profilePreviewUserId}
+                          displayName={profilePreviewName}
+                          discriminator={profileDiscriminator || undefined}
+                          avatarUrl={profilePreviewAvatarUrl}
+                          bannerUrl={profilePreviewBannerUrl}
+                          bannerCrop={profilePreviewBannerCrop}
+                          panelColor={panelColor}
+                          bannerColor={bannerColor}
+                          accent={userColor(profilePreviewUserId)}
+                          onAvatarClick={() => !uploadingAvatar && avatarInputRef.current?.click()}
+                          onBannerClick={() => !uploadingBanner && bannerInputRef.current?.click()}
+                          avatarBusy={uploadingAvatar}
+                          bannerBusy={uploadingBanner}
+                          avatarActionLabel={t('settings.changeAvatar')}
+                          bannerActionLabel={t('settings.changeBanner')}
+                          displayNameEditor={previewNameEditor}
+                          bioEditor={(
+                            <textarea
+                              id="settings-bio"
+                              aria-label={t('settings.bio')}
+                              value={bio}
+                              onChange={(e) => setBio(e.target.value)}
+                              placeholder={t('settings.bioPlaceholder')}
+                              rows={3}
+                              maxLength={190}
+                              className="min-h-20 w-full resize-none rounded-md border border-input bg-background/70 px-3 py-2 text-xs leading-relaxed outline-none transition-colors placeholder:text-muted-foreground focus:ring-1 focus:ring-ring"
+                              style={previewBioStyle}
+                            />
+                          )}
+                        />
                       </div>
+                      <input
+                        ref={bannerInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => void handleBannerFileSelected(event)}
+                      />
                     </div>
                   </div>
                 </div>
@@ -1480,6 +1672,15 @@ export default function AppSettingsModal() {
         imageDataUrl={cropImageDataUrl}
         onCancel={() => setCropDialogOpen(false)}
         onCrop={(blob) => void handleAvatarCropConfirmed(blob)}
+      />
+
+      <BannerCropDialog
+        open={bannerEditorOpen}
+        mediaUrl={bannerDraft?.url ?? ''}
+        sourceWidth={bannerDraft?.width ?? PROFILE_BANNER_MIN_WIDTH}
+        sourceHeight={bannerDraft?.height ?? PROFILE_BANNER_MIN_HEIGHT}
+        onCancel={handleBannerEditorCancel}
+        onApply={(crop) => void handleBannerCropApplied(crop)}
       />
     </>
   )

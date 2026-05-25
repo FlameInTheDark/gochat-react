@@ -25,7 +25,7 @@ import {
 import { useUiStore } from '@/stores/uiStore'
 import { useAuthStore } from '@/stores/authStore'
 import { usePresenceStore, type UserStatus } from '@/stores/presenceStore'
-import { guildApi, rolesApi, userApi } from '@/api/client'
+import { deleteUserPersonalNote, guildApi, rolesApi, saveUserPersonalNote, userApi } from '@/api/client'
 import type { DtoMember } from '@/types'
 import type { DtoRole, DtoUser } from '@/client'
 import { cn } from '@/lib/utils'
@@ -36,6 +36,7 @@ import { useGuildPermissions } from '@/hooks/useGuildPermissions'
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const PANEL_W = 300
+const USER_NOTE_MAX_LENGTH = 500
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -57,6 +58,9 @@ export default function UserProfilePanel() {
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null)
   const [pendingModerationAction, setPendingModerationAction] = useState<'kick' | 'ban' | null>(null)
   const [moderatingAction, setModeratingAction] = useState<'kick' | 'ban' | null>(null)
+  const [noteDraft, setNoteDraft] = useState('')
+  const [savingNote, setSavingNote] = useState(false)
+  const lastSavedNoteRef = useRef('')
   const [sheetAtTop, setSheetAtTop] = useState(true)
   const sheetScrollRef = useRef<HTMLDivElement>(null)
   const dragControls = useDragControls()
@@ -216,6 +220,12 @@ export default function UserProfilePanel() {
     ? t('serverSettings.kickConfirmDescription', { name: displayName })
     : t('serverSettings.banConfirmDescription', { name: displayName })
 
+  useEffect(() => {
+    const next = userData?.personal_note ?? ''
+    setNoteDraft(next)
+    lastSavedNoteRef.current = next
+  }, [userId, userData?.personal_note])
+
   async function handleSendFriendRequest() {
     if (!memberDiscriminator) return
     try {
@@ -233,6 +243,44 @@ export default function UserProfilePanel() {
       toast.success(t('serverSettings.copied'))
     } catch {
       toast.error(t('common.error'))
+    }
+  }
+
+  function setCachedPersonalNote(nextNote: string) {
+    const normalizedNote = nextNote || undefined
+    queryClient.setQueryData<DtoUser>(['user', userId], (old) =>
+      old ? { ...old, personal_note: normalizedNote } : old,
+    )
+    if (!guildId) return
+    queryClient.setQueryData<DtoMember[]>(['members', guildId], (old = []) =>
+      old.map((m) => String(m.user?.id) === userId && m.user
+        ? { ...m, user: { ...m.user, personal_note: normalizedNote } }
+        : m,
+      ),
+    )
+    queryClient.setQueryData<DtoMember>(['member', guildId, userId], (old) =>
+      old?.user ? { ...old, user: { ...old.user, personal_note: normalizedNote } } : old,
+    )
+  }
+
+  async function handleNoteBlur() {
+    if (isSelf || savingNote) return
+    const trimmed = noteDraft.trim()
+    if (trimmed === lastSavedNoteRef.current) return
+    setSavingNote(true)
+    try {
+      if (trimmed) {
+        await saveUserPersonalNote(userId, trimmed)
+      } else {
+        await deleteUserPersonalNote(userId)
+      }
+      lastSavedNoteRef.current = trimmed
+      setNoteDraft(trimmed)
+      setCachedPersonalNote(trimmed)
+    } catch {
+      toast.error(t('userProfile.noteFailed'))
+    } finally {
+      setSavingNote(false)
     }
   }
 
@@ -339,8 +387,9 @@ export default function UserProfilePanel() {
           )
         })}
         {assignedRoles.length === 0 && (
-          <p className="text-xs italic" style={{ color: mutedColor ?? undefined }}
-            {...(!mutedColor ? { className: 'text-xs text-muted-foreground italic' } : {})}
+          <p
+            className={cn('text-xs italic', !mutedColor && 'text-muted-foreground')}
+            style={{ color: mutedColor ?? undefined }}
           >{t('userProfile.noRoles')}</p>
         )}
       </div>
@@ -348,6 +397,33 @@ export default function UserProfilePanel() {
 
     const showAddFriendButton = !isSelf && !isFriend && !!memberDiscriminator
     const showModerationActions = canKickMember || canBanMember
+    const personalNote = !isSelf ? (
+      <div>
+        <p
+          className={cn('text-[10px] font-semibold uppercase tracking-wider mb-1.5', !mutedColor && 'text-muted-foreground')}
+          style={{ color: mutedColor }}
+        >
+          {t('userProfile.privateNote')}
+        </p>
+        <textarea
+          value={noteDraft}
+          onChange={(e) => setNoteDraft(e.target.value)}
+          onBlur={() => void handleNoteBlur()}
+          placeholder={t('userProfile.notePlaceholder')}
+          rows={2}
+          maxLength={USER_NOTE_MAX_LENGTH}
+          disabled={savingNote}
+          className={cn(
+            'w-full resize-none rounded-md border bg-transparent px-3 py-2 text-xs outline-none transition-colors placeholder:text-muted-foreground/80 focus:border-primary/70',
+            savingNote && 'opacity-70',
+          )}
+          style={{
+            color: textColor,
+            borderColor: rawPanelColor ? (isDark(rawPanelColor) ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.18)') : undefined,
+          }}
+        />
+      </div>
+    ) : null
     const headerActions = (
       <>
         {showAddFriendButton && (
@@ -429,6 +505,7 @@ export default function UserProfilePanel() {
           globalName={globalName}
           discriminator={discriminator}
           avatarUrl={userData?.avatar?.url}
+          bannerUrl={userData?.banner?.exists ? userData.banner.url : undefined}
           bio={mobile ? undefined : userData?.bio}
           panelColor={rawPanelColor}
           bannerColor={rawBannerColor}
@@ -472,6 +549,12 @@ export default function UserProfilePanel() {
                     <p className={cn('text-sm', !textColor && 'text-foreground')} style={{ color: textColor }}>{joinDate}</p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {personalNote && (
+              <div className="rounded-2xl p-3" style={{ backgroundColor: blockBg }}>
+                {personalNote}
               </div>
             )}
 
@@ -550,6 +633,8 @@ export default function UserProfilePanel() {
           ) : (
           // ── Desktop: original flat layout ──────────────────────────────────
             <>
+            {personalNote}
+
             {/* Member since */}
             {joinDate && (
               <div>

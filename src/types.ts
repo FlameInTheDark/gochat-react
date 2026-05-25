@@ -8,6 +8,7 @@ export type {
   DtoMember,
   DtoGuildInvite,
   DtoAttachment,
+  DtoBannerData,
   ModelChannelType,
 } from '@/client'
 
