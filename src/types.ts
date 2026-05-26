@@ -1,3 +1,10 @@
+// Augment DtoUser with is_bot field returned by the API but missing from the generated client
+declare module '@/client' {
+  interface DtoUser {
+    is_bot?: boolean
+  }
+}
+
 // Re-export key API types for convenience
 export type {
   DtoUser,

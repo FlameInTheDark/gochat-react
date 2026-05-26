@@ -192,6 +192,7 @@ const ru: Translation = {
         appearance: 'Внешний вид',
         voiceVideo: 'Голос и видео',
         language: 'Язык',
+        developer: 'Разработчик',
         security: 'Безопасность',
         dangerZone: 'Опасная зона',
 
@@ -738,7 +739,7 @@ const ru: Translation = {
     // ── Server Settings modal ────────────────────────────────────────────────
     serverSettings: {
         title: 'Настройки сервера',
-        navOverview: 'Обзор', navMembers: 'Участники', navRoles: 'Роли', navInvites: 'Приглашения', navEmoji: 'Эмодзи', navBans: 'Баны', navDanger: 'Опасная зона',
+        navOverview: 'Обзор', navMembers: 'Участники', navRoles: 'Роли', navInvites: 'Приглашения', navEmoji: 'Эмодзи', navBots: 'Боты', navBans: 'Баны', navDanger: 'Опасная зона',
         overviewTitle: 'Обзор сервера', changeIcon: 'Изменить иконку сервера', publicServer: 'Публичный сервер', privateServer: 'Приватный сервер',
         serverNameLabel: 'Название сервера', serverNamePlaceholder: 'Название сервера', publicServerLabel: 'Публичный сервер', publicServerDesc: 'Позволить всем находить и вступать в этот сервер', serverIdLabel: 'ID сервера',
         discoveryTitle: 'Публикация в поиске', discoveryDesc: 'Помогите людям понять, о чём ваш сервер, и найти его в поиске.', discoveryOwnerOnly: 'Только владелец сервера может редактировать настройки поиска.',

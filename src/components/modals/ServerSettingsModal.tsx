@@ -50,12 +50,13 @@ import { getApiBaseUrl, getInviteUrl } from '@/lib/connectionConfig'
 import { useClientMode } from '@/hooks/useClientMode'
 import { createPermissionChecker } from '@/lib/permissionChecker'
 import { useGuildPermissions } from '@/hooks/useGuildPermissions'
+import GuildBotsSection from '@/components/settings/GuildBotsSection'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Section = 'overview' | 'members' | 'roles' | 'invites' | 'emojis' | 'bans' | 'danger'
+type Section = 'overview' | 'members' | 'roles' | 'invites' | 'emojis' | 'bots' | 'bans' | 'danger'
 type RoleSettingsTab = 'display' | 'permissions' | 'members'
 
 const NAV: { key: Section; danger?: boolean }[] = [
@@ -64,6 +65,7 @@ const NAV: { key: Section; danger?: boolean }[] = [
   { key: 'roles' },
   { key: 'invites' },
   { key: 'emojis' },
+  { key: 'bots' },
   { key: 'bans' },
   { key: 'danger', danger: true },
 ]
@@ -415,6 +417,7 @@ export default function ServerSettingsModal() {
 
   const ownerIdStr = guild?.owner != null ? String(guild.owner) : null
   const isOwner = permissions.isOwner
+  const canManageBots = permissions.isOwner || permissions.isAdmin
 
   const { data: discoverySettings } = useQuery<DtoGuildDiscoveryUpdateResponse>({
     queryKey: ['guildDiscoverySettings', guildId],
@@ -444,12 +447,15 @@ export default function ServerSettingsModal() {
     .filter((suggestion) => suggestion && !tags.includes(suggestion))
     .slice(0, 8)
 
-  // Redirect away from danger section if not owner
+  // Redirect away from owner/admin-only sections when permissions change.
   useEffect(() => {
     if (section === 'danger' && !isOwner) {
       setSection('overview')
     }
-  }, [section, isOwner])
+    if (section === 'bots' && !canManageBots) {
+      setSection('overview')
+    }
+  }, [section, isOwner, canManageBots])
 
   const { data: members = [] } = useQuery<DtoMember[]>({
     queryKey: ['members', guildId],
@@ -1036,6 +1042,7 @@ export default function ServerSettingsModal() {
                     roles: t('serverSettings.navRoles'),
                     invites: t('serverSettings.navInvites'),
                     emojis: t('serverSettings.navEmoji'),
+                    bots: t('serverSettings.navBots'),
                     bans: t('serverSettings.navBans'),
                     danger: t('serverSettings.navDanger'),
                   }
@@ -1070,12 +1077,15 @@ export default function ServerSettingsModal() {
                   roles: t('serverSettings.navRoles'),
                   invites: t('serverSettings.navInvites'),
                   emojis: t('serverSettings.navEmoji'),
+                  bots: t('serverSettings.navBots'),
                   bans: t('serverSettings.navBans'),
                   danger: t('serverSettings.navDanger'),
                 }
                 return NAV.map((s, i) => {
                   // Hide danger section for non-owners
                   if (s.danger && !isOwner) return null
+                  // Hide bot administration for users without owner/admin permission
+                  if (s.key === 'bots' && !canManageBots) return null
                   // Hide bans section for users without ban permission
                   if (s.key === 'bans' && !canBan) return null
 
@@ -2246,6 +2256,11 @@ export default function ServerSettingsModal() {
                   )
                 })()}
               </div>
+            )}
+
+            {/* ── Bots ── */}
+            {section === 'bots' && guildId && canManageBots && (
+              <GuildBotsSection guildId={guildId} />
             )}
 
             {/* ── Danger Zone ── */}

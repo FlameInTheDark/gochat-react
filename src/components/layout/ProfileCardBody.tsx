@@ -2,6 +2,7 @@
 import { Camera } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import StatusDot from '@/components/ui/StatusDot'
+import BotBadge from '@/components/ui/BotBadge'
 import type { UserStatus } from '@/stores/presenceStore'
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ export interface ProfileCardBodyProps {
   /** Used for avatar placeholder colour derivation */
   userId: string
   displayName: string
+  isBot?: boolean
   /** The user's "global" display name (shown below displayName if different) */
   globalName?: string
   discriminator?: string
@@ -95,6 +97,7 @@ export interface ProfileCardBodyProps {
  */
 export default function ProfileCardBody({
   displayName,
+  isBot,
   globalName,
   discriminator,
   avatarUrl,
@@ -235,8 +238,8 @@ export default function ProfileCardBody({
         {/* Name block */}
         <div>
           {displayNameEditor ?? (
-            <p className="font-bold text-base leading-snug" style={{ color: textColor }}>
-              {displayName}
+            <p className="font-bold text-base leading-snug inline-flex items-center gap-1.5" style={{ color: textColor }}>
+              {displayName}{isBot && <BotBadge />}
             </p>
           )}
           {globalName && globalName !== displayName && (

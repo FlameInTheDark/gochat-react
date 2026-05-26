@@ -38,6 +38,7 @@ import { ChannelType } from '@/types'
 import type { DtoMember, DtoGuild, DtoChannel } from '@/types'
 import type { DtoRole } from '@/client'
 import { useGuildPermissions } from '@/hooks/useGuildPermissions'
+import BotBadge from '@/components/ui/BotBadge'
 
 interface Props {
   serverId: string
@@ -327,7 +328,7 @@ function MemberRow({
             <StatusDot status={status} className="absolute -bottom-0.5 -right-0.5 w-3 h-3" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="truncate text-sm font-medium leading-tight" style={topRoleColor ? { color: topRoleColor } : undefined}>{displayName}</p>
+            <p className="truncate text-sm font-medium leading-tight flex items-center gap-1" style={topRoleColor ? { color: topRoleColor } : undefined}>{displayName}{member.user?.is_bot && <BotBadge />}</p>
             {customStatus && (
               <p className="truncate text-[10px] text-muted-foreground/70 leading-tight italic">
                 {customStatus}

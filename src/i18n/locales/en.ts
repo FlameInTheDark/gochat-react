@@ -192,6 +192,7 @@ const en: Translation = {
         appearance: 'Appearance',
         voiceVideo: 'Voice & Video',
         language: 'Language',
+        developer: 'Developer',
         security: 'Security',
         dangerZone: 'Danger Zone',
 
@@ -735,7 +736,7 @@ const en: Translation = {
     // ── Server Settings modal ────────────────────────────────────────────────
     serverSettings: {
         title: 'Server Settings',
-        navOverview: 'Overview', navMembers: 'Members', navRoles: 'Roles', navInvites: 'Invites', navEmoji: 'Emoji', navBans: 'Bans', navDanger: 'Danger Zone',
+        navOverview: 'Overview', navMembers: 'Members', navRoles: 'Roles', navInvites: 'Invites', navEmoji: 'Emoji', navBots: 'Bots', navBans: 'Bans', navDanger: 'Danger Zone',
         overviewTitle: 'Server Overview', changeIcon: 'Change server icon', publicServer: 'Public server', privateServer: 'Private server',
         serverNameLabel: 'Server Name', serverNamePlaceholder: 'Server name', publicServerLabel: 'Public Server', publicServerDesc: 'Allow anyone to discover and join this server', serverIdLabel: 'Server ID',
         discoveryTitle: 'Discovery listing', discoveryDesc: 'Help people understand your server and find it in discovery.', discoveryOwnerOnly: 'Only the server owner can edit discovery settings.',

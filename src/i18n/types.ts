@@ -175,6 +175,7 @@ export interface Translation {
         appearance: string
         voiceVideo: string
         language: string
+        developer: string
         security: string
         dangerZone: string
         username: string
@@ -684,7 +685,7 @@ export interface Translation {
     }
     serverSettings: {
         title: string
-        navOverview: string; navMembers: string; navRoles: string; navInvites: string; navEmoji: string; navBans: string; navDanger: string
+        navOverview: string; navMembers: string; navRoles: string; navInvites: string; navEmoji: string; navBots: string; navBans: string; navDanger: string
         overviewTitle: string; changeIcon: string; publicServer: string; privateServer: string
         serverNameLabel: string; serverNamePlaceholder: string; publicServerLabel: string; publicServerDesc: string; serverIdLabel: string
         discoveryTitle: string; discoveryDesc: string; discoveryOwnerOnly: string
