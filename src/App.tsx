@@ -25,6 +25,7 @@ import ChannelPage from "@/pages/app/ChannelPage";
 import MePage from "@/pages/app/MePage";
 import DMPage from "@/pages/app/DMPage";
 import DiscoveryPage from "@/pages/app/DiscoveryPage";
+import BotDiscoveryPage from "@/pages/app/BotDiscoveryPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import CreateServerModal from "@/components/modals/CreateServerModal";
 import CreateChannelModal from "@/components/modals/CreateChannelModal";
@@ -66,7 +67,11 @@ const router = createBrowserRouter(
         {
           path: "discovery",
           element: <DiscoveryLayout />,
-          children: [{ index: true, element: <DiscoveryPage /> }],
+          children: [
+            { index: true, element: <Navigate to="servers" replace /> },
+            { path: "servers", element: <DiscoveryPage /> },
+            { path: "bots", element: <BotDiscoveryPage /> },
+          ],
         },
         {
           path: ":serverId",

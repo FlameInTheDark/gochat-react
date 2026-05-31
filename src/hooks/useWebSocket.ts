@@ -35,7 +35,7 @@ interface ThreadLinkQueryResult {
   missing: boolean
 }
 
-interface GatewayReadyDetail extends Partial<UserUserSettingsResponse> {
+interface GatewayReadyDetail extends Omit<Partial<UserUserSettingsResponse>, 'dm_calls'> {
   user?: DtoUser
   settings?: ModelUserSettingsData
   guilds?: DtoGuild[]

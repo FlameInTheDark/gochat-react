@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Compass, Search, Users } from 'lucide-react'
+import { ArrowLeft, Bot, Compass, Search, Users } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { guildApi, searchApi } from '@/api/client'
@@ -187,10 +187,23 @@ export default function DiscoveryPage() {
                   <ArrowLeft className="size-5" />
                 </Button>
               ) : null}
-              <h1 className="text-2xl font-semibold tracking-normal">{t('discovery.title')}</h1>
+              <h1 className="text-2xl font-semibold tracking-normal">{t('discovery.serversTitle')}</h1>
             </div>
             <p className="text-sm text-muted-foreground">{t('discovery.subtitle')}</p>
           </header>
+
+          {isMobile ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Button type="button" variant="secondary" className="gap-2" onClick={() => navigate('/app/discovery/servers')}>
+                <Compass className="size-4" />
+                {t('discovery.servers')}
+              </Button>
+              <Button type="button" variant="outline" className="gap-2" onClick={() => navigate('/app/discovery/bots')}>
+                <Bot className="size-4" />
+                {t('discovery.bots')}
+              </Button>
+            </div>
+          ) : null}
 
           <div className="space-y-3">
             <form onSubmit={submitSearch} className="flex max-w-3xl gap-2">

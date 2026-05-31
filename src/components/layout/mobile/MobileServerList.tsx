@@ -365,9 +365,9 @@ export default function MobileServerList() {
 
       {/* Bottom action buttons */}
       <div className="p-4 flex gap-2 border-t border-sidebar-border shrink-0">
-        <Button variant="outline" className="flex-1" onClick={() => navigate('/app/discovery')}>
+        <Button variant="outline" className="flex-1" onClick={() => navigate('/app/discovery/servers')}>
           <Compass className="w-4 h-4 mr-1.5" />
-          {t('serverSidebar.discoverServers')}
+          {t('serverSidebar.discover')}
         </Button>
         <Button className="flex-1" onClick={openCreateServer}>
           <PlusCircle className="w-4 h-4 mr-1.5" />

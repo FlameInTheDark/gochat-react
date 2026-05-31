@@ -20,6 +20,7 @@ export interface DeveloperBot {
   owner_user_id: Snowflake;
   user?: BotUser;
   description?: string;
+  tags?: string[];
   public?: boolean;
   default_permissions?: number;
   disabled?: boolean;
@@ -32,6 +33,7 @@ export interface CreateDeveloperBotRequest {
   description?: string;
   public?: boolean;
   default_permissions?: number;
+  tags?: string[];
 }
 
 export interface UpdateDeveloperBotRequest {
@@ -42,6 +44,7 @@ export interface UpdateDeveloperBotRequest {
   banner_color?: number;
   panel_color?: number;
   description?: string;
+  tags?: string[];
   public?: boolean;
   default_permissions?: number;
   disabled?: boolean;
@@ -95,6 +98,22 @@ export interface BotAuthorizationPreview {
   bot: DeveloperBot;
   requested_permissions: number;
   grant_id?: Snowflake;
+}
+
+export interface BotDiscovery {
+  bot_user_id: Snowflake;
+  user?: BotUser;
+  description?: string;
+  tags?: string[];
+  default_permissions?: number;
+  installs_count?: number;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface BotDiscoverySearchResponse {
+  bots?: BotDiscovery[];
+  pages?: number;
 }
 
 const apiBase = () => getApiBaseUrl();
@@ -162,6 +181,31 @@ export const botsApi = {
 
   async deleteDeveloperBot(botId: Snowflake): Promise<void> {
     await axiosInstance.delete(`${apiBase()}/developer/bots/${id(botId)}`);
+  },
+
+  async searchBots(params: {
+    q?: string;
+    tags?: string;
+    sort?: "best_match" | "popularity" | "alphabetical";
+    page?: number;
+    limit?: number;
+  }): Promise<BotDiscoverySearchResponse> {
+    const response = await axiosInstance.get<BotDiscoverySearchResponse>(
+      `${apiBase()}/search/bots`,
+      { params },
+    );
+    return response.data ?? { bots: [], pages: 0 };
+  },
+
+  async searchBotTags(params: {
+    q?: string;
+    limit?: number;
+  }): Promise<string[]> {
+    const response = await axiosInstance.get<string[]>(
+      `${apiBase()}/search/bot-tags`,
+      { params },
+    );
+    return response.data ?? [];
   },
 
   async createBotAvatarUpload(

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, CheckCircle2, ShieldCheck } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type { DtoGuild } from "@/client";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -26,8 +27,8 @@ function initials(name?: string): string {
   return (name ?? "B").trim().slice(0, 2).toUpperCase() || "B";
 }
 
-function guildName(guild: DtoGuild): string {
-  return guild.name?.trim() || "Server";
+function guildName(guild: DtoGuild, fallback: string): string {
+  return guild.name?.trim() || fallback;
 }
 
 function GuildIdentity({
@@ -37,7 +38,8 @@ function GuildIdentity({
   guild: DtoGuild;
   compact?: boolean;
 }) {
-  const name = guildName(guild);
+  const { t } = useTranslation();
+  const name = guildName(guild, t("botAuth.serverFallbackName"));
 
   return (
     <span className="flex min-w-0 items-center gap-2">
@@ -63,6 +65,7 @@ function GuildIdentity({
 }
 
 export default function BotAuthorizePage() {
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -130,10 +133,10 @@ export default function BotAuthorizePage() {
           queryKey: ["guild-bots", selectedGuildId],
         }),
       ]);
-      toast.success("Bot added");
+      toast.success(t("botAuth.botAdded"));
       navigate(`/app/${selectedGuildId}`);
     } catch {
-      toast.error("Failed to authorize bot");
+      toast.error(t("botAuth.authorizeFailed"));
     } finally {
       setAuthorizing(false);
     }
@@ -145,22 +148,24 @@ export default function BotAuthorizePage() {
       <div className="flex min-h-screen w-full items-center justify-center bg-background px-4">
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center shadow-lg">
           <Bot className="mx-auto h-10 w-10 text-primary" />
-          <h1 className="mt-4 text-xl font-bold">Authorize bot</h1>
+          <h1 className="mt-4 text-xl font-bold">
+            {t("botAuth.authorizeTitle")}
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Sign in to choose a server.
+            {t("botAuth.signInDesc")}
           </p>
           <Button
             className="mt-6 w-full"
             onClick={() => navigate(`/?next=${encodeURIComponent(next)}`)}
           >
-            Sign in
+            {t("botAuth.signIn")}
           </Button>
         </div>
       </div>
     );
   }
 
-  const botName = preview?.bot.user?.name ?? "Bot";
+  const botName = preview?.bot.user?.name ?? t("botAuth.botFallbackName");
 
   return (
     <div className="flex min-h-screen w-full items-start justify-center overflow-y-auto bg-background px-4 py-8 md:items-center">
@@ -180,7 +185,7 @@ export default function BotAuthorizePage() {
             <div className="min-w-0 flex-1">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <ShieldCheck className="h-4 w-4" />
-                Bot authorization
+                {t("botAuth.authorizationLabel")}
               </p>
               <h1 className="mt-1 truncate text-2xl font-bold">{botName}</h1>
               {preview?.bot.description && (
@@ -195,10 +200,12 @@ export default function BotAuthorizePage() {
         <div className="grid gap-0 md:grid-cols-[minmax(0,1fr)_300px]">
           <div className="border-b border-border p-6 md:border-b-0 md:border-r">
             {previewLoading ? (
-              <p className="text-sm text-muted-foreground">Loading bot...</p>
+              <p className="text-sm text-muted-foreground">
+                {t("botAuth.loadingBot")}
+              </p>
             ) : previewError || !preview ? (
               <p className="text-sm text-destructive">
-                Authorization link is invalid or expired.
+                {t("botAuth.invalidLink")}
               </p>
             ) : (
               <BotPermissionSummary value={preview.requested_permissions} />
@@ -207,7 +214,7 @@ export default function BotAuthorizePage() {
 
           <div className="space-y-4 p-6">
             <div className="space-y-2">
-              <p className="text-sm font-medium">Server</p>
+              <p className="text-sm font-medium">{t("botAuth.serverLabel")}</p>
               <Select
                 value={selectedGuildId}
                 onValueChange={setSelectedGuildId}
@@ -221,7 +228,9 @@ export default function BotAuthorizePage() {
                   ) : (
                     <SelectValue
                       placeholder={
-                        guildsLoading ? "Loading servers..." : "Select server"
+                        guildsLoading
+                          ? t("botAuth.loadingServers")
+                          : t("botAuth.selectServer")
                       }
                     />
                   )}
@@ -239,16 +248,10 @@ export default function BotAuthorizePage() {
               </Select>
               {!guildsLoading && guilds.length === 0 && (
                 <p className="text-xs text-muted-foreground">
-                  No servers available.
+                  {t("botAuth.noServers")}
                 </p>
               )}
             </div>
-
-            {selectedGuild && (
-              <div className="rounded-md border border-border bg-background/50 p-3">
-                <GuildIdentity guild={selectedGuild} />
-              </div>
-            )}
 
             <Button
               className="w-full gap-2"
@@ -256,7 +259,7 @@ export default function BotAuthorizePage() {
               onClick={() => void handleAuthorize()}
             >
               <CheckCircle2 className="h-4 w-4" />
-              {authorizing ? "Authorizing..." : "Authorize"}
+              {authorizing ? t("botAuth.authorizing") : t("botAuth.authorize")}
             </Button>
             <Button
               type="button"
@@ -264,7 +267,7 @@ export default function BotAuthorizePage() {
               className="w-full"
               onClick={() => navigate("/app")}
             >
-              Cancel
+              {t("botAuth.cancel")}
             </Button>
           </div>
         </div>

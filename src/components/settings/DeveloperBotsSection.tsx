@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   ArrowLeft,
   Bot,
@@ -20,6 +21,7 @@ import {
   Plus,
   Save,
   Trash2,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { uploadApi, uploadProfileBanner } from "@/api/client";
@@ -49,6 +51,9 @@ const INSTALL_GRANT_DEFAULT_TTL = 60 * 60 * 24 * 7;
 const INSTALL_GRANT_DEFAULT_MAX_USES = 1;
 const BOT_AVATAR_MAX_SIZE = 250 * 1024;
 const BOT_BANNER_MAX_SIZE = 10 * 1024 * 1024;
+const MAX_DISCOVERY_TAGS = 10;
+const DISCOVERY_TAG_PATTERN = /^[a-z0-9_-]{2,32}$/;
+type PermissionTab = "public" | "url";
 
 function numToHex(value: number | undefined | null, fallback: string): string {
   if (value == null) return fallback;
@@ -69,21 +74,33 @@ function isActiveToken(token: BotRuntimeToken): boolean {
 
 function isActiveGrant(grant: BotInstallGrant): boolean {
   if (grant.revoked_at) return false;
-  if ((grant.max_uses ?? 0) <= (grant.uses ?? 0)) return false;
+  if (
+    typeof grant.max_uses === "number" &&
+    grant.max_uses > 0 &&
+    grant.max_uses <= (grant.uses ?? 0)
+  ) {
+    return false;
+  }
   if (!grant.expires_at) return true;
   return new Date(grant.expires_at).getTime() > Date.now();
 }
 
-function formatDate(value?: string | number | null): string {
-  if (value == null || value === "") return "Never";
+type Translate = ReturnType<typeof useTranslation>["t"];
+
+function formatDate(value: string | number | null | undefined, t: Translate): string {
+  if (value == null || value === "") return t("developerBots.never");
   const date =
     typeof value === "number" ? new Date(value * 1000) : new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown";
+  if (Number.isNaN(date.getTime())) return t("developerBots.unknown");
   return date.toLocaleString();
 }
 
 function idString(value: Snowflake | undefined): string {
   return value == null ? "" : String(value);
+}
+
+function normalizeDiscoveryTag(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 async function copyText(value: string, message: string) {
@@ -92,6 +109,7 @@ async function copyText(value: string, message: string) {
 }
 
 export default function DeveloperBotsSection() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
@@ -106,10 +124,14 @@ export default function DeveloperBotsSection() {
   const [grantBusy, setGrantBusy] = useState(false);
   const [oneTimeToken, setOneTimeToken] = useState<string | null>(null);
   const [installUrl, setInstallUrl] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState("");
+  const [permissionsTab, setPermissionsTab] = useState<PermissionTab>("public");
+  const [grantUnlimitedUses, setGrantUnlimitedUses] = useState(true);
   const [form, setForm] = useState({
     name: "",
     bio: "",
     description: "",
+    tags: [] as string[],
     public: false,
     disabled: false,
     defaultPermissions: BOT_PERMISSION_BASELINE,
@@ -177,6 +199,7 @@ export default function DeveloperBotsSection() {
       name: selectedBot.user?.name ?? "",
       bio: selectedBot.user?.bio ?? "",
       description: selectedBot.description ?? "",
+      tags: selectedBot.tags ?? [],
       public: Boolean(selectedBot.public),
       disabled: Boolean(selectedBot.disabled),
       defaultPermissions: Number(
@@ -191,6 +214,7 @@ export default function DeveloperBotsSection() {
     setGrantPermissions(
       Number(selectedBot.default_permissions ?? BOT_PERMISSION_BASELINE),
     );
+    setTagDraft("");
     setOneTimeToken(null);
     setInstallUrl(null);
   }, [selectedBot]);
@@ -209,9 +233,9 @@ export default function DeveloperBotsSection() {
       setCreateName("");
       setSelectedBotId(idString(bot.bot_user_id));
       await queryClient.invalidateQueries({ queryKey: ["developer-bots"] });
-      toast.success("Bot created");
+      toast.success(t("developerBots.botCreated"));
     } catch {
-      toast.error("Failed to create bot");
+      toast.error(t("developerBots.createFailed"));
     } finally {
       setCreating(false);
     }
@@ -221,7 +245,7 @@ export default function DeveloperBotsSection() {
     if (!selectedBot) return;
     const name = form.name.trim();
     if (!name) {
-      toast.error("Bot name is required");
+      toast.error(t("developerBots.nameRequired"));
       return;
     }
 
@@ -231,6 +255,7 @@ export default function DeveloperBotsSection() {
         name,
         bio: form.bio.trim(),
         description: form.description.trim(),
+        tags: form.tags,
         public: form.public,
         disabled: form.disabled,
         default_permissions: form.defaultPermissions,
@@ -238,9 +263,9 @@ export default function DeveloperBotsSection() {
         panel_color: hexToNum(form.panelColor),
       });
       await queryClient.invalidateQueries({ queryKey: ["developer-bots"] });
-      toast.success("Bot saved");
+      toast.success(t("developerBots.botSaved"));
     } catch {
-      toast.error("Failed to save bot");
+      toast.error(t("developerBots.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -253,11 +278,11 @@ export default function DeveloperBotsSection() {
     event.target.value = "";
     if (!selectedBot || !file) return;
     if (!file.type.startsWith("image/")) {
-      toast.error("Avatar must be an image");
+      toast.error(t("developerBots.avatarImageRequired"));
       return;
     }
     if (file.size > BOT_AVATAR_MAX_SIZE) {
-      toast.error("Avatar file is too large");
+      toast.error(t("developerBots.avatarTooLarge"));
       return;
     }
 
@@ -271,17 +296,17 @@ export default function DeveloperBotsSection() {
         },
       );
       await uploadApi.uploadAvatarsUserIdAvatarIdPost({
-        userId: String(placeholder.user_id),
-        avatarId: String(placeholder.id),
+        userId: placeholder.user_id as unknown as number,
+        avatarId: placeholder.id as unknown as number,
         file: file as unknown as number[],
       });
       await botsApi.updateDeveloperBot(selectedBot.bot_user_id, {
         avatar: placeholder.id,
       });
       await queryClient.invalidateQueries({ queryKey: ["developer-bots"] });
-      toast.success("Bot avatar updated");
+      toast.success(t("developerBots.avatarUpdated"));
     } catch {
-      toast.error("Failed to upload bot avatar");
+      toast.error(t("developerBots.avatarUploadFailed"));
     } finally {
       setUploadingAvatar(false);
     }
@@ -294,11 +319,11 @@ export default function DeveloperBotsSection() {
     event.target.value = "";
     if (!selectedBot || !file) return;
     if (!file.type.startsWith("image/")) {
-      toast.error("Banner must be an image");
+      toast.error(t("developerBots.bannerImageRequired"));
       return;
     }
     if (file.size > BOT_BANNER_MAX_SIZE) {
-      toast.error("Banner file is too large");
+      toast.error(t("developerBots.bannerTooLarge"));
       return;
     }
 
@@ -320,9 +345,9 @@ export default function DeveloperBotsSection() {
         banner: placeholder.id,
       });
       await queryClient.invalidateQueries({ queryKey: ["developer-bots"] });
-      toast.success("Bot banner updated");
+      toast.success(t("developerBots.bannerUpdated"));
     } catch {
-      toast.error("Failed to upload bot banner");
+      toast.error(t("developerBots.bannerUploadFailed"));
     } finally {
       setUploadingBanner(false);
     }
@@ -331,7 +356,9 @@ export default function DeveloperBotsSection() {
   async function handleDeleteBot() {
     if (!selectedBot || deleting) return;
     const confirmed = window.confirm(
-      `Delete ${selectedBot.user?.name ?? "this bot"}?`,
+      t("developerBots.deleteConfirm", {
+        name: selectedBot.user?.name ?? t("developerBots.unnamedBot"),
+      }),
     );
     if (!confirmed) return;
 
@@ -339,9 +366,9 @@ export default function DeveloperBotsSection() {
     try {
       await botsApi.deleteDeveloperBot(selectedBot.bot_user_id);
       await queryClient.invalidateQueries({ queryKey: ["developer-bots"] });
-      toast.success("Bot deleted");
+      toast.success(t("developerBots.botDeleted"));
     } catch {
-      toast.error("Failed to delete bot");
+      toast.error(t("developerBots.deleteFailed"));
     } finally {
       setDeleting(false);
     }
@@ -366,11 +393,11 @@ export default function DeveloperBotsSection() {
       });
       toast.success(
         activeTokens.length > 0
-          ? "Bot token regenerated"
-          : "Bot token generated",
+          ? t("developerBots.tokenRegenerated")
+          : t("developerBots.tokenGenerated"),
       );
     } catch {
-      toast.error("Failed to generate bot token");
+      toast.error(t("developerBots.tokenGenerateFailed"));
     } finally {
       setTokenBusy(false);
     }
@@ -385,9 +412,9 @@ export default function DeveloperBotsSection() {
       await queryClient.invalidateQueries({
         queryKey: ["developer-bot-tokens", selectedBotKey],
       });
-      toast.success("Bot token revoked");
+      toast.success(t("developerBots.tokenRevoked"));
     } catch {
-      toast.error("Failed to revoke bot token");
+      toast.error(t("developerBots.tokenRevokeFailed"));
     } finally {
       setTokenBusy(false);
     }
@@ -400,16 +427,16 @@ export default function DeveloperBotsSection() {
       const created = await botsApi.createBotGrant(selectedBot.bot_user_id, {
         requested_permissions: grantPermissions,
         expires_in_seconds: grantExpiresIn,
-        max_uses: grantMaxUses,
+        max_uses: grantUnlimitedUses ? -1 : grantMaxUses,
       });
       const url = buildBotInstallUrl(created.token, grantPermissions);
       setInstallUrl(url);
       await queryClient.invalidateQueries({
         queryKey: ["developer-bot-grants", selectedBotKey],
       });
-      toast.success("Install URL generated");
+      toast.success(t("developerBots.installUrlGenerated"));
     } catch {
-      toast.error("Failed to generate install URL");
+      toast.error(t("developerBots.installUrlGenerateFailed"));
     } finally {
       setGrantBusy(false);
     }
@@ -423,12 +450,46 @@ export default function DeveloperBotsSection() {
       await queryClient.invalidateQueries({
         queryKey: ["developer-bot-grants", selectedBotKey],
       });
-      toast.success("Install grant revoked");
+      toast.success(t("developerBots.installGrantRevoked"));
     } catch {
-      toast.error("Failed to revoke install grant");
+      toast.error(t("developerBots.installGrantRevokeFailed"));
     } finally {
       setGrantBusy(false);
     }
+  }
+
+  function addDiscoveryTags(raw: string): boolean {
+    const values = raw
+      .split(",")
+      .map(normalizeDiscoveryTag)
+      .filter(Boolean);
+    if (values.length === 0) return false;
+
+    const invalid = values.filter((tag) => !DISCOVERY_TAG_PATTERN.test(tag));
+    if (invalid.length > 0) {
+      toast.error(t("developerBots.invalidTags", { tags: invalid.join(", ") }));
+      return false;
+    }
+
+    let next = form.tags;
+    for (const tag of values) {
+      if (next.includes(tag)) continue;
+      if (next.length >= MAX_DISCOVERY_TAGS) {
+        toast.error(t("developerBots.maxTags", { count: MAX_DISCOVERY_TAGS }));
+        break;
+      }
+      next = [...next, tag];
+    }
+    setForm((current) => ({ ...current, tags: next }));
+    setTagDraft("");
+    return true;
+  }
+
+  function removeDiscoveryTag(tag: string) {
+    setForm((current) => ({
+      ...current,
+      tags: current.tags.filter((item) => item !== tag),
+    }));
   }
 
   return (
@@ -460,18 +521,15 @@ export default function DeveloperBotsSection() {
             </Button>
             <div className="min-w-0">
               <h2 className="truncate text-xl font-bold">
-                {form.name || selectedBot.user?.name || "Bot settings"}
+                {form.name || selectedBot.user?.name || t("developerBots.botSettingsFallback")}
               </h2>
-              <p className="text-sm text-muted-foreground">
-                ID {idString(selectedBot.bot_user_id)}
-              </p>
             </div>
           </div>
         ) : (
           <div>
-            <h2 className="text-xl font-bold">Developer</h2>
+            <h2 className="text-xl font-bold">{t("developerBots.title")}</h2>
             <p className="text-sm text-muted-foreground">
-              Create and configure bot accounts.
+              {t("developerBots.subtitle")}
             </p>
           </div>
         )}
@@ -485,7 +543,7 @@ export default function DeveloperBotsSection() {
                 htmlFor="new-bot-name"
                 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
               >
-                New bot
+                {t("developerBots.newBot")}
               </Label>
               <div className="mt-2 flex gap-2">
                 <Input
@@ -495,7 +553,7 @@ export default function DeveloperBotsSection() {
                   onKeyDown={(event) => {
                     if (event.key === "Enter") void handleCreateBot();
                   }}
-                  placeholder="Bot name"
+                  placeholder={t("developerBots.botNamePlaceholder")}
                   maxLength={32}
                 />
                 <Button
@@ -512,11 +570,11 @@ export default function DeveloperBotsSection() {
             <div className="overflow-hidden rounded-lg border border-border bg-background/50">
               {botsLoading ? (
                 <div className="p-4 text-sm text-muted-foreground">
-                  Loading bots...
+                  {t("developerBots.loadingBots")}
                 </div>
               ) : bots.length === 0 ? (
                 <div className="p-4 text-sm text-muted-foreground">
-                  No bots created yet.
+                  {t("developerBots.emptyBots")}
                 </div>
               ) : (
                 <div className="divide-y divide-border">
@@ -547,11 +605,11 @@ export default function DeveloperBotsSection() {
                         </Avatar>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium">
-                            {bot.user?.name ?? "Unnamed bot"}
+                            {bot.user?.name ?? t("developerBots.unnamedBot")}
                           </span>
                           <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
                             <Bot className="h-3 w-3" />
-                            {bot.public ? "Public" : "Private"}
+                            {bot.public ? t("developerBots.publicStatus") : t("developerBots.privateStatus")}
                           </span>
                         </span>
                       </button>
@@ -590,7 +648,7 @@ export default function DeveloperBotsSection() {
                   ) : (
                     <ImagePlus className="h-4 w-4" />
                   )}
-                  Banner
+                  {t("developerBots.banner")}
                 </Button>
               </div>
               <div className="flex items-start gap-4">
@@ -621,19 +679,19 @@ export default function DeveloperBotsSection() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="truncate text-lg font-semibold">
-                      {form.name || "Unnamed bot"}
+                      {form.name || t("developerBots.unnamedBot")}
                     </h3>
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      Bot
+                      {t("developerBots.botBadge")}
                     </span>
                     {form.disabled && (
                       <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-destructive">
-                        Disabled
+                        {t("developerBots.disabledBadge")}
                       </span>
                     )}
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    ID {idString(selectedBot.bot_user_id)}
+                    {t("developerBots.idLabel", { id: idString(selectedBot.bot_user_id) })}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button
@@ -643,7 +701,7 @@ export default function DeveloperBotsSection() {
                       onClick={() => void handleSaveBot()}
                     >
                       <Save className="h-4 w-4" />
-                      Save
+                      {t("developerBots.save")}
                     </Button>
                     <Button
                       size="sm"
@@ -652,12 +710,12 @@ export default function DeveloperBotsSection() {
                       onClick={() =>
                         void copyText(
                           idString(selectedBot.bot_user_id),
-                          "Bot ID copied",
+                          t("developerBots.botIdCopied"),
                         )
                       }
                     >
                       <Copy className="h-4 w-4" />
-                      Copy ID
+                      {t("developerBots.copyId")}
                     </Button>
                   </div>
                 </div>
@@ -665,10 +723,10 @@ export default function DeveloperBotsSection() {
             </div>
 
             <div className="rounded-lg border border-border bg-background/50 p-4">
-              <h3 className="text-base font-semibold">Profile</h3>
+              <h3 className="text-base font-semibold">{t("developerBots.profile")}</h3>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="bot-name">Bot name</Label>
+                  <Label htmlFor="bot-name">{t("developerBots.botName")}</Label>
                   <Input
                     id="bot-name"
                     value={form.name}
@@ -682,7 +740,7 @@ export default function DeveloperBotsSection() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="bot-description">Bot description</Label>
+                  <Label htmlFor="bot-description">{t("developerBots.botDescription")}</Label>
                   <Input
                     id="bot-description"
                     value={form.description}
@@ -697,7 +755,7 @@ export default function DeveloperBotsSection() {
                 </div>
               </div>
               <div className="mt-4 space-y-2">
-                <Label htmlFor="bot-bio">Profile bio</Label>
+                <Label htmlFor="bot-bio">{t("developerBots.profileBio")}</Label>
                 <Textarea
                   id="bot-bio"
                   value={form.bio}
@@ -711,10 +769,58 @@ export default function DeveloperBotsSection() {
                   }
                 />
               </div>
+              <div className="mt-4 space-y-2">
+                <Label htmlFor="bot-tags">{t("developerBots.discoveryTags")}</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="bot-tags"
+                    value={tagDraft}
+                    placeholder={t("developerBots.tagsPlaceholder")}
+                    onChange={(event) => setTagDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      addDiscoveryTags(tagDraft);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    disabled={!tagDraft.trim() || form.tags.length >= MAX_DISCOVERY_TAGS}
+                    onClick={() => addDiscoveryTags(tagDraft)}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t("developerBots.tagsHint")}
+                </p>
+                {form.tags.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {form.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="inline-flex max-w-full items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground"
+                      >
+                        <span className="truncate">{tag}</span>
+                        <button
+                          type="button"
+                          className="rounded-sm hover:text-foreground"
+                          onClick={() => removeDiscoveryTag(tag)}
+                          aria-label={t("developerBots.removeTag", { tag })}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <ColorInput
                   id="bot-banner-color"
-                  label="Banner color"
+                  label={t("developerBots.bannerColor")}
                   value={form.bannerColor}
                   onChange={(value) =>
                     setForm((current) => ({ ...current, bannerColor: value }))
@@ -722,7 +828,7 @@ export default function DeveloperBotsSection() {
                 />
                 <ColorInput
                   id="bot-panel-color"
-                  label="Panel color"
+                  label={t("developerBots.panelColor")}
                   value={form.panelColor}
                   onChange={(value) =>
                     setForm((current) => ({ ...current, panelColor: value }))
@@ -732,8 +838,8 @@ export default function DeveloperBotsSection() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <ToggleRow
                   icon={<Globe className="h-4 w-4" />}
-                  title="Public discovery"
-                  description="Allow server admins to find this bot in discovery."
+                  title={t("developerBots.publicDiscovery")}
+                  description={t("developerBots.publicDiscoveryDesc")}
                   value={form.public}
                   onToggle={() =>
                     setForm((current) => ({
@@ -744,8 +850,8 @@ export default function DeveloperBotsSection() {
                 />
                 <ToggleRow
                   icon={<Bot className="h-4 w-4" />}
-                  title="Runtime disabled"
-                  description="Block token auth and bot gateway sessions."
+                  title={t("developerBots.runtimeDisabled")}
+                  description={t("developerBots.runtimeDisabledDesc")}
                   value={form.disabled}
                   onToggle={() =>
                     setForm((current) => ({
@@ -758,30 +864,19 @@ export default function DeveloperBotsSection() {
             </div>
 
             <div className="rounded-lg border border-border bg-background/50 p-4">
-              <h3 className="text-base font-semibold">
-                Default discovery permissions
-              </h3>
-              <div className="mt-4">
-                <BotPermissionPicker
-                  value={form.defaultPermissions}
-                  onChange={(defaultPermissions) =>
-                    setForm((current) => ({ ...current, defaultPermissions }))
-                  }
-                  compact
-                />
-              </div>
-            </div>
-
-            <div className="rounded-lg border border-border bg-background/50 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-base font-semibold">Runtime token</h3>
+                  <h3 className="text-base font-semibold">{t("developerBots.runtimeToken")}</h3>
                   <p className="text-xs text-muted-foreground">
                     {tokensLoading
-                      ? "Checking token..."
+                      ? t("developerBots.checkingToken")
                       : latestActiveToken
-                        ? `Active token prefix: ${latestActiveToken.token_prefix ?? "unknown"}`
-                        : "No active token"}
+                        ? t("developerBots.activeTokenPrefix", {
+                            prefix:
+                              latestActiveToken.token_prefix ??
+                              t("developerBots.unknown"),
+                          })
+                        : t("developerBots.noActiveToken")}
                   </p>
                 </div>
                 <div className="flex gap-2">
@@ -793,7 +888,7 @@ export default function DeveloperBotsSection() {
                       disabled={tokenBusy}
                       onClick={() => void handleRevokeToken(latestActiveToken)}
                     >
-                      Revoke
+                      {t("developerBots.revoke")}
                     </Button>
                   )}
                   <Button
@@ -804,7 +899,7 @@ export default function DeveloperBotsSection() {
                     onClick={() => void handleGenerateToken()}
                   >
                     <KeyRound className="h-4 w-4" />
-                    {latestActiveToken ? "Regenerate" : "Generate"}
+                    {latestActiveToken ? t("developerBots.regenerate") : t("developerBots.generate")}
                   </Button>
                 </div>
               </div>
@@ -813,7 +908,7 @@ export default function DeveloperBotsSection() {
                   <div className="flex items-start gap-3">
                     <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">Token shown once</p>
+                      <p className="text-sm font-medium">{t("developerBots.tokenShownOnce")}</p>
                       <code className="mt-2 block overflow-x-auto rounded bg-background px-2 py-1.5 text-xs">
                         {oneTimeToken}
                       </code>
@@ -823,7 +918,7 @@ export default function DeveloperBotsSection() {
                       size="icon"
                       variant="ghost"
                       onClick={() =>
-                        void copyText(oneTimeToken, "Token copied")
+                        void copyText(oneTimeToken, t("developerBots.tokenCopied"))
                       }
                     >
                       <Copy className="h-4 w-4" />
@@ -834,141 +929,213 @@ export default function DeveloperBotsSection() {
             </div>
 
             <div className="rounded-lg border border-border bg-background/50 p-4">
-              <h3 className="text-base font-semibold">
-                Bot auth URL generator
-              </h3>
-              <div className="mt-4">
-                <BotPermissionPicker
-                  value={grantPermissions}
-                  onChange={setGrantPermissions}
-                  compact
-                />
-              </div>
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="grant-expiry">Expires in seconds</Label>
-                  <Input
-                    id="grant-expiry"
-                    type="number"
-                    min={60}
-                    value={grantExpiresIn}
-                    onChange={(event) =>
-                      setGrantExpiresIn(
-                        Math.max(
-                          60,
-                          Number(event.target.value) ||
-                            INSTALL_GRANT_DEFAULT_TTL,
-                        ),
-                      )
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="grant-uses">Max uses</Label>
-                  <Input
-                    id="grant-uses"
-                    type="number"
-                    min={1}
-                    value={grantMaxUses}
-                    onChange={(event) =>
-                      setGrantMaxUses(
-                        Math.max(
-                          1,
-                          Number(event.target.value) ||
-                            INSTALL_GRANT_DEFAULT_MAX_USES,
-                        ),
-                      )
-                    }
-                  />
-                </div>
-              </div>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
-                  className="gap-2"
-                  disabled={grantBusy}
-                  onClick={() => void handleCreateGrant()}
+                  size="sm"
+                  variant={permissionsTab === "public" ? "secondary" : "outline"}
+                  onClick={() => setPermissionsTab("public")}
                 >
-                  <Link2 className="h-4 w-4" />
-                  Generate URL
+                  {t("developerBots.defaultDiscoveryPermissions")}
                 </Button>
-                <span className="text-xs text-muted-foreground">
-                  Selected bitmask: {grantPermissions}
-                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={permissionsTab === "url" ? "secondary" : "outline"}
+                  onClick={() => setPermissionsTab("url")}
+                >
+                  {t("developerBots.botAuthUrlGenerator")}
+                </Button>
               </div>
-              {installUrl && (
-                <div className="mt-4 rounded-md border border-border bg-muted/20 p-3">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={installUrl}
-                      readOnly
-                      className="font-mono text-xs"
-                    />
+
+              {permissionsTab === "public" ? (
+                <div className="mt-4">
+                  <BotPermissionPicker
+                    value={form.defaultPermissions}
+                    onChange={(defaultPermissions) =>
+                      setForm((current) => ({ ...current, defaultPermissions }))
+                    }
+                    compact
+                  />
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <BotPermissionPicker
+                    value={grantPermissions}
+                    onChange={setGrantPermissions}
+                    compact
+                  />
+
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="grant-expiry">
+                        {t("developerBots.expiresInSeconds")}
+                      </Label>
+                      <Input
+                        id="grant-expiry"
+                        type="number"
+                        min={60}
+                        value={grantExpiresIn}
+                        onChange={(event) =>
+                          setGrantExpiresIn(
+                            Math.max(
+                              60,
+                              Number(event.target.value) ||
+                                INSTALL_GRANT_DEFAULT_TTL,
+                            ),
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="grant-uses">
+                        {t("developerBots.maxUses")}
+                      </Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="grant-uses"
+                          type="number"
+                          min={1}
+                          value={grantMaxUses}
+                          disabled={grantUnlimitedUses}
+                          onChange={(event) =>
+                            setGrantMaxUses(
+                              Math.max(
+                                1,
+                                Number(event.target.value) ||
+                                  INSTALL_GRANT_DEFAULT_MAX_USES,
+                              ),
+                            )
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant={grantUnlimitedUses ? "secondary" : "outline"}
+                          onClick={() =>
+                            setGrantUnlimitedUses((current) => !current)
+                          }
+                        >
+                          {t("developerBots.unlimited")}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {t("developerBots.unlimitedUsesDesc")}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
                     <Button
                       type="button"
-                      size="icon"
-                      variant="outline"
-                      onClick={() =>
-                        void copyText(installUrl, "Install URL copied")
-                      }
+                      className="gap-2"
+                      disabled={grantBusy}
+                      onClick={() => void handleCreateGrant()}
                     >
-                      <Copy className="h-4 w-4" />
+                      <Link2 className="h-4 w-4" />
+                      {t("developerBots.generateUrl")}
                     </Button>
+                    <span className="text-xs text-muted-foreground">
+                      {t("developerBots.selectedBitmask", {
+                        value: grantPermissions,
+                      })}
+                    </span>
+                  </div>
+
+                  {installUrl && (
+                    <div className="mt-4 rounded-md border border-border bg-muted/20 p-3">
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={installUrl}
+                          readOnly
+                          className="font-mono text-xs"
+                        />
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          onClick={() =>
+                            void copyText(
+                              installUrl,
+                              t("developerBots.installUrlCopied"),
+                            )
+                          }
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  <Separator className="my-4" />
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">
+                      {t("developerBots.activeGrants")}
+                    </p>
+                    {grantsLoading ? (
+                      <p className="text-sm text-muted-foreground">
+                        {t("developerBots.loadingGrants")}
+                      </p>
+                    ) : activeGrants.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {t("developerBots.noActiveInstallGrants")}
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {activeGrants.map((grant) => {
+                          const maxUses =
+                            (grant.max_uses ?? 0) === 0
+                              ? t("developerBots.unlimited")
+                              : String(grant.max_uses ?? 0);
+                          return (
+                            <div
+                              key={idString(grant.id)}
+                              className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium">
+                                  {t("developerBots.grantPrefix", {
+                                    prefix:
+                                      grant.token_prefix ??
+                                      t("developerBots.unknown"),
+                                  })}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {t("developerBots.grantMeta", {
+                                    permissions:
+                                      grant.requested_permissions ?? 0,
+                                    uses: grant.uses ?? 0,
+                                    maxUses,
+                                    expires: formatDate(grant.expires_at, t),
+                                  })}
+                                </p>
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={grantBusy}
+                                onClick={() => void handleRevokeGrant(grant)}
+                              >
+                                {t("developerBots.revoke")}
+                              </Button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
-              <Separator className="my-4" />
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Active grants</p>
-                {grantsLoading ? (
-                  <p className="text-sm text-muted-foreground">
-                    Loading grants...
-                  </p>
-                ) : activeGrants.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No active install grants.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {activeGrants.map((grant) => (
-                      <div
-                        key={idString(grant.id)}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium">
-                            Prefix {grant.token_prefix ?? "unknown"}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Bitmask {grant.requested_permissions ?? 0} - Uses{" "}
-                            {grant.uses ?? 0}/{grant.max_uses ?? 0} - Expires{" "}
-                            {formatDate(grant.expires_at)}
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={grantBusy}
-                          onClick={() => void handleRevokeGrant(grant)}
-                        >
-                          Revoke
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </div>
 
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold text-destructive">
-                    Delete bot
+                    {t("developerBots.deleteBot")}
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Remove the bot account, tokens, grants, and server installs.
+                    {t("developerBots.deleteBotDesc")}
                   </p>
                 </div>
                 <Button
@@ -980,7 +1147,7 @@ export default function DeveloperBotsSection() {
                   onClick={() => void handleDeleteBot()}
                 >
                   <Trash2 className="h-4 w-4" />
-                  Delete
+                  {t("developerBots.delete")}
                 </Button>
               </div>
             </div>

@@ -398,15 +398,8 @@ interface FolderDialogProps {
 
 function FolderDialog({ open, folder, onClose, onSave }: FolderDialogProps) {
   const { t } = useTranslation()
-  const [name, setName] = useState('')
-  const [color, setColor] = useState(0)
-
-  useEffect(() => {
-    if (open) {
-      setName(folder?.name ?? '')
-      setColor(folder?.color ?? 0)
-    }
-  }, [open, folder])
+  const [name, setName] = useState(folder?.name ?? '')
+  const [color, setColor] = useState(folder?.color ?? 0)
 
   function handleSave() {
     onSave(name.trim() || t('serverSidebar.folderNameDefault'), color)
@@ -1541,7 +1534,7 @@ export default function ServerSidebar() {
     })),
   })
   const dmActive = location.pathname === '/app/@me' || location.pathname.startsWith('/app/@me/')
-  const discoveryActive = location.pathname === '/app/discovery'
+  const discoveryActive = location.pathname.startsWith('/app/discovery')
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -1694,7 +1687,7 @@ export default function ServerSidebar() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      onClick={() => navigate('/app/discovery')}
+                      onClick={() => navigate('/app/discovery/servers')}
                       className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-all active:scale-95 ${
                         discoveryActive
                           ? 'border-white/15 bg-white/10 text-white'
@@ -1704,7 +1697,7 @@ export default function ServerSidebar() {
                       <Compass className="w-5 h-5" />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="right">{t('serverSidebar.discoverServers')}</TooltipContent>
+                  <TooltipContent side="right">{t('serverSidebar.discover')}</TooltipContent>
                 </Tooltip>
               </div>
             </div>
@@ -1745,6 +1738,13 @@ export default function ServerSidebar() {
 
       {/* Folder create / edit dialog */}
       <FolderDialog
+        key={
+          editingFolder
+            ? `edit-${editingFolder.id}`
+            : pendingFolderGuildId
+              ? `create-${pendingFolderGuildId}`
+              : 'closed'
+        }
         open={folderDialogOpen}
         folder={editingFolder}
         onClose={() => {

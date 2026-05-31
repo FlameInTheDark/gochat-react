@@ -439,28 +439,192 @@ export interface Translation {
     }
     discovery: {
         title: string
+        serversTitle: string
         subtitle: string
         searchPlaceholder: string
         categoriesTitle: string
         servers: string
+        bots: string
+        botsTitle: string
+        botsSubtitle: string
+        botSearchPlaceholder: string
         quickCommunity: string
         quickGaming: string
         quickMusic: string
         quickEntertainment: string
         quickScienceTech: string
         quickEducation: string
+        botQuickModeration: string
+        botQuickUtility: string
+        botQuickMusic: string
+        botQuickAi: string
+        botQuickGames: string
+        botQuickTools: string
         members: string
         membersPlural: string
+        botInstalls: string
+        botInstallsPlural: string
+        botBadge: string
         noResults: string
         noResultsDesc: string
+        noBots: string
+        noBotsDesc: string
         loading: string
         searchFailed: string
+        botSearchFailed: string
         join: string
         joining: string
         joinFailed: string
         joined: string
+        addBot: string
+        addingBot: string
+        addBotTitle: string
+        addBotDesc: string
+        serverLabel: string
+        loadingServers: string
+        selectServer: string
+        noBotServers: string
+        botAdded: string
+        botAddFailed: string
         previousPage: string
         nextPage: string
+        botFallbackName: string
+        serverFallbackName: string
+    }
+    botPermissions: {
+        title: string
+        noneSelected: string
+        selectedSummary: string
+        clear: string
+        baseline: string
+    }
+    botAuth: {
+        authorizeTitle: string
+        signInDesc: string
+        signIn: string
+        authorizationLabel: string
+        loadingBot: string
+        invalidLink: string
+        serverLabel: string
+        loadingServers: string
+        selectServer: string
+        noServers: string
+        authorize: string
+        authorizing: string
+        cancel: string
+        botAdded: string
+        authorizeFailed: string
+        botFallbackName: string
+        serverFallbackName: string
+    }
+    developerBots: {
+        title: string
+        subtitle: string
+        newBot: string
+        botNamePlaceholder: string
+        loadingBots: string
+        emptyBots: string
+        publicStatus: string
+        privateStatus: string
+        botSettingsFallback: string
+        idLabel: string
+        banner: string
+        botBadge: string
+        disabledBadge: string
+        save: string
+        copyId: string
+        profile: string
+        botName: string
+        botDescription: string
+        profileBio: string
+        discoveryTags: string
+        tagsPlaceholder: string
+        tagsHint: string
+        removeTag: string
+        bannerColor: string
+        panelColor: string
+        publicDiscovery: string
+        publicDiscoveryDesc: string
+        runtimeDisabled: string
+        runtimeDisabledDesc: string
+        defaultDiscoveryPermissions: string
+        runtimeToken: string
+        checkingToken: string
+        activeTokenPrefix: string
+        noActiveToken: string
+        revoke: string
+        regenerate: string
+        generate: string
+        tokenShownOnce: string
+        botAuthUrlGenerator: string
+        expiresInSeconds: string
+        maxUses: string
+        unlimited: string
+        unlimitedUsesDesc: string
+        generateUrl: string
+        selectedBitmask: string
+        activeGrants: string
+        loadingGrants: string
+        noActiveInstallGrants: string
+        grantPrefix: string
+        grantMeta: string
+        deleteBot: string
+        deleteBotDesc: string
+        delete: string
+        unknown: string
+        never: string
+        unnamedBot: string
+        botCreated: string
+        createFailed: string
+        nameRequired: string
+        botSaved: string
+        saveFailed: string
+        avatarImageRequired: string
+        avatarTooLarge: string
+        avatarUpdated: string
+        avatarUploadFailed: string
+        bannerImageRequired: string
+        bannerTooLarge: string
+        bannerUpdated: string
+        bannerUploadFailed: string
+        deleteConfirm: string
+        botDeleted: string
+        deleteFailed: string
+        tokenRegenerated: string
+        tokenGenerated: string
+        tokenGenerateFailed: string
+        tokenCopied: string
+        tokenRevoked: string
+        tokenRevokeFailed: string
+        installUrlGenerated: string
+        installUrlGenerateFailed: string
+        installUrlCopied: string
+        installGrantRevoked: string
+        installGrantRevokeFailed: string
+        invalidTags: string
+        maxTags: string
+        botIdCopied: string
+    }
+    guildBots: {
+        title: string
+        subtitle: string
+        loading: string
+        empty: string
+        botBadge: string
+        idLabel: string
+        remove: string
+        removing: string
+        removed: string
+        removeFailed: string
+        roles: string
+        installed: string
+        removeTitle: string
+        removeDesc: string
+        removeConfirm: string
+        noRoles: string
+        roleFallback: string
+        unknown: string
+        unnamedBot: string
     }
     memberList: {
         online: string
@@ -538,6 +702,7 @@ export interface Translation {
         editFolderDesc: string
         folderName: string
         folderNameDefault: string
+        discover: string
         discoverServers: string
     }
     channelSidebar: {
