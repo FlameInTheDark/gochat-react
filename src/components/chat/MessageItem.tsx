@@ -74,6 +74,7 @@ import { useEmojiStore } from '@/stores/emojiStore'
 import { MessageChannelChannelIdGetDirectionEnum, type DtoRole } from '@/client'
 import { allEmojis, emojiIndex } from '@/lib/emojiData'
 import { useGuildPermissions } from '@/hooks/useGuildPermissions'
+import BotBadge from '@/components/ui/BotBadge'
 
 /** Extract unique invite codes from a message string.
  *  Matches URLs of the form: http(s)://host/invite/CODE
@@ -1096,6 +1097,7 @@ export default function MessageItem({
                       {replyPreviewAuthorName}
                     </button>
                   )}
+                  {referencedMessage?.author?.is_bot && <BotBadge />}
                   <div className="truncate">
                     {parseInlineMessageContent(replyPreviewText, resolver, `reply-preview-${messageId}`)}
                   </div>
@@ -1143,6 +1145,7 @@ export default function MessageItem({
                       {authorName}
                     </button>,
                   )}
+                  {message.author?.is_bot && <BotBadge />}
                   <Tooltip delayDuration={400}>
                     <TooltipTrigger asChild>
                       <span className="text-xs text-muted-foreground tabular-nums">
@@ -1202,6 +1205,7 @@ export default function MessageItem({
                           {authorName}
                         </button>,
                       )}
+                      {message.author?.is_bot && <BotBadge />}
                       <span>{informationalContent}</span>
                       <Tooltip delayDuration={400}>
                         <TooltipTrigger asChild>
@@ -1299,10 +1303,10 @@ export default function MessageItem({
                         <div className="max-w-full min-w-0">
                           {threadPreview.previewMessage?.author?.name && (
                             <div
-                              className="truncate text-xs font-medium text-foreground"
+                              className="truncate text-xs font-medium text-foreground inline-flex items-center gap-1"
                               style={previewAuthorRoleColor ? { color: previewAuthorRoleColor } : undefined}
                             >
-                              {threadPreview.previewMessage.author.name}
+                              {threadPreview.previewMessage.author.name}{threadPreview.previewMessage.author?.is_bot && <BotBadge />}
                             </div>
                           )}
                           <div className="mt-0.5 truncate text-xs leading-relaxed text-muted-foreground">

@@ -395,7 +395,7 @@ export default function UserProfilePanel() {
       </div>
     )
 
-    const showAddFriendButton = !isSelf && !isFriend && !!memberDiscriminator
+    const showAddFriendButton = !isSelf && !isFriend && !!memberDiscriminator && !userData?.is_bot
     const showModerationActions = canKickMember || canBanMember
     const personalNote = !isSelf ? (
       <div>
@@ -502,6 +502,7 @@ export default function UserProfilePanel() {
         <ProfileCardBody
           userId={userId}
           displayName={displayName}
+          isBot={userData?.is_bot}
           globalName={globalName}
           discriminator={discriminator}
           avatarUrl={userData?.avatar?.url}
