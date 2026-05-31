@@ -1,6 +1,6 @@
-import { Compass, ChevronLeft } from 'lucide-react'
+import { Bot, Compass, ChevronLeft } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import UserArea from './UserArea'
@@ -10,7 +10,10 @@ import { useClientMode } from '@/hooks/useClientMode'
 export default function DiscoverySidebar() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const location = useLocation()
   const isMobile = useClientMode() === 'mobile'
+  const botsActive = location.pathname === '/app/discovery/bots'
+  const serversActive = !botsActive
 
   return (
     <div className={cn('flex flex-col bg-sidebar', isMobile ? 'w-full flex-1 min-h-0 border-r border-sidebar-border' : 'min-w-0 flex-1')}>
@@ -33,9 +36,23 @@ export default function DiscoverySidebar() {
           <p className="px-1 pt-2 pb-2 text-[11px] font-semibold uppercase text-muted-foreground tracking-wide">
             {t('discovery.categoriesTitle')}
           </p>
-          <Button variant="secondary" className="h-10 w-full justify-start gap-2 rounded-xl bg-white/[0.08] hover:bg-white/[0.11]">
+          <Button
+            type="button"
+            variant={serversActive ? 'secondary' : 'ghost'}
+            className={cn('h-10 w-full justify-start gap-2 rounded-xl', serversActive && 'bg-white/[0.08] hover:bg-white/[0.11]')}
+            onClick={() => navigate('/app/discovery/servers')}
+          >
             <Compass className="size-4" />
             {t('discovery.servers')}
+          </Button>
+          <Button
+            type="button"
+            variant={botsActive ? 'secondary' : 'ghost'}
+            className={cn('h-10 w-full justify-start gap-2 rounded-xl', botsActive && 'bg-white/[0.08] hover:bg-white/[0.11]')}
+            onClick={() => navigate('/app/discovery/bots')}
+          >
+            <Bot className="size-4" />
+            {t('discovery.bots')}
           </Button>
         </div>
       </ScrollArea>

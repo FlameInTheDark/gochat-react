@@ -218,9 +218,11 @@ function setPermission(mask: number, bit: number, enabled: boolean): number {
 export function BotPermissionSummary({
   value,
   className,
+  listClassName,
 }: {
   value: number;
   className?: string;
+  listClassName?: string;
 }) {
   const { t } = useTranslation();
   const selectedGroups = useMemo(
@@ -241,13 +243,18 @@ export function BotPermissionSummary({
   return (
     <div className={cn("space-y-3", className)}>
       <div>
-        <p className="text-sm font-medium">Permissions</p>
+        <p className="text-sm font-medium">{t("botPermissions.title")}</p>
       </div>
 
-      <div className="max-h-[320px] overflow-y-auto rounded-lg border border-border bg-background/50">
+      <div
+        className={cn(
+          "max-h-[320px] overflow-y-auto rounded-lg border border-border bg-background/50",
+          listClassName,
+        )}
+      >
         {selectedCount === 0 ? (
           <p className="px-3 py-3 text-sm text-muted-foreground">
-            No permissions selected.
+            {t("botPermissions.noneSelected")}
           </p>
         ) : (
           <div className="divide-y divide-border">
@@ -292,12 +299,14 @@ export function BotPermissionPicker({
   onChange,
   disabled,
   compact,
+  availablePermissions,
   className,
 }: {
   value: number;
   onChange: (value: number) => void;
   disabled?: boolean;
   compact?: boolean;
+  availablePermissions?: number;
   className?: string;
 }) {
   const { t } = useTranslation();
@@ -310,7 +319,7 @@ export function BotPermissionPicker({
             hasPermission(value, permission.bit),
           ).length,
         0,
-      ),
+    ),
     [value],
   );
 
@@ -318,9 +327,9 @@ export function BotPermissionPicker({
     <div className={cn("space-y-3", className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-sm font-medium">Permissions</p>
+          <p className="text-sm font-medium">{t("botPermissions.title")}</p>
           <p className="text-xs text-muted-foreground">
-            {selectedCount} selected - bitmask {value}
+            {t("botPermissions.selectedSummary", { count: selectedCount, value })}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -330,15 +339,21 @@ export function BotPermissionPicker({
             disabled={disabled || value === 0}
             onClick={() => onChange(0)}
           >
-            Clear
+            {t("botPermissions.clear")}
           </button>
           <button
             type="button"
             className="text-xs font-medium text-primary hover:text-primary/80 disabled:opacity-50"
             disabled={disabled}
-            onClick={() => onChange(BOT_PERMISSION_BASELINE)}
+            onClick={() =>
+              onChange(
+                availablePermissions == null
+                  ? BOT_PERMISSION_BASELINE
+                  : BOT_PERMISSION_BASELINE & availablePermissions,
+              )
+            }
           >
-            Baseline
+            {t("botPermissions.baseline")}
           </button>
         </div>
       </div>
@@ -357,15 +372,18 @@ export function BotPermissionPicker({
             <div className="divide-y divide-border">
               {group.permissions.map((permission) => {
                 const enabled = hasPermission(value, permission.bit);
+                const available =
+                  availablePermissions == null ||
+                  hasPermission(availablePermissions, permission.bit);
                 return (
                   <button
                     key={permission.bit}
                     type="button"
-                    disabled={disabled}
+                    disabled={disabled || !available}
                     className={cn(
                       "w-full flex items-start gap-3 px-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
                       compact ? "py-2" : "py-3",
-                      enabled ? "bg-primary/5" : "hover:bg-accent/40",
+                      enabled ? "bg-primary/5" : available && "hover:bg-accent/40",
                     )}
                     onClick={() =>
                       onChange(setPermission(value, permission.bit, !enabled))

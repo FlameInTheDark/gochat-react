@@ -1,11 +1,20 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Trash2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type { DtoRole } from "@/client";
 import { BotPermissionSummary } from "@/components/settings/BotPermissionPicker";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { botsApi, type InstalledBot, type Snowflake } from "@/lib/botsApi";
 
 function initials(name?: string): string {
@@ -16,10 +25,10 @@ function idString(value: Snowflake | undefined): string {
   return value == null ? "" : String(value);
 }
 
-function formatDate(value?: number): string {
-  if (!value) return "Unknown";
+function formatDate(value: number | undefined, unknown: string): string {
+  if (!value) return unknown;
   const date = new Date(value > 1_000_000_000_000 ? value : value * 1000);
-  if (Number.isNaN(date.getTime())) return "Unknown";
+  if (Number.isNaN(date.getTime())) return unknown;
   return date.toLocaleString();
 }
 
@@ -36,12 +45,14 @@ function botAvatarUrl(bot: InstalledBot): string | undefined {
   return bot.member?.user?.avatar?.url ?? bot.user?.avatar?.url;
 }
 
-function botName(bot: InstalledBot): string {
-  return bot.member?.user?.name ?? bot.user?.name ?? "Unnamed bot";
+function botName(bot: InstalledBot, fallback: string): string {
+  return bot.member?.user?.name ?? bot.user?.name ?? fallback;
 }
 
 export default function GuildBotsSection({ guildId }: { guildId: Snowflake }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const [removeTarget, setRemoveTarget] = useState<InstalledBot | null>(null);
   const [removingBotId, setRemovingBotId] = useState<string | null>(null);
 
   const { data: installedBots = [], isLoading } = useQuery<InstalledBot[]>({
@@ -64,13 +75,11 @@ export default function GuildBotsSection({ guildId }: { guildId: Snowflake }) {
     return next;
   }, [roles]);
 
-  async function handleRemove(bot: InstalledBot) {
+  async function handleRemoveConfirm() {
+    if (!removeTarget) return;
+    const bot = removeTarget;
     const botId = idString(bot.bot_user_id);
     if (!botId || removingBotId) return;
-    const confirmed = window.confirm(
-      `Remove ${botName(bot)} from this server?`,
-    );
-    if (!confirmed) return;
 
     setRemovingBotId(botId);
     try {
@@ -78,37 +87,45 @@ export default function GuildBotsSection({ guildId }: { guildId: Snowflake }) {
       await queryClient.invalidateQueries({
         queryKey: ["guild-bots", idString(guildId)],
       });
-      toast.success("Bot removed");
+      toast.success(t("guildBots.removed"));
+      setRemoveTarget(null);
     } catch {
-      toast.error("Failed to remove bot");
+      toast.error(t("guildBots.removeFailed"));
     } finally {
       setRemovingBotId(null);
     }
   }
 
+  const removeTargetName = removeTarget
+    ? botName(removeTarget, t("guildBots.unnamedBot"))
+    : t("guildBots.unnamedBot");
+  const removeTargetAvatarUrl = removeTarget ? botAvatarUrl(removeTarget) : undefined;
+  const removeTargetId = idString(removeTarget?.bot_user_id);
+  const removingTarget = removingBotId === removeTargetId;
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold">Bots</h2>
+        <h2 className="text-xl font-bold">{t("guildBots.title")}</h2>
         <p className="text-sm text-muted-foreground">
-          Installed bot accounts for this server.
+          {t("guildBots.subtitle")}
         </p>
       </div>
 
       {isLoading ? (
         <div className="rounded-lg border border-border bg-background/50 p-4 text-sm text-muted-foreground">
-          Loading bots...
+          {t("guildBots.loading")}
         </div>
       ) : installedBots.length === 0 ? (
         <div className="rounded-lg border border-border bg-background/50 p-6 text-sm text-muted-foreground">
-          No bots are installed in this server.
+          {t("guildBots.empty")}
         </div>
       ) : (
         <div className="space-y-3">
           {installedBots.map((bot) => {
             const botId = idString(bot.bot_user_id);
             const removing = removingBotId === botId;
-            const name = botName(bot);
+            const name = botName(bot, t("guildBots.unnamedBot"));
             const avatarUrl = botAvatarUrl(bot);
             const assignedRoleIds = roleIds(bot);
             return (
@@ -133,11 +150,11 @@ export default function GuildBotsSection({ guildId }: { guildId: Snowflake }) {
                         <p className="truncate text-sm font-semibold">{name}</p>
                         <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                           <Bot className="h-3 w-3" />
-                          Bot
+                          {t("guildBots.botBadge")}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        ID {botId}
+                        {t("guildBots.idLabel", { id: botId })}
                       </p>
                     </div>
                   </div>
@@ -147,25 +164,27 @@ export default function GuildBotsSection({ guildId }: { guildId: Snowflake }) {
                     size="sm"
                     className="gap-2"
                     disabled={removing}
-                    onClick={() => void handleRemove(bot)}
+                    onClick={() => setRemoveTarget(bot)}
                   >
                     <Trash2 className="h-4 w-4" />
-                    Remove
+                    {t("guildBots.remove")}
                   </Button>
                 </div>
                 <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,280px)]">
                   <BotPermissionSummary value={bot.granted_permissions ?? 0} />
                   <div className="space-y-3">
                     <div>
-                      <p className="text-sm font-medium">Roles</p>
+                      <p className="text-sm font-medium">{t("guildBots.roles")}</p>
                       <RoleBadges
                         roleIds={assignedRoleIds}
                         rolesById={rolesById}
+                        noRolesLabel={t("guildBots.noRoles")}
+                        roleFallback={(id) => t("guildBots.roleFallback", { id })}
                       />
                     </div>
                     <InfoTile
-                      label="Installed"
-                      value={formatDate(bot.created_at)}
+                      label={t("guildBots.installed")}
+                      value={formatDate(bot.created_at, t("guildBots.unknown"))}
                     />
                   </div>
                 </div>
@@ -174,6 +193,64 @@ export default function GuildBotsSection({ guildId }: { guildId: Snowflake }) {
           })}
         </div>
       )}
+
+      <Dialog
+        open={removeTarget != null}
+        onOpenChange={(open) => {
+          if (!open && !removingBotId) setRemoveTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("guildBots.removeTitle")}</DialogTitle>
+            <DialogDescription>
+              {t("guildBots.removeDesc")}
+            </DialogDescription>
+          </DialogHeader>
+
+          {removeTarget ? (
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/20 p-3">
+              <Avatar className="h-10 w-10">
+                <AvatarImage
+                  src={removeTargetAvatarUrl}
+                  alt={removeTargetName}
+                  className="object-cover"
+                />
+                <AvatarFallback className="bg-primary text-primary-foreground font-bold">
+                  {initials(removeTargetName)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{removeTargetName}</p>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {t("guildBots.idLabel", { id: removeTargetId })}
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={removingTarget}
+              onClick={() => setRemoveTarget(null)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={!removeTarget || removingTarget}
+              onClick={() => void handleRemoveConfirm()}
+            >
+              {removingTarget
+                ? t("guildBots.removing")
+                : t("guildBots.removeConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -181,13 +258,17 @@ export default function GuildBotsSection({ guildId }: { guildId: Snowflake }) {
 function RoleBadges({
   roleIds,
   rolesById,
+  noRolesLabel,
+  roleFallback,
 }: {
   roleIds: Snowflake[];
   rolesById: Map<string, DtoRole>;
+  noRolesLabel: string;
+  roleFallback: (id: string) => string;
 }) {
   if (roleIds.length === 0) {
     return (
-      <p className="mt-2 text-sm text-muted-foreground">No roles assigned.</p>
+      <p className="mt-2 text-sm text-muted-foreground">{noRolesLabel}</p>
     );
   }
 
@@ -196,7 +277,7 @@ function RoleBadges({
       {roleIds.map((roleId) => {
         const role = rolesById.get(idString(roleId));
         const color = roleColor(role?.color);
-        const label = role?.name ?? `Role ${idString(roleId)}`;
+        const label = role?.name ?? roleFallback(idString(roleId));
         return (
           <span
             key={idString(roleId)}
