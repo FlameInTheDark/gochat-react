@@ -73,6 +73,11 @@ const GROUPS: PermissionGroup[] = [
         descKey: "serverSettings.permSendMessagesDesc",
       },
       {
+        bit: PermissionBits.USE_APPLICATION_COMMANDS,
+        labelKey: "serverSettings.permUseApplicationCommands",
+        descKey: "serverSettings.permUseApplicationCommandsDesc",
+      },
+      {
         bit: PermissionBits.SEND_MESSAGES_IN_THREADS,
         labelKey: "serverSettings.permSendInThreads",
         descKey: "serverSettings.permSendInThreadsDesc",
@@ -198,6 +203,7 @@ export const BOT_PERMISSION_BASELINE =
   (2 ** PermissionBits.VIEW_CHANNELS) |
   (2 ** PermissionBits.READ_MESSAGE_HISTORY) |
   (2 ** PermissionBits.SEND_MESSAGES) |
+  (2 ** PermissionBits.USE_APPLICATION_COMMANDS) |
   (2 ** PermissionBits.ADD_REACTIONS);
 
 function permissionValue(bit: number): number {

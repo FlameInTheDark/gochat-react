@@ -563,6 +563,16 @@ export interface Translation {
         unlimitedUsesDesc: string
         generateUrl: string
         selectedBitmask: string
+        applicationCommands: string
+        applicationCommandsCount: string
+        applicationCommandsLoading: string
+        applicationCommandGuildScope: string
+        applicationCommandGuildScopePlaceholder: string
+        applicationCommandGlobalScope: string
+        applicationCommandJson: string
+        applicationCommandJsonInvalid: string
+        applicationCommandsSaved: string
+        applicationCommandsSaveFailed: string
         activeGrants: string
         loadingGrants: string
         noActiveInstallGrants: string
@@ -897,6 +907,7 @@ export interface Translation {
         permViewChannels: string; permViewChannelsDesc: string
         permReadHistory: string; permReadHistoryDesc: string
         permSendMessages: string; permSendMessagesDesc: string
+        permUseApplicationCommands: string; permUseApplicationCommandsDesc: string
         permAttachFiles: string; permAttachFilesDesc: string
         permAddReactions: string; permAddReactionsDesc: string
         permMentionRoles: string; permMentionRolesDesc: string

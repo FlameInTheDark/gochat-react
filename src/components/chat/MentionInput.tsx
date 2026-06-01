@@ -1,8 +1,8 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent } from 'react'
+import { Fragment, forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Hash, Shield, Paperclip, SendHorizontal } from 'lucide-react'
+import { Bot, Hash, Shield, Paperclip, SendHorizontal } from 'lucide-react'
 import { guildApi, rolesApi } from '@/api/client'
 import { ChannelType } from '@/types'
 import type { DtoChannel, DtoGuild } from '@/client'
@@ -16,6 +16,7 @@ import { useEmojiStore } from '@/stores/emojiStore'
 import { emojiUrl } from '@/lib/emoji'
 import { allEmojis } from '@/lib/emojiData'
 import { useGuildPermissions } from '@/hooks/useGuildPermissions'
+import { applicationCommandsApi, type ApplicationCommand } from '@/lib/applicationCommandsApi'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -30,6 +31,8 @@ interface SuggestionItem {
   unicodeEmoji?: string // unicode emoji character (for unicode emoji type)
   serverName?: string  // server name for custom emoji
   description?: string // slash command result preview
+  section?: 'internal' | 'application'
+  applicationCommand?: ApplicationCommand
 }
 
 // ── Slash commands ────────────────────────────────────────────────────────────
@@ -219,6 +222,7 @@ interface Props {
   channelId: string
   channelName?: string
   onSend: (content: string) => void
+  onApplicationCommand?: (command: ApplicationCommand) => void
   onTyping: () => void
   disabled?: boolean
   topBar?: React.ReactNode
@@ -250,6 +254,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
   channelId,
   channelName,
   onSend,
+  onApplicationCommand,
   onTyping,
   disabled = false,
   topBar,
@@ -268,6 +273,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
   const editorRef = useRef<HTMLDivElement>(null)
   const [suggestions, setSuggestions] = useState<SuggestionItem[]>([])
   const [activeIdx, setActiveIdx] = useState(0)
+  const [slashQuery, setSlashQuery] = useState<string | null>(null)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const [gifOpen, setGifOpen] = useState(false)
   const [pickerBottom, setPickerBottom] = useState(64)
@@ -326,6 +332,50 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     enabled: !!serverId,
     staleTime: 60_000,
   })
+
+  const { data: visibleApplicationCommands = [] } = useQuery({
+    queryKey: ['application-commands', channelId, serverId ?? 'dm', slashQuery ?? ''],
+    queryFn: () =>
+      applicationCommandsApi.listVisible({
+        channelId,
+        guildId: serverId,
+        type: 1,
+        query: slashQuery ?? '',
+      }),
+    enabled: slashQuery !== null && !disabled,
+    staleTime: 15_000,
+  })
+
+  const slashSuggestions = useMemo(() => {
+    if (slashQuery === null) return []
+    const q = slashQuery.toLowerCase()
+    const internalItems: SuggestionItem[] = SLASH_COMMAND_LIST
+      .filter((cmd) => !q || cmd.name.startsWith(q))
+      .map((cmd) => ({
+        type: 'slash' as const,
+        id: `internal:${cmd.name}`,
+        display: `/${cmd.name}`,
+        token: `/${cmd.name}`,
+        name: cmd.name,
+        description: cmd.description,
+        section: 'internal' as const,
+      }))
+    const applicationItems: SuggestionItem[] = visibleApplicationCommands
+      .filter((cmd) => !q || cmd.name.toLowerCase().startsWith(q))
+      .map((cmd) => ({
+        type: 'slash' as const,
+        id: `application:${String(cmd.id)}`,
+        display: `/${cmd.name}`,
+        token: `/${cmd.name}`,
+        name: cmd.name,
+        description: cmd.description || cmd.bot_name || '',
+        section: 'application' as const,
+        applicationCommand: cmd,
+      }))
+    return [...internalItems, ...applicationItems].slice(0, 25)
+  }, [slashQuery, visibleApplicationCommands])
+
+  const activeSuggestions = slashQuery === null ? suggestions : slashSuggestions
 
   function canViewChannel(ch: DtoChannel): boolean {
     return permissions.canViewChannel(ch)
@@ -413,6 +463,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     function onPointerDown(e: PointerEvent) {
       if (!containerRef.current?.contains(e.target as Node)) {
         setSuggestions([])
+        setSlashQuery(null)
       }
     }
     document.addEventListener('pointerdown', onPointerDown)
@@ -426,22 +477,6 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
       el.classList.add('is-empty')
     }
   }, [])
-
-  function computeSlashSuggestions(query: string) {
-    const q = query.toLowerCase()
-    const items: SuggestionItem[] = SLASH_COMMAND_LIST
-      .filter((cmd) => !q || cmd.name.startsWith(q))
-      .map((cmd) => ({
-        type: 'slash' as const,
-        id: cmd.name,
-        display: `/${cmd.name}`,
-        token: `/${cmd.name}`,
-        name: cmd.name,
-        description: cmd.description,
-      }))
-    setSuggestions(items)
-    setActiveIdx(0)
-  }
 
   function computeSuggestions(q: { trigger: '@' | '#' | ':'; query: string }) {
     const query = q.query.toLowerCase()
@@ -587,10 +622,14 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     if (!el) return
     el.focus()
     if (item.type === 'slash') {
-      // Clear the editor and fire onSend immediately — MessageInput.send() expands the command
       while (el.firstChild) el.removeChild(el.firstChild)
       el.classList.add('is-empty')
       setSuggestions([])
+      setSlashQuery(null)
+      if (item.section === 'application' && item.applicationCommand) {
+        onApplicationCommand?.(item.applicationCommand)
+        return
+      }
       onSend(`/${item.name}`)
       return
     }
@@ -620,8 +659,10 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     
     const slashQuery = getSlashQuery(el)
     if (slashQuery !== null) {
-      computeSlashSuggestions(slashQuery)
+      setSlashQuery(slashQuery)
+      setActiveIdx(0)
     } else {
+      setSlashQuery(null)
       const q = getMentionQuery(el)
       if (q) {
         computeSuggestions(q)
@@ -643,6 +684,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     }
     el.classList.add('is-empty')
     setSuggestions([])
+    setSlashQuery(null)
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
@@ -652,10 +694,10 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
     }
 
     // Suggestion navigation
-    if (suggestions.length > 0) {
+    if (activeSuggestions.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1))
+        setActiveIdx((i) => Math.min(i + 1, activeSuggestions.length - 1))
         return
       }
       if (e.key === 'ArrowUp') {
@@ -665,7 +707,7 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
       }
       if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
         e.preventDefault()
-        const item = suggestions[activeIdx]
+        const item = activeSuggestions[activeIdx]
         if (item) selectSuggestion(item)
         return
       }
@@ -846,34 +888,41 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
       onDrop={handleDrop}
     >
       {/* Suggestions popup — sits above the input */}
-      {!disabled && suggestions.length > 0 && (
+      {!disabled && activeSuggestions.length > 0 && (
         <div className="absolute bottom-full left-0 right-0 mb-2 overflow-hidden rounded-xl border border-white/[0.1] bg-popover shadow-lg">
           <div className="px-2 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border">
-            {suggestions[0]?.type === 'slash'
+            {activeSuggestions[0]?.type === 'slash'
               ? t('chat.commands', 'Commands')
-              : suggestions[0]?.type === 'channel'
+              : activeSuggestions[0]?.type === 'channel'
                 ? t('chat.channels')
-                : suggestions[0]?.type === 'emoji'
+                : activeSuggestions[0]?.type === 'emoji'
                   ? 'Emoji'
                   : t('chat.membersAndRoles')}
           </div>
-          {suggestions.map((item, i) => (
-            <button
-              key={`${item.type}-${item.id}`}
-              type="button"
-              onMouseDown={(e) => {
-                // prevent blur before click registers
-                e.preventDefault()
-                selectSuggestion(item)
-              }}
-              className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors ${i === activeIdx
-                ? 'bg-accent text-accent-foreground'
-                : 'text-foreground hover:bg-accent/50'
-                }`}
-            >
+          {activeSuggestions.map((item, i) => (
+            <Fragment key={`${item.type}-${item.id}`}>
+              {item.type === 'slash' && (i === 0 || activeSuggestions[i - 1]?.section !== item.section) && (
+                <div className="border-b border-border/70 px-3 py-1 text-[11px] font-semibold uppercase text-muted-foreground">
+                  {item.section === 'application'
+                    ? t('chat.applicationCommands', 'Application commands')
+                    : t('chat.internalCommands', 'Internal commands')}
+                </div>
+              )}
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  // prevent blur before click registers
+                  e.preventDefault()
+                  selectSuggestion(item)
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors ${i === activeIdx
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-foreground hover:bg-accent/50'
+                  }`}
+              >
               {item.type === 'slash' && (
                 <div className="w-6 h-6 rounded bg-muted shrink-0 flex items-center justify-center text-[13px] font-bold text-muted-foreground">
-                  /
+                  {item.section === 'application' ? <Bot className="h-4 w-4" /> : '/'}
                 </div>
               )}
               {item.type === 'emoji' && item.emojiId && (
@@ -911,13 +960,17 @@ const MentionInput = forwardRef<MentionInputHandle, Props>(function MentionInput
               {item.type === 'slash' && item.description && (
                 <span className="ml-auto text-xs text-muted-foreground shrink-0 pl-2">{item.description}</span>
               )}
+              {item.type === 'slash' && item.section === 'application' && item.applicationCommand?.bot_name && (
+                <span className="text-xs text-muted-foreground shrink-0">{item.applicationCommand.bot_name}</span>
+              )}
               {item.type === 'emoji' && item.serverName && (
                 <span className="ml-auto text-xs text-muted-foreground shrink-0 pl-2 truncate max-w-[120px]">{item.serverName}</span>
               )}
               {item.type === 'role' && (
                 <span className="ml-auto text-xs text-muted-foreground shrink-0">{t('chat.role')}</span>
               )}
-            </button>
+              </button>
+            </Fragment>
           ))}
         </div>
       )}
