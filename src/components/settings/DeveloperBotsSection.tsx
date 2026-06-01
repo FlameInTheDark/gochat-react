@@ -43,6 +43,10 @@ import {
   type DeveloperBot,
   type Snowflake,
 } from "@/lib/botsApi";
+import {
+  applicationCommandsApi,
+  type ApplicationCommand,
+} from "@/lib/applicationCommandsApi";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_BANNER_COLOR = "#5865f2";
@@ -99,6 +103,23 @@ function idString(value: Snowflake | undefined): string {
   return value == null ? "" : String(value);
 }
 
+function editableApplicationCommand(command: ApplicationCommand) {
+  return {
+    type: command.type,
+    name: command.name,
+    description: command.description ?? "",
+    options: command.options ?? [],
+    default_member_permissions: command.default_member_permissions ?? null,
+    contexts: command.contexts ?? [0, 1],
+    integration_types: command.integration_types ?? [0],
+    nsfw: Boolean(command.nsfw),
+  };
+}
+
+function applicationCommandsJson(commands: ApplicationCommand[]): string {
+  return JSON.stringify(commands.map(editableApplicationCommand), null, 2);
+}
+
 function normalizeDiscoveryTag(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -122,6 +143,9 @@ export default function DeveloperBotsSection() {
   const [uploadingBanner, setUploadingBanner] = useState(false);
   const [tokenBusy, setTokenBusy] = useState(false);
   const [grantBusy, setGrantBusy] = useState(false);
+  const [commandsBusy, setCommandsBusy] = useState(false);
+  const [commandGuildId, setCommandGuildId] = useState("");
+  const [commandsJson, setCommandsJson] = useState("[]");
   const [oneTimeToken, setOneTimeToken] = useState<string | null>(null);
   const [installUrl, setInstallUrl] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState("");
@@ -161,6 +185,7 @@ export default function DeveloperBotsSection() {
   );
 
   const selectedBotKey = selectedBotId ?? "none";
+  const commandScopeGuildId = commandGuildId.trim() || undefined;
 
   const { data: tokens = [], isLoading: tokensLoading } = useQuery<
     BotRuntimeToken[]
@@ -179,6 +204,22 @@ export default function DeveloperBotsSection() {
     enabled: !!selectedBotId,
     staleTime: 15_000,
   });
+
+  const { data: applicationCommands = [], isLoading: applicationCommandsLoading } =
+    useQuery<ApplicationCommand[]>({
+      queryKey: [
+        "developer-bot-commands",
+        selectedBotKey,
+        commandScopeGuildId ?? "global",
+      ],
+      queryFn: () =>
+        applicationCommandsApi.listDeveloperCommands(
+          selectedBotKey,
+          commandScopeGuildId,
+        ),
+      enabled: !!selectedBotId,
+      staleTime: 15_000,
+    });
 
   const activeTokens = useMemo(() => tokens.filter(isActiveToken), [tokens]);
   const latestActiveToken = activeTokens[0] ?? null;
@@ -217,7 +258,16 @@ export default function DeveloperBotsSection() {
     setTagDraft("");
     setOneTimeToken(null);
     setInstallUrl(null);
+    setCommandGuildId("");
   }, [selectedBot]);
+
+  useEffect(() => {
+    if (!selectedBotId) {
+      setCommandsJson("[]");
+      return;
+    }
+    setCommandsJson(applicationCommandsJson(applicationCommands));
+  }, [applicationCommands, selectedBotId, commandScopeGuildId]);
 
   async function handleCreateBot() {
     const name = createName.trim();
@@ -455,6 +505,43 @@ export default function DeveloperBotsSection() {
       toast.error(t("developerBots.installGrantRevokeFailed"));
     } finally {
       setGrantBusy(false);
+    }
+  }
+
+  async function handleSaveApplicationCommands() {
+    if (!selectedBot || commandsBusy) return;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(commandsJson);
+    } catch {
+      toast.error(t("developerBots.applicationCommandJsonInvalid"));
+      return;
+    }
+    if (!Array.isArray(parsed)) {
+      toast.error(t("developerBots.applicationCommandJsonInvalid"));
+      return;
+    }
+
+    setCommandsBusy(true);
+    try {
+      await applicationCommandsApi.bulkOverwriteDeveloperCommands(
+        selectedBot.bot_user_id,
+        parsed as Partial<ApplicationCommand>[],
+        commandScopeGuildId,
+      );
+      await queryClient.invalidateQueries({
+        queryKey: [
+          "developer-bot-commands",
+          selectedBotKey,
+          commandScopeGuildId ?? "global",
+        ],
+      });
+      toast.success(t("developerBots.applicationCommandsSaved"));
+    } catch {
+      toast.error(t("developerBots.applicationCommandsSaveFailed"));
+    } finally {
+      setCommandsBusy(false);
     }
   }
 
@@ -924,6 +1011,83 @@ export default function DeveloperBotsSection() {
                       <Copy className="h-4 w-4" />
                     </Button>
                   </div>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-border bg-background/50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold">
+                    {t("developerBots.applicationCommands")}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {applicationCommandsLoading
+                      ? t("developerBots.applicationCommandsLoading")
+                      : commandScopeGuildId
+                        ? t("developerBots.applicationCommandsCount", {
+                            count: applicationCommands.length,
+                          })
+                        : `${t("developerBots.applicationCommandGlobalScope")} · ${t(
+                            "developerBots.applicationCommandsCount",
+                            { count: applicationCommands.length },
+                          )}`}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-2"
+                  disabled={commandsBusy}
+                  onClick={() => void handleSaveApplicationCommands()}
+                >
+                  {commandsBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  {t("developerBots.save")}
+                </Button>
+              </div>
+
+              <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+                <div className="space-y-2">
+                  <Label htmlFor="bot-command-guild">
+                    {t("developerBots.applicationCommandGuildScope")}
+                  </Label>
+                  <Input
+                    id="bot-command-guild"
+                    value={commandGuildId}
+                    placeholder={t(
+                      "developerBots.applicationCommandGuildScopePlaceholder",
+                    )}
+                    onChange={(event) => setCommandGuildId(event.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bot-command-json">
+                    {t("developerBots.applicationCommandJson")}
+                  </Label>
+                  <Textarea
+                    id="bot-command-json"
+                    value={commandsJson}
+                    spellCheck={false}
+                    className="min-h-[220px] font-mono text-xs"
+                    onChange={(event) => setCommandsJson(event.target.value)}
+                  />
+                </div>
+              </div>
+
+              {applicationCommands.length > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {applicationCommands.map((command) => (
+                    <span
+                      key={idString(command.id)}
+                      className="rounded-md border border-border bg-muted/30 px-2 py-1 text-xs"
+                    >
+                      /{command.name}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>

@@ -31,6 +31,7 @@ export const PermissionBits = {
   ADMINISTRATOR: 26,
   CREATE_EXPRESSIONS: 27,
   MANAGE_EXPRESSIONS: 28,
+  USE_APPLICATION_COMMANDS: 29,
 } as const
 
 export type PermissionBit = (typeof PermissionBits)[keyof typeof PermissionBits]

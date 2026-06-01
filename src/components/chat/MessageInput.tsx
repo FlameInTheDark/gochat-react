@@ -11,6 +11,7 @@ import { isSvgFileLike } from '@/lib/fileTypes'
 import type { PendingUploadAttachment } from '@/lib/pendingAttachments'
 import { buildMessagePreviewText } from '@/lib/messagePreview'
 import { parseInlineMessageContent, type MentionResolver } from '@/lib/messageParser'
+import { applicationCommandsApi, type ApplicationCommand } from '@/lib/applicationCommandsApi'
 import {
   createMessageNonce,
   sendOptimisticChannelMessage,
@@ -354,6 +355,25 @@ const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput
     }
   }
 
+  async function invokeApplicationCommand(command: ApplicationCommand) {
+    if (disabled) return
+    const requiredOptions = (command.options ?? []).filter((option) => option.required)
+    if (requiredOptions.length > 0) {
+      toast.error(t('chat.commandRequiresOptions', { defaultValue: 'This command needs options before it can run.' }))
+      return
+    }
+    try {
+      await applicationCommandsApi.invoke({
+        command_id: command.id,
+        channel_id: channelId,
+        options: [],
+      })
+      onMessageQueued?.()
+    } catch {
+      toast.error(t('chat.commandInvokeFailed', { defaultValue: 'Command failed to start' }))
+    }
+  }
+
   // ── Typing indicator ──────────────────────────────────────────────────────
 
   function handleTyping() {
@@ -440,6 +460,7 @@ const MessageInput = forwardRef<MessageInputHandle, Props>(function MessageInput
         channelId={channelId}
         channelName={channelName}
         onSend={send}
+        onApplicationCommand={invokeApplicationCommand}
         onTyping={handleTyping}
         disabled={disabled}
         onAttachClick={handleAttachClick}
