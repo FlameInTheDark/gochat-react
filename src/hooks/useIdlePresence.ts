@@ -26,15 +26,20 @@ const ACTIVITY_EVENTS = [
  * hook has been mounted, so sendPresenceStatus has an open socket to write to.
  */
 export function useIdlePresence() {
-  const setOwnStatus = usePresenceStore((s) => s.setOwnStatus)
-  const ownStatus = usePresenceStore((s) => s.ownStatus)
+  const setSessionStatus = usePresenceStore((s) => s.setSessionStatus)
+  const manualStatus = usePresenceStore((s) => s.manualStatus)
+  const sessionStatus = usePresenceStore((s) => s.sessionStatus)
 
-  // Stable ref so the timeout/event callbacks always see the latest ownStatus
+  // Stable refs so timeout/event callbacks always see the latest presence mode
   // without needing to re-register them every time the status changes.
-  const ownStatusRef = useRef(ownStatus)
+  const manualStatusRef = useRef(manualStatus)
+  const sessionStatusRef = useRef(sessionStatus)
   useEffect(() => {
-    ownStatusRef.current = ownStatus
-  }, [ownStatus])
+    manualStatusRef.current = manualStatus
+  }, [manualStatus])
+  useEffect(() => {
+    sessionStatusRef.current = sessionStatus
+  }, [sessionStatus])
 
   // true when this hook (not the user) triggered the current "idle" state
   const autoIdled = useRef(false)
@@ -48,9 +53,9 @@ export function useIdlePresence() {
     }
 
     function goIdle() {
-      if (ownStatusRef.current === 'online') {
+      if (manualStatusRef.current === null && sessionStatusRef.current === 'online') {
         autoIdled.current = true
-        setOwnStatus('idle')
+        setSessionStatus('idle')
         sendPresenceStatus('idle')
       }
       // dnd / user-set offline / user-set idle — leave untouched.
@@ -59,12 +64,22 @@ export function useIdlePresence() {
 
     function onActivity() {
       // Restore from auto-idle when the user comes back to the keyboard/mouse
-      if (autoIdled.current && ownStatusRef.current === 'idle') {
+      if (
+        autoIdled.current
+        && manualStatusRef.current === null
+        && sessionStatusRef.current === 'idle'
+      ) {
         autoIdled.current = false
-        setOwnStatus('online')
+        setSessionStatus('online')
         sendPresenceStatus('online')
       }
       scheduleIdle()
+    }
+
+    function onVisibilityChange() {
+      if (!document.hidden) {
+        onActivity()
+      }
     }
 
     // Arm the timer immediately on mount
@@ -74,14 +89,14 @@ export function useIdlePresence() {
       window.addEventListener(event, onActivity, { passive: true })
     }
     // Tab regaining visibility (alt-tab back, unminimise) counts as activity
-    document.addEventListener('visibilitychange', onActivity)
+    document.addEventListener('visibilitychange', onVisibilityChange)
 
     return () => {
       if (idleTimer !== null) clearTimeout(idleTimer)
       for (const event of ACTIVITY_EVENTS) {
         window.removeEventListener(event, onActivity)
       }
-      document.removeEventListener('visibilitychange', onActivity)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [setOwnStatus]) // setOwnStatus is a stable Zustand selector
+  }, [setSessionStatus]) // setSessionStatus is a stable Zustand selector
 }
