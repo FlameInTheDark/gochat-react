@@ -392,7 +392,7 @@ function buildSingleIslandState(
 
     segments.push(buildLoadedSegment(normalizedMessages, 'loaded:island'))
 
-    if (shouldShowNewerGap(normalizedMessages, {
+    if (options.mode !== 'live-tail' && shouldShowNewerGap(normalizedMessages, {
       fallbackHasMore: options.newerHasMoreFallback,
       latestPosition: options.latestPosition,
       knownLatestId: options.knownLatestId,
@@ -841,6 +841,10 @@ function replaceSegmentAt<T>(items: T[], index: number, nextItem: T): T[] {
   return nextItems
 }
 
+function takeNewestMessages(messages: DtoMessage[], limit: number): DtoMessage[] {
+  return normalizeMessages(messages).slice(-limit)
+}
+
 function determineJumpDirection(
   request: JumpRequest,
   materializedMessages: DtoMessage[],
@@ -1266,6 +1270,54 @@ export function useMessagePagination(
       }
     }
   }, [applyTimelineSnapshot, setMessages])
+
+  useLayoutEffect(() => {
+    if (!channelId || !timelineState) return
+    if (timelineChannelId !== channelId) return
+    if (pendingMessages.length === 0) return
+    if (!hasEdgeGap(timelineState, 'newer')) return
+
+    navigationFetchRef.current?.abort()
+    Object.values(gapFetchesRef.current).forEach((fetchState) => fetchState.controller.abort())
+    gapFetchesRef.current = {}
+    setIsLoadingInitial(false)
+    setIsLoadingOlder(false)
+    setIsLoadingNewer(false)
+
+    const presentMessages = takeNewestMessages(messages, PAGE_SIZE)
+    const latestPosition = Math.max(
+      getBoundaryPosition(getNewestMessage(presentMessages)) ?? 0,
+      timelineState.channelMaxPosition ?? 0,
+    ) || undefined
+
+    applyTimelineSnapshot(channelId, buildSingleIslandState(presentMessages, {
+      mode: 'live-tail',
+      latestPosition,
+      unreadSeparatorAfter: resolveUnreadSeparatorAfter(
+        presentMessages,
+        lastReadIdRef.current,
+        knownLatestMessageIdRef.current,
+      ),
+      olderHasMoreFallback: presentMessages.length >= PAGE_SIZE || hasEdgeGap(timelineState, 'older'),
+      newerHasMoreFallback: false,
+    }), null)
+
+    const controller = new AbortController()
+    navigationFetchRef.current = controller
+    void loadLatestWindow(channelId, controller.signal).catch((error) => {
+      if (!controller.signal.aborted && !isRequestCanceled(error)) {
+        navigationFetchRef.current = null
+      }
+    })
+  }, [
+    applyTimelineSnapshot,
+    channelId,
+    loadLatestWindow,
+    messages,
+    pendingMessages.length,
+    timelineState,
+    timelineChannelId,
+  ])
 
   useEffect(() => {
     if (!channelId) {

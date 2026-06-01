@@ -15,8 +15,18 @@ vi.mock('@/api/client', () => ({
   },
 }))
 
-function HookProbe({ channelId }: { channelId: string }) {
-  const { rows, isLoadingInitial, mode, loadOlder } = useMessagePagination(channelId)
+function HookProbe({
+  channelId,
+  channelLastMessageId,
+}: {
+  channelId: string
+  channelLastMessageId?: string
+}) {
+  const { rows, isLoadingInitial, mode, loadOlder } = useMessagePagination(
+    channelId,
+    undefined,
+    channelLastMessageId,
+  )
 
   return (
     <div>
@@ -66,7 +76,7 @@ function buildConfirmedMessage(): DtoMessage {
     content: 'Hello',
     nonce: 'nonce-1',
     type: 0,
-  } as DtoMessage
+  } as unknown as DtoMessage
 }
 
 function buildMessage(params: {
@@ -82,7 +92,7 @@ function buildMessage(params: {
     nonce: params.nonce,
     position: params.position,
     type: 0,
-  } as DtoMessage
+  } as unknown as DtoMessage
 }
 
 describe('useMessagePagination', () => {
@@ -148,7 +158,7 @@ describe('useMessagePagination', () => {
     })
   })
 
-  it('surfaces a newer gap when messages arrive while browsing older history', async () => {
+  it('merges new messages directly when the history window already reaches present', async () => {
     const currentMessage = buildMessage({
       id: '200',
       content: 'Current',
@@ -200,7 +210,85 @@ describe('useMessagePagination', () => {
     })
 
     await waitFor(() => {
+      const rows = screen.getByTestId('rows').textContent
+      expect(rows).toContain('message:message:300:Newest')
+      expect(rows).not.toContain('gap:gap:newer-edge')
+    })
+  })
+
+  it('returns to live tail without a newer loader when an own message is queued behind a newer gap', async () => {
+    const olderMessage = buildMessage({
+      id: '100',
+      content: 'Older',
+      position: 1,
+    })
+    const readMessage = buildMessage({
+      id: '200',
+      content: 'Read',
+      position: 2,
+    })
+    const latestMessage = buildMessage({
+      id: '500',
+      content: 'Latest',
+      position: 5,
+    })
+
+    useReadStateStore.setState({
+      readStates: { 'channel-1': '200' },
+      lastMessages: { 'channel-1': '500' },
+    })
+    messageChannelChannelIdGetMock.mockImplementation((request: {
+      direction?: string
+    }) => {
+      if (request.direction === 'around') {
+        return Promise.resolve({ data: [olderMessage, readMessage] })
+      }
+
+      return Promise.resolve({ data: [latestMessage] })
+    })
+
+    render(<HookProbe channelId="channel-1" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading')).toHaveTextContent('false')
+      expect(screen.getByTestId('mode')).toHaveTextContent('history-browse')
       expect(screen.getByTestId('rows').textContent).toContain('gap:gap:newer-edge')
+    })
+
+    act(() => {
+      useMessageStore.getState().addPendingMessage(buildPendingMessage({
+        localId: 'local-present-send',
+        nonce: 'nonce-present-send',
+        createdAt: Date.now(),
+      }))
+    })
+
+    await waitFor(() => {
+      const rows = screen.getByTestId('rows').textContent
+      expect(screen.getByTestId('mode')).toHaveTextContent('live-tail')
+      expect(screen.getByTestId('loading')).toHaveTextContent('false')
+      expect(rows).toContain('message:pending:local-present-send:Hello')
+      expect(rows).not.toContain('gap:gap:newer-edge')
+    })
+  })
+
+  it('does not create a newer gap in live tail from a newer cached latest pointer', async () => {
+    const currentMessage = buildMessage({
+      id: '200',
+      content: 'Current',
+      position: 2,
+    })
+
+    messageChannelChannelIdGetMock.mockResolvedValue({ data: [currentMessage] })
+
+    render(<HookProbe channelId="channel-1" channelLastMessageId="300" />)
+
+    await waitFor(() => {
+      const rows = screen.getByTestId('rows').textContent
+      expect(screen.getByTestId('loading')).toHaveTextContent('false')
+      expect(screen.getByTestId('mode')).toHaveTextContent('live-tail')
+      expect(rows).toContain('message:message:200:Current')
+      expect(rows).not.toContain('gap:gap:newer-edge')
     })
   })
 })
