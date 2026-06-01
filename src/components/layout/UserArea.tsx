@@ -55,7 +55,8 @@ function MenuRow({
 export default function UserArea({ className }: UserAreaProps) {
   const user = useAuthStore((s) => s.user)
   const ownStatus = usePresenceStore((s) => s.ownStatus)
-  const setOwnStatus = usePresenceStore((s) => s.setOwnStatus)
+  const setManualStatus = usePresenceStore((s) => s.setManualStatus)
+  const setSessionStatus = usePresenceStore((s) => s.setSessionStatus)
   const customStatusText = usePresenceStore((s) => s.customStatusText)
   const setCustomStatusText = usePresenceStore((s) => s.setCustomStatusText)
   const openAppSettings = useUiStore((s) => s.openAppSettings)
@@ -89,9 +90,35 @@ export default function UserArea({ className }: UserAreaProps) {
   }, [menuOpen])
 
   function handleStatusChange(status: UserStatus) {
-    setOwnStatus(status)
-    sendPresenceStatus(status)
+    const previousStatus = usePresenceStore.getState().ownStatus
+    const previousManualStatus = usePresenceStore.getState().manualStatus
+    const previousSessionStatus = usePresenceStore.getState().sessionStatus
+    if (status === 'online') {
+      setManualStatus(null)
+      setSessionStatus('online')
+    } else {
+      setManualStatus(status)
+    }
+    sendPresenceStatus(status, customStatusText, { manual: true })
     setMenuOpen(false)
+    const existingStatus = queryClient.getQueryData<ModelUserSettingsData>(['user-settings'])?.status ?? {}
+    void saveSettings({
+      status: {
+        ...existingStatus,
+        status,
+        custom_status_text: customStatusText || undefined,
+      },
+    }).catch(() => {
+      usePresenceStore.setState({
+        ownStatus: previousStatus,
+        manualStatus: previousManualStatus,
+        sessionStatus: previousSessionStatus,
+      })
+      sendPresenceStatus(previousStatus, customStatusText, {
+        manual: previousManualStatus !== null || previousStatus === 'online',
+      })
+      toast.error(t('userArea.customStatusFailed'))
+    })
   }
 
   function openDialog() {
@@ -106,11 +133,15 @@ export default function UserArea({ className }: UserAreaProps) {
     setSaving(true)
     try {
       const existingStatus = queryClient.getQueryData<ModelUserSettingsData>(['user-settings'])?.status ?? {}
+      const manualStatus = usePresenceStore.getState().manualStatus
+      const persistedStatus = manualStatus ?? 'online'
       await saveSettings({
-        status: { ...existingStatus, status: ownStatus, custom_status_text: text || undefined },
+        status: { ...existingStatus, status: persistedStatus, custom_status_text: text || undefined },
       })
       setCustomStatusText(text)
-      sendPresenceStatus(ownStatus, text)
+      sendPresenceStatus(ownStatus, text, {
+        manual: manualStatus !== null || ownStatus === 'online',
+      })
       setDialogOpen(false)
       toast.success(text ? t('userArea.customStatusUpdated') : t('userArea.customStatusCleared'))
     } catch {

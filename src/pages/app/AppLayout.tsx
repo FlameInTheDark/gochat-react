@@ -172,16 +172,18 @@ export default function AppLayout() {
         // connects so resubscribe() sends the correct op:3 on the very first hello.
         const savedStatus = settingsRes?.data?.settings?.status?.status
         const savedCustomText = settingsRes?.data?.settings?.status?.custom_status_text ?? ''
-        if (savedCustomText) {
-          usePresenceStore.getState().setCustomStatusText(savedCustomText)
-        }
         const effectiveStatus = (savedStatus && VALID_STATUSES.has(savedStatus)
           ? savedStatus : 'online') as UserStatus
-        if (savedStatus && VALID_STATUSES.has(savedStatus)) {
-          usePresenceStore.getState().setOwnStatus(effectiveStatus)
+        const presenceStore = usePresenceStore.getState()
+        presenceStore.setCustomStatusText(savedCustomText)
+        if (effectiveStatus === 'online') {
+          presenceStore.setManualStatus(null)
+          presenceStore.setSessionStatus('online')
+        } else {
+          presenceStore.setManualStatus(effectiveStatus)
         }
         // Seeds wsService module-level caches; socket not open yet so no actual send
-        sendPresenceStatus(effectiveStatus, savedCustomText)
+        sendPresenceStatus(effectiveStatus, savedCustomText, { manual: true })
         // Restore guild folder layout + ordering only when settings actually
         // loaded. A transient settings failure must not replace saved order with
         // the backend guild-list fallback.

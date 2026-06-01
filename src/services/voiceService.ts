@@ -44,7 +44,7 @@ import { useVoiceStore } from '@/stores/voiceStore'
 import { usePresenceStore } from '@/stores/presenceStore'
 import { handleVoiceDisconnect } from './streamService'
 import { dmCallApi } from './dmCallApi'
-import { sendRaw, sendPresenceStatus, setPresenceSelfVideo, setPresenceVoiceChannel } from './wsService'
+import { sendRaw, sendPresenceStatus, sendPresenceVoiceState, setPresenceSelfVideo, setPresenceVoiceChannel } from './wsService'
 import {
   buildDenoiserNode, destroyDenoiserNode, effectiveDenoiserType, effectiveNoiseSuppression,
   type DenoiserNode,
@@ -2329,17 +2329,6 @@ function cleanup(sendPresenceClear = true, preserveReconnectTarget = false) {
   if (sendPresenceClear && !wasPrivateCall) {
     setPresenceVoiceChannel(null)
     setPresenceSelfVideo(false)
-    // Send explicit voice_channel_id: 0 — some backends use patch semantics and
-    // won't clear the voice channel if the field is simply omitted.
-    sendRaw({
-      op: 3,
-      d: {
-        status: 'online',
-        platform: 'web',
-        voice_channel_id: 0n,
-        self_video: false,
-      },
-    })
   }
   useVoiceStore.getState().reset()
   vlog('cleanup: done')
@@ -2561,6 +2550,7 @@ export async function joinVoice(
   if (!currentPrivateCall) {
     setPresenceVoiceChannel(channelId)
     setPresenceSelfVideo(false)
+    usePresenceStore.getState().setSessionStatus('online')
     sendPresenceStatus('online')
   }
 
@@ -2732,16 +2722,11 @@ function sendVoicePresenceUpdate(reason: string, selfVideoOverride?: boolean) {
   }
   const selfVideo = selfVideoOverride ?? store.localCameraEnabled
   setPresenceSelfVideo(selfVideo)
-  sendRaw({
-    op: 3,
-    d: {
-      status: 'online',
-      platform: 'web',
-      voice_channel_id: BigInt(store.channelId),
-      mute: store.localMuted,
-      deafen: store.localDeafened,
-      self_video: selfVideo,
-    },
+  sendPresenceVoiceState({
+    channelId: store.channelId,
+    mute: store.localMuted,
+    deafen: store.localDeafened,
+    selfVideo,
   })
   vlog('%s: sent voice presence update mute=%s deafen=%s self_video=%s',
     reason, store.localMuted, store.localDeafened, selfVideo)

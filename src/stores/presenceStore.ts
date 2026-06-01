@@ -34,6 +34,10 @@ interface PresenceState {
   customStatuses: Record<string, string>
   /** Our own current status (what we broadcast to the server) */
   ownStatus: UserStatus
+  /** Null means automatic mode; idle/dnd/offline are sticky manual overrides */
+  manualStatus: UserStatus | null
+  /** This client session's automatic activity status */
+  sessionStatus: UserStatus
   /** Our own custom status text shown below username (empty string = not set) */
   customStatusText: string
   /** Map of channelId (string) → array of users in that voice channel */
@@ -45,6 +49,8 @@ interface PresenceState {
   setCustomStatus: (userId: string, text: string) => void
   setBulkPresence: (updates: Array<{ user_id: string; status: UserStatus }>) => void
   setOwnStatus: (status: UserStatus) => void
+  setManualStatus: (status: UserStatus | null) => void
+  setSessionStatus: (status: UserStatus) => void
   setCustomStatusText: (text: string) => void
   clearAll: () => void
   // Voice channel user management
@@ -60,6 +66,8 @@ export const usePresenceStore = create<PresenceState>((set) => ({
   statuses: {},
   customStatuses: {},
   ownStatus: 'online',
+  manualStatus: null,
+  sessionStatus: 'online',
   customStatusText: '',
   voiceChannelUsers: {},
   activeStreams: {},
@@ -81,9 +89,30 @@ export const usePresenceStore = create<PresenceState>((set) => ({
 
   setOwnStatus: (status) => set({ ownStatus: status }),
 
+  setManualStatus: (status) =>
+    set((state) => ({
+      manualStatus: status,
+      ownStatus: status ?? state.sessionStatus,
+    })),
+
+  setSessionStatus: (status) =>
+    set((state) => ({
+      sessionStatus: status,
+      ownStatus: state.manualStatus ?? status,
+    })),
+
   setCustomStatusText: (text) => set({ customStatusText: text }),
 
-  clearAll: () => set({ statuses: {}, customStatuses: {}, voiceChannelUsers: {}, activeStreams: {} }),
+  clearAll: () => set({
+    statuses: {},
+    customStatuses: {},
+    ownStatus: 'online',
+    manualStatus: null,
+    sessionStatus: 'online',
+    customStatusText: '',
+    voiceChannelUsers: {},
+    activeStreams: {},
+  }),
 
   addUserToVoiceChannel: (channelId, user) =>
     set((state) => {

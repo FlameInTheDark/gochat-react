@@ -60,8 +60,10 @@ const explicitChannelCounts = new Map<string, number>()
 const visibleChannelCounts = new Map<string, number>()
 const activePresenceSubs = new Set<string>()
 
-// Own status kept in sync with presenceStore.ownStatus
-let currentOwnStatus: UserStatus = 'online'
+// Own status is split into a sticky global manual override and this session's
+// automatic activity status. `null` manual status means "automatic mode".
+let currentManualStatus: UserStatus | null = null
+let currentSessionStatus: UserStatus = 'online'
 // Custom status text included in every op:3 presence broadcast
 let currentCustomStatusText = ''
 // Current voice channel ID — included in every op:3 presence broadcast
@@ -85,6 +87,7 @@ const CLIENT_INSTANCE_STORAGE_KEY = 'gochat:ws:client_instance_id'
 // Reset to false each time createSocket() opens a new socket. Used in onClose()
 // to distinguish auth failures (never got op:1) from normal network drops.
 let authSucceeded = false
+let lastPresenceSignature = ''
 
 // Timestamp when the current socket's 'open' event fired.
 // A close before AUTH_QUICK_CLOSE_MS ms after open strongly indicates the
@@ -109,6 +112,46 @@ function sendJson(data: unknown) {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(_bigJsonStringify(data))
   }
+}
+
+function buildPresenceData(
+  status: UserStatus,
+  options?: {
+    manual?: boolean
+    customStatusTextProvided?: boolean
+    voiceChannelId?: string | null
+    clearVoiceChannel?: boolean
+    selfVideo?: boolean
+    mute?: boolean
+    deafen?: boolean
+  },
+) {
+  const customStatusTextProvided = options?.customStatusTextProvided ?? false
+  const voiceChannelId = options?.voiceChannelId ?? currentVoiceChannelId
+  return {
+    status,
+    platform: 'web',
+    ...(options?.manual ? { manual: true } : {}),
+    ...(customStatusTextProvided || currentCustomStatusText
+      ? { custom_status_text: currentCustomStatusText }
+      : {}),
+    ...(options?.clearVoiceChannel
+      ? { voice_channel_id: 0n }
+      : voiceChannelId
+        ? { voice_channel_id: BigInt(voiceChannelId) }
+        : {}),
+    self_video: options?.selfVideo ?? currentSelfVideo,
+    ...(options?.mute !== undefined ? { mute: options.mute } : {}),
+    ...(options?.deafen !== undefined ? { deafen: options.deafen } : {}),
+  }
+}
+
+function sendPresenceData(data: ReturnType<typeof buildPresenceData>) {
+  if (socket?.readyState !== WebSocket.OPEN) return
+  const encoded = _bigJsonStringify({ op: 3, d: data })
+  if (encoded === lastPresenceSignature) return
+  socket.send(encoded)
+  lastPresenceSignature = encoded
 }
 
 function getClientInstanceId(): string {
@@ -318,17 +361,17 @@ function resubscribe() {
   }
   syncChannelSubscriptions()
 
-  // Re-send own presence status (with custom text and voice channel if set)
-  sendJson({
-    op: 3,
-    d: {
-      status: currentOwnStatus,
-      platform: 'web',
-      ...(currentCustomStatusText ? { custom_status_text: currentCustomStatusText } : {}),
-      ...(currentVoiceChannelId ? { voice_channel_id: BigInt(currentVoiceChannelId) } : {}),
-      self_video: currentSelfVideo,
-    },
-  })
+  // Re-send own presence. Manual online means "clear override and return to
+  // automatic"; if this session is currently auto-idle we then send that
+  // session state without touching the global override again.
+  if (currentManualStatus) {
+    sendPresenceData(buildPresenceData(currentManualStatus, { manual: true }))
+  } else {
+    sendPresenceData(buildPresenceData('online', { manual: true }))
+    if (currentSessionStatus !== 'online') {
+      sendPresenceData(buildPresenceData(currentSessionStatus))
+    }
+  }
 
   // Re-subscribe to tracked users' presence
   if (activePresenceSubs.size > 0) {
@@ -1312,6 +1355,7 @@ function createSocket(token: string) {
   // Reset auth-tracking state for the new socket
   authSucceeded = false
   socketOpenTime = null
+  lastPresenceSignature = ''
 
   // Close any existing socket without triggering the reconnect path
   if (socket) {
@@ -1345,6 +1389,7 @@ function onClose() {
   clearHeartbeat()
   socket = null
   currentConnectionId = null
+  lastPresenceSignature = ''
 
   const openTime = socketOpenTime
   socketOpenTime = null
@@ -1511,21 +1556,26 @@ export function addPresenceSubscription(userIds: string[]) {
 
 // Broadcast our own presence status (op=3).
 // Pass customStatusText to update it; omit (undefined) to keep the current value.
-export function sendPresenceStatus(status: UserStatus, customStatusText?: string) {
-  currentOwnStatus = status
-  if (customStatusText !== undefined) currentCustomStatusText = customStatusText
-  if (socket?.readyState === WebSocket.OPEN) {
-    sendJson({
-      op: 3,
-      d: {
-        status,
-        platform: 'web',
-        ...(currentCustomStatusText ? { custom_status_text: currentCustomStatusText } : {}),
-        ...(currentVoiceChannelId ? { voice_channel_id: BigInt(currentVoiceChannelId) } : {}),
-        self_video: currentSelfVideo,
-      },
-    })
+export function sendPresenceStatus(
+  status: UserStatus,
+  customStatusText?: string,
+  options?: { manual?: boolean },
+) {
+  if (options?.manual) {
+    if (status === 'online') {
+      currentManualStatus = null
+      currentSessionStatus = 'online'
+    } else {
+      currentManualStatus = status
+    }
+  } else {
+    currentSessionStatus = status
   }
+  if (customStatusText !== undefined) currentCustomStatusText = customStatusText
+  sendPresenceData(buildPresenceData(status, {
+    manual: options?.manual,
+    customStatusTextProvided: customStatusText !== undefined,
+  }))
 }
 
 // Update the tracked voice channel for presence broadcasts.
@@ -1534,17 +1584,27 @@ export function setPresenceVoiceChannel(channelId: string | null) {
   const previous = currentVoiceChannelId
   currentVoiceChannelId = channelId
   if (previous && channelId === null && socket?.readyState === WebSocket.OPEN) {
-    sendJson({
-      op: 3,
-      d: {
-        status: currentOwnStatus,
-        platform: 'web',
-        ...(currentCustomStatusText ? { custom_status_text: currentCustomStatusText } : {}),
-        voice_channel_id: 0,
-        self_video: currentSelfVideo,
-      },
-    })
+    sendPresenceData(buildPresenceData(currentSessionStatus, {
+      clearVoiceChannel: true,
+      selfVideo: false,
+    }))
   }
+}
+
+export function sendPresenceVoiceState(options: {
+  channelId: string
+  mute: boolean
+  deafen: boolean
+  selfVideo: boolean
+}) {
+  currentVoiceChannelId = options.channelId
+  currentSelfVideo = options.selfVideo
+  sendPresenceData(buildPresenceData(currentSessionStatus, {
+    voiceChannelId: options.channelId,
+    mute: options.mute,
+    deafen: options.deafen,
+    selfVideo: options.selfVideo,
+  }))
 }
 
 // Update the tracked local camera state for presence broadcasts.
@@ -1583,6 +1643,12 @@ export function disconnect() {
   currentSessionId = null
   currentConnectionId = null
   currentGeneration = 0
+  currentManualStatus = null
+  currentSessionStatus = 'online'
+  currentCustomStatusText = ''
+  currentVoiceChannelId = null
+  currentSelfVideo = false
+  lastPresenceSignature = ''
   lastEventId = 0
   activeGuildSubs.clear()
   explicitChannelCounts.clear()
